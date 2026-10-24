@@ -1,0 +1,38 @@
+# Python and desktop builds
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# ESP32 builds
+.pio/
+*.elf
+*.bin
+*.map
+
+# Operator data and machine-specific settings
+data/
+runs/
+logs/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+.env
+.env.*
+!.env.example
+config.local.*
+hardware/profiles/*.local.json
+
+# Source attachments and drafts
+originals/
+attachments/
+work/
+~$*
+Thumbs.db
+.DS_Store
