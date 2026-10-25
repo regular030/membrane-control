@@ -1,18 +1,22 @@
 # Procurement baseline
 
-Checked 24 October 2026. Listings, prices and sellers can change. Quantities below support the initial bench prototype, not a complete commissioned mains assembly. Reuse existing suitable items.
+Updated 25 October 2026. Listings, prices and sellers can change. Quantities below support the initial bench prototype, not a complete commissioned mains assembly. Reuse existing suitable items.
 
 ## Initial purchases
 
 | Qty | Item | Link | Purchase condition |
 | --- | --- | --- | --- |
 | 1 | Lenovo ThinkCentre M720q, i5-8500T, 16 GB RAM, 256 GB SSD, Windows 11 Pro | [Amazon Canada](https://www.amazon.ca/dp/B08G1XKHPB) | Include matching power adapter and confirm monitor cable/return coverage; current price unverified |
-| 1 | DORHEA 8-channel ESP32 relay board | [Amazon Canada](https://www.amazon.ca/dp/B0H6JRXPHD) | Low-voltage bench prototype only until schematic, startup behavior and valve-load suitability verified |
+| 1 | Srliya 16-channel ESP32-WROOM relay board | [Amazon Canada](https://www.amazon.ca/dp/B0DKC2L2NH) | Selected candidate; verify exact revision, 74HC595 pin/bit mapping, OE defaults, supply input and valve-load suitability before physical use |
 | 1 | DAOKAI CP2102 USB-to-UART adapter | [Amazon Canada](https://www.amazon.ca/dp/B0BCKBHQ8Y) | Use verified 3.3 V TTL TX/RX; leave adapter power pins disconnected when board externally powered |
-| 1 if needed | StarTech SVA12M2NEUA 12 V 2 A supply | [Amazon Canada](https://www.amazon.ca/dp/B01N5HCQNS) | Observed CAD 24.16; check total demand, polarity and board input; reuse existing supply if suitable |
+| 1 if needed | SANSUN 12 V 2 A DC supply | [Amazon Canada](https://www.amazon.ca/dp/B01AZLA9XQ) | Selected candidate; check actual label, Canadian-recognized approval, output connector/polarity and total board/interface demand; reuse existing supply if suitable; current price unverified |
 | 1 if needed | USB-A to USB-B data cable for balance | [Amazon Canada](https://www.amazon.ca/dp/B00NH13DV2) | Reuse existing suitable data cable; check required cable length |
 
-The [StarTech manufacturer datasheet](https://media.startech.com/cms/pdfs/sva12m2neua_datasheet.pdf) identifies 12 V DC, 2 A, positive centre and 5.5 x 2.1 mm connector dimensions. Connect through a matching female jack/pigtail with strain relief to the board's documented 12 V-compatible input. Do not feed the board's 5 V terminal with 12 V.
+The 12 V supply powers the controller electronics and relay coils through the board's documented 12 V-compatible input. It does not power the computer, balance, pumps or 110-120 VAC valve coils. Those loads retain their appropriate supplies and switching protection.
+
+Confirm the SANSUN adapter's exact output plug and polarity on the ordered unit, then use a matching female jack/pigtail with strain relief to the controller input. If it is the advertised 5.5 x 2.1 mm centre-positive connector, use that mating size; do not assume 5.5 x 2.5 mm is equivalent. The pictured 16-channel board advertises a DC 5-12 V input range, but its exact revision and terminal polarity must still be verified. Never apply 12 V to a terminal documented only for 5 V. A supply's 2 A maximum rating is provisional until the complete board and interface demand is checked.
+
+The selected board has more channels than the seven valve outputs required. Unused channels must remain in their reviewed inactive states. Its presence does not make the pump an ordinary relay-driven motor: pump speed uses a separate 0-10 V interface and remote start/stop. The firmware represents this candidate as a 16-bit shift-register board with unassigned hardware mappings; the product photograph does not establish a usable pin map or mains-load rating.
 
 ## Parts requiring final interface selection
 

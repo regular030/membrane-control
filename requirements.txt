@@ -1,0 +1,2 @@
+# Install the application and its GUI dependencies from this repository.
+-e .

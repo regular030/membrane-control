@@ -1,116 +1,106 @@
 # Basu Lab Membrane Control
 
-Planned ESP32 firmware and a Windows desktop application for membrane experiment control, sensor acquisition, live graphs and reproducible run records.
+A Windows desktop application and ESP32 firmware for the ceramic membrane
+experiment rig. The prototype combines valve and pump sequences, pressure and
+flow measurements, balance readings, live graphs and recorded runs.
 
-**Status:** design and procurement baseline. No operational firmware, desktop executable or verified actuator pin map is included yet. This repository must not be used to energize the rig at this stage.
+**Version 0.1.0 is a software prototype.** It opens in Simulation mode and
+does not connect hardware automatically. The firmware's default build also
+uses simulated measurements and dry-run outputs. The physical rig, board pin
+mapping, pump interface and calibrations have not been commissioned.
 
-## Purpose
+## Open the Windows app
 
-Bring the existing CIP, CWF and Fouling interfaces into one application while retaining the lab's pressure sensor, flow sensor, balance, pumps and solenoid valves. Replace damaged control boards, document the wiring and make experiments easier to configure and maintain.
+Download `BasuMembraneControl-0.1.0-windows-x64.exe` from
+[Releases](https://github.com/regular030/basu-membrane-control/releases), or
+extract the matching portable ZIP. A private repository requires GitHub access.
+If an executable release is not listed yet, use the source instructions below.
 
-The first pump connection is the existing **DB15** interface. The later **DB25** pump uses its own hardware profile and cable harness. The required PC USB connections are the ESP32's UART adapter and the Adam Nimbus balance. The previously discussed Omega USB pressure sensor is outside the required initial build.
+Double-click the EXE and leave **Simulation mode** checked. Python and LabVIEW
+are not required on the operator's computer. The application libraries are
+bundled; CP210x and balance USB drivers remain separate vendor components if
+needed. See [installation](docs/installation.md) and the
+[operator guide](docs/operator-guide.md).
 
-## System layout
+## What is implemented
+
+| Tab | Functions |
+| --- | --- |
+| Dashboard | Controller and balance status, seven commanded valve states, separate pump command, pressure/flow/flux/mass values, live graphs and Start/Stop |
+| Sequence editor | Explicit step durations and valve/pump states, repeats, recording interval, JSON import/export and example CIP/CWF/Fouling templates |
+| Connections and settings | Explicit controller/balance port selection, firmware identity, freshness and verification status, membrane area and density settings |
+| Run history | Local SQLite records, run metadata and CSV export |
+
+The controller uses a versioned newline-delimited JSON protocol with bounded
+messages, identity, acknowledgements, heartbeat, telemetry and fault states.
+The desktop separates instrument communication from the UI, marks stale data
+unavailable and never resumes a run merely because a device reconnects.
+Graphs retain a bounded recent history; persistent records are kept separately.
+
+Demo templates are examples. Missing native LabVIEW `.vi` and `.lvproj` files
+mean the original experiment sequences have not been recovered. Valve states
+and timings have not been inferred from screenshots. Real recipes need an
+operator-approved sequence and hardware approval before use.
+
+## System arrangement
 
 ```text
 Windows computer
-  |-- USB --> CP2102 adapter <--> ESP32
-  |                              |-- Relay outputs --> Seven valve channels
-  |                              |-- I2C DAC --> 0-10 V pump speed command
-  |                              |-- Isolated contact --> Pump start/stop
-  |                              `-- Protected ADC inputs <-- Pressure, flow,
-  |                                                          pump speed signal
-  `-- USB-B I/O <-- Adam Nimbus balance
+  |-- USB --> CP2102 UART adapter <--> ESP32 relay controller
+  |                                      |-- Seven valve channels
+  |                                      |-- 0-10 V DAC --> Pump command
+  |                                      |-- Isolated pump start/stop contact
+  |                                      `-- Conditioned pressure/flow/readback inputs
+  `-- USB-B I/O <--> Adam Nimbus balance
 
-External regulated DC supply --> Controller's documented power input
-Pump, balance and valve loads --> Their existing, appropriately rated supplies
+External DC supply --> Controller's documented voltage-compatible input
+Computer, balance, pumps and AC valve loads --> Their own appropriate supplies
 ```
 
-Seven valves plus a separately controlled pump are visible in the legacy UI. An eight-channel relay board is a prototype candidate, not evidence that the pump is simply an eighth on/off motor. The 120 VAC valve switching section requires an appropriate enclosed assembly and electrical review.
+The current pump connection is **DB15**. A later **DB25** pump requires its own
+verified profile and harness. The previously discussed Omega USB pressure
+sensor is outside the initial required build. Seven valves and a separately
+controlled pump are not eight interchangeable motor outputs.
 
-## Design decisions and rationale
+The physical firmware profile ships unverified with unassigned pins and closed
+actuation gates. A reviewed profile must define board wiring, polarity, safe
+states, sensor conditioning/calibration and limits. A desktop setting cannot
+bypass that gate. Independent rig shutdown and mains assembly review are still
+required; the application Stop control is not an emergency-stop circuit.
 
-| Decision | Reason | Limit or tradeoff |
-| --- | --- | --- |
-| ESP32 owns time-critical sequencing and fault response | A frozen desktop or lost USB link must not leave sequencing dependent on the UI | Exact process-safe states and limits must be agreed with the lab |
-| Python, PySide6, pyqtgraph and pyserial on Windows | Supports a normal desktop UI, live plots, device workers and a maintainable codebase | Validate balance drivers and build the executable on Windows |
-| USB serial controller link | Simple wired connection for the permanently attached computer | Confirm ESP32 identity with a handshake; a detected adapter alone is insufficient |
-| Separate balance connection | Retains the instrument's own measurement interface | Driver, serial settings and units need bench verification |
-| External 0-10 V DAC | Pump speed input requires an analog voltage beyond the ESP32's native signal range | Verify grounding, load, startup output and isolation against the exact pump manual |
-| Conditioned external analog acquisition | Accommodates 0-5 V sensors and a 0-10 V pump signal | An ADC breakout alone does not provide scaling or protection |
-| DB15 and DB25 hardware profiles | Allows a later pump change with explicit connector mappings | A passive connector adapter does not establish electrical compatibility |
-| Table-based recipe editor first | Easy to review valve states, durations and repeats | A later visual block editor can use the same validated recipe schema |
-| SQLite records plus CSV export | Keeps run metadata and samples together and supports familiar exports | Define retention, backups and bounded chart memory for continuous operation |
-| Bundled Windows application | Operators do not need to install Python packages for each run | Vendor USB drivers remain separate dependencies |
+## Run from source
 
-These are engineering decisions and their rationale, not claims that hardware compatibility has already been proven.
+Use Python 3.12 x64. From the repository root on Windows:
 
-## Planned application
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+.\.venv\Scripts\python.exe -m pip install --no-deps -e ".[dev]"
+.\.venv\Scripts\python.exe -m membrane_control --demo
+```
 
-- Dashboard with device status, last-reading age, pressure, flow, mass, flux and pump command/readback.
-- Manual valve and pump controls, labelled as commanded states unless physical position feedback exists.
-- CIP, CWF and Fouling profiles, with configurable backwash and CEB phases.
-- Sequence table: named step, explicit duration/unit, V1-V7 states, pump command and repetition.
-- Live graphs for target/measured flow, pressure, flux and mass.
-- Calibration settings, membrane area and liquid-density assumptions.
-- Run history, raw-data diagnostics and CSV export.
+Run tests with `.\.venv\Scripts\python.exe -m pytest`. See
+[development and packaging](docs/development.md) for source smoke tests,
+Windows EXE builds and the CI/release workflow. The seven top-level dependency
+versions are pinned; transitive dependencies are resolved by pip.
 
-No legacy sequence is reconstructed from an illuminated valve indicator in a screenshot. Native LabVIEW files or an operator-approved step table are needed to establish process behavior.
+Firmware build instructions and physical commissioning gates are in
+[firmware/README.md](firmware/README.md). Build-only commands do not flash a
+controller or energize hardware.
 
-## Firmware and communication
+## Documentation and validation
 
-Use Arduino C++ with Espressif's ESP32 core, with repeatable command-line builds in addition to IDE bring-up. Separate board wiring from logical valve/pump identifiers. A direct GPIO relay board and a shift-register relay board need different output drivers.
+- [Architecture and design choices](docs/architecture.md): how the software fits together and why.
+- [Hardware baseline](hardware/README.md): confirmed instruments and unresolved interfaces.
+- [Procurement](hardware/procurement.md): selected board, adapter and power candidates.
+- [Wire protocol](protocol/v1.md): desktop/firmware contract.
+- [Implementation and acceptance plan](docs/implementation-plan.md): bench and continuous-operation checks.
 
-The proposed serial protocol uses newline-delimited JSON, bounded messages, a protocol version, request IDs, acknowledgements, controller identification, heartbeat messages and timestamped telemetry. Final message schemas will be specified under `protocol/` before implementation.
+Automated tests and Demo smoke tests cover software behavior. Firmware builds
+check compilation. Neither proves sensor accuracy, physical valve switching,
+actual pump output voltages, chemical process suitability or 24/7 reliability.
+Bench verification and an extended physical recording test remain necessary.
 
-Firmware will use nonblocking acquisition and sequencing. Starting a run requires a verified board profile, valid recipe and required fresh inputs. Reset, communication timeout and local limit violations must produce the process-safe stop behavior agreed with the lab. Reconnection and power restoration must never resume an experiment automatically.
-
-The desktop application is not an emergency stop. Independent electrical shutdown and process protection must be addressed in the hardware design.
-
-## Measurements and records
-
-- Preserve raw sensor values and calibrated values with units and calibration versions.
-- Keep pump speed command/readback separate from actual fluid flow.
-- Keep flow-meter measurements separate from balance-derived flow.
-- Derive balance-based flow from mass change, elapsed time and configured liquid density. Handle tare/container changes explicitly.
-- Derive flux from volumetric flow divided by configured membrane area, with explicit conversion to L/m2/h.
-- Store UTC timestamps and monotonic elapsed time, recipe snapshots, firmware versions, events and faults.
-- Separate sensor acquisition, graph refresh and file-recording intervals.
-- The old UI labels cycle duration in seconds and data frequency in minutes. All new interval controls must state units explicitly.
-
-## Hardware and purchase status
-
-See [hardware/README.md](hardware/README.md) for the confirmed equipment and unresolved interfaces, and [hardware/procurement.md](hardware/procurement.md) for shopping links and purchase conditions.
-
-The computer and controller are powered separately. A 12 V DC adapter is a controller supply candidate, not a supply for the balance, computer or 120 VAC valves. Use only the board input specifically documented for that voltage.
-
-## Repository organization
-
-| Folder | Intended contents |
-| --- | --- |
-| `firmware/` | Controller firmware, board drivers and verified pin profiles |
-| `desktop/` | UI, device workers, run control and data storage |
-| `protocol/` | Versioned messages and recipe schemas |
-| `hardware/` | Wiring evidence, interface specifications and procurement |
-| `docs/` | Implementation stages, acceptance criteria and operating procedures |
-| `tests/` | Simulator, protocol, sequencing and data-conversion tests |
-| `packaging/` | Windows build, installer/ZIP and driver setup instructions |
-
-## Implementation stages
-
-1. Recover the legacy application behavior and confirm wiring, calibration and process limits.
-2. Build the application with simulated controller and balance data.
-3. Verify real USB/UART identification and balance parsing.
-4. Validate sensor acquisition and each low-voltage relay output.
-5. Test pump command voltage with the pump disconnected, then supervised pump control.
-6. Commission the enclosed valve circuits and approved recipes.
-7. Verify disconnects, resets, invalid inputs, stale readings and pressure-limit responses.
-8. Package the Windows app and run an extended recording/operation test.
-
-See [docs/implementation-plan.md](docs/implementation-plan.md) for the acceptance checks and open decisions.
-
-## Source material and privacy
-
-The source ZIP supplied for review contains Arduino code exported to text plus LabVIEW front-panel photographs in a Word document. It does not contain the native `.vi` or `.lvproj` files. The Arduino code is primarily a generic NI LIFA bridge, rather than the experiment-specific application.
-
-Original attachments, private correspondence and lab photos remain outside this repository. Add only material needed for the project, with appropriate lab authorization. Runtime data, credentials, local device configurations and build outputs are excluded from version control.
+Operator data defaults to `%LOCALAPPDATA%\BasuMembraneControl`. Preserve and
+back up that folder when updating the EXE. Original attachments, private
+correspondence, lab photos, credentials and runtime databases remain outside Git.

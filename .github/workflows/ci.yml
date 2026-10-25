@@ -1,0 +1,80 @@
+name: Verify application and firmware
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+      - name: Install Linux Qt runtime dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 libxcb-cursor0
+      - name: Install development dependencies
+        run: |
+          python -m pip install -r requirements-lock.txt
+          python -m pip install --no-deps -e ".[dev]"
+      - name: Run tests
+        run: python -m pytest
+      - name: Demo application smoke test
+        run: python -m membrane_control --demo --data-dir work/ci-smoke --screenshot work/ci-demo.png --quit-after 2
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: python -m pip install platformio==6.2.0
+      - name: Build dry-run and commissioning-gated physical firmware
+        working-directory: firmware
+        run: pio run -e esp32-dry-run -e esp32-physical
+      - name: Run native firmware safety tests
+        working-directory: firmware
+        run: pio test -e native
+
+  windows-package:
+    needs: [desktop-tests, firmware]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+      - name: Install tested dependency versions
+        run: |
+          python -m pip install -r requirements-lock.txt
+          python -m pip install --no-deps -e ".[dev]"
+      - name: Build portable Windows application
+        run: python packaging/build_windows.py
+      - name: Test packaged executable
+        run: python packaging/smoke_windows.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BasuMembraneControl-windows-x64
+          path: dist/release/*
+          if-no-files-found: error

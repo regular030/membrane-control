@@ -38,11 +38,11 @@ Acceptance: clean-machine installation test; CSV export verified against stored 
 
 ## Open decisions
 
-- Final eight-channel board revision, schematic, free I2C/GPIO pins and relay polarity.
+- Selected 16-channel ESP32 board revision, schematic, shift-register pins, free I2C/GPIO pins and relay polarity.
 - Exact DB15 pump model and future DB25 pump model.
 - Analogue front-end design, electrical isolation and sensor supply arrangements.
 - Lab-approved limits, shutdown behavior and independent emergency shutdown.
 - Definition of old unlabeled controls and partially visible table columns.
 - Retention, backup destination, exported data layout and operator permissions.
 
-This repository currently contains documentation only. Acceptance checks above describe work to perform, not completed tests.
+The repository now contains the desktop application, simulator, serial protocol, ESP32 firmware, tests and Windows packaging. See the root README for installation. Software tests and build checks do not establish rig commissioning. The hardware acceptance checks above, exact legacy process sequences and extended operation testing remain to be completed with the lab.
