@@ -21,13 +21,13 @@ def launch() -> int:
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text(details, encoding="utf-8")
-            message = f"Basu Membrane Control could not start.\n\nDetails: {log_path}"
+            message = f"Membrane Control could not start.\n\nDetails: {log_path}"
         except OSError:
-            message = "Basu Membrane Control could not start.\n\n" + details[-1800:]
+            message = "Membrane Control could not start.\n\n" + details[-1800:]
         if sys.platform == "win32" and os.environ.get("BASU_HEADLESS") != "1":
             import ctypes
 
-            ctypes.windll.user32.MessageBoxW(None, message, "Basu Membrane Control", 0x10)
+            ctypes.windll.user32.MessageBoxW(None, message, "Membrane Control", 0x10)
         else:
             print(message, file=sys.stderr)
             print(details, file=sys.stderr)

@@ -1,4 +1,6 @@
-# Basu Lab Membrane Control
+# Membrane Control
+
+Developed for membrane research in **Dr. Onita Basu's lab at Carleton University**.
 
 A Windows app for viewing membrane experiment readings, running valve/pump
 sequences and saving results. **Start with the demo. No USB devices are needed.**
@@ -7,7 +9,7 @@ sequences and saving results. **Start with the demo. No USB devices are needed.*
 
 Open the [short Start here guide](docs/START-HERE.md).
 
-1. Open [Releases](https://github.com/regular030/basu-membrane-control/releases)
+1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and download the Windows `.exe` under **Assets**. Sign in if GitHub asks.
    **Source code (zip)** contains the code, not the ready-to-run app.
 2. Double-click the EXE. Leave **Simulation mode** checked.

@@ -5,10 +5,10 @@ for the ready-to-run app.
 
 ## Download
 
-1. Open [Releases](https://github.com/regular030/basu-membrane-control/releases)
+1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and sign in if needed. This project is private.
 2. Open the release given to you by the maintainer. Under **Assets**, download
-   `BasuMembraneControl-0.1.3-windows-x64.exe` or the matching portable app ZIP.
+   `MembraneControl-0.1.4-windows-x64.exe` or the matching portable app ZIP.
    **Source code (zip)** is for developers and does not contain the EXE.
 3. If you chose the portable ZIP, right-click it and choose **Extract All**.
 4. Open the EXE. Leave **Simulation mode** checked and follow
@@ -23,7 +23,7 @@ software protection blocks the file, ask the maintainer or IT to review it.
 
 Do this after the person setting up the rig has approved its hardware. Installing
 this Windows app does not install firmware on the ESP32 or verify the wiring.
-The separate [ESP32 setup guide](https://github.com/regular030/basu-membrane-control/blob/main/firmware/README.md) covers that work.
+The separate [ESP32 setup guide](https://github.com/regular030/membrane-control/blob/main/firmware/README.md) covers that work.
 
 1. Power the equipment and connect its USB **data** cable.
 2. Open Windows **Device Manager > Ports (COM & LPT)**. Note the COM number
@@ -56,11 +56,12 @@ for the PC connection; its USB-A display socket serves a different purpose.
 ## Updates and saved data
 
 Stop the run and close the app before replacing its EXE. Your recorded runs
-stay in `%LOCALAPPDATA%\BasuMembraneControl`. Paste that address into File
-Explorer to find the folder. Back it up and keep important CSV exports.
+stay in `%LOCALAPPDATA%\BasuMembraneControl`. The folder keeps its original name
+so existing run history remains available. Paste that address into File
+Explorer to find it. Back it up and keep important CSV exports.
 Reopening the app or restoring USB does not resume an experiment.
 
 If the app will not open, send the maintainer the version and this file, if it
 exists: `%LOCALAPPDATA%\BasuMembraneControl\logs\launcher-error.log`.
 For ordinary operation, continue with the [operator guide](operator-guide.md).
-Developers should use the online [development guide](https://github.com/regular030/basu-membrane-control/blob/main/docs/development.md) for source installation.
+Developers should use the online [development guide](https://github.com/regular030/membrane-control/blob/main/docs/development.md) for source installation.

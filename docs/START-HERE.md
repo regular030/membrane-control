@@ -2,7 +2,7 @@
 
 Try the demo first. You do not need any USB equipment.
 
-1. Open [Releases](https://github.com/regular030/basu-membrane-control/releases)
+1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and sign in if asked. Under **Assets**, download the file ending in
    **windows-x64.exe**. Do not choose **Source code (zip)**.
 2. Double-click the EXE. Leave **Simulation mode** checked.
@@ -35,4 +35,4 @@ or a checked recipe-review box does not make the real rig ready.
   there before it can connect or receive firmware.
 
 Next: [app installation](installation.md), [operator guide](operator-guide.md),
-or [ESP32 setup](https://github.com/regular030/basu-membrane-control/blob/main/firmware/README.md) for the person preparing the hardware.
+or [ESP32 setup](https://github.com/regular030/membrane-control/blob/main/firmware/README.md) for the person preparing the hardware.

@@ -1,5 +1,8 @@
 # How the application fits together
 
+Membrane Control was developed for Dr. Onita Basu's membrane research lab at
+Carleton University.
+
 The Windows application configures experiments, shows measurements and records
 data. The ESP32 executes timed steps and handles its own heartbeat and pressure
 faults. The balance connects to Windows independently of the ESP32.

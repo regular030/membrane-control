@@ -1,5 +1,7 @@
-Basu Membrane Control 0.1.3
+Membrane Control 0.1.4
 Windows 11 x64 app
+
+Developed for membrane research in Dr. Onita Basu's lab at Carleton University.
 
 Try the demo
 

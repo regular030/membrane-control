@@ -70,7 +70,7 @@ These are commands; the app cannot confirm physical valve movement.
 The person setting up the hardware must first verify the wiring, firmware,
 calibration and operating limits. Connecting USB or selecting Hardware mode
 is not that verification. See [installation](installation.md) for the USB steps
-and the online [ESP32 setup guide](https://github.com/regular030/basu-membrane-control/blob/main/firmware/README.md) for firmware work.
+and the online [ESP32 setup guide](https://github.com/regular030/membrane-control/blob/main/firmware/README.md) for firmware work.
 
 Before a physical run, confirm the correct instruments are connected, readings
 are current, the approved preset is selected and the rig is ready for its liquid

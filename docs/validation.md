@@ -1,5 +1,19 @@
 # Software validation
 
+## Desktop version 0.1.4
+
+Naming update, checked locally on Windows 11 x64, 25 October 2026:
+
+- All 116 desktop tests passed.
+- The newly named `MembraneControl-0.1.4-windows-x64.exe` opened, produced a
+  1360 x 940 screenshot and exited cleanly.
+- The Help credit to Dr. Onita Basu's research lab was visually reviewed at
+  1360 x 940 and 1080 x 760, including scrolling to the bottom.
+- The existing operator data location and firmware protocol identity were
+  retained for compatibility. Firmware remains at 0.1.3 with the results below.
+
+No board was flashed and no physical rig was exercised for this naming update.
+
 ## Desktop and firmware version 0.1.3
 
 Local review on Windows 11 x64, 25 October 2026:

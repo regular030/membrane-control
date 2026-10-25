@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "desktop" / "src" / "membrane_control"
-APP_NAME = "BasuMembraneControl"
+APP_NAME = "MembraneControl"
 
 
 def package_version() -> str:
@@ -124,7 +124,7 @@ def build(version: str, clean: bool = True) -> Path:
     released_exe = release_dir / executable.name
     shutil.copy2(executable, released_exe)
     manifest = {
-        "application": "Basu Membrane Control",
+        "application": "Membrane Control",
         "version": version,
         "platform": "windows-x64",
         "build_utc": datetime.now(timezone.utc).isoformat(),

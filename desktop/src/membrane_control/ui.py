@@ -545,6 +545,7 @@ class MainWindow(QMainWindow):
         title = _label("Start with a practice run")
         title.setStyleSheet("font-size: 17pt; font-weight: 600;")
         layout.addWidget(title)
+        layout.addWidget(_label("Developed for membrane research in Dr. Onita Basu's lab at Carleton University.", "muted", True))
         layout.addWidget(_label("Leave Simulation mode checked while learning. The app makes up readings and no real equipment moves.", "", True))
         practice = QGroupBox("Three steps to try the app")
         steps = QVBoxLayout(practice)

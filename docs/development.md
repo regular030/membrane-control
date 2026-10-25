@@ -75,7 +75,7 @@ firmware, and then builds and smoke-tests the Windows artifact. A failure in
 verification prevents the package job from running.
 
 For an authorized release, set the package version, commit the reviewed
-changes and tag the commit `v0.1.3` (or the matching next version). The release
+changes and tag the commit `v0.1.4` (or the matching next version). The release
 workflow checks the version, repeats verification, builds and smoke-tests the
 EXE, uploads a workflow artifact and creates a **draft prerelease**. A
 maintainer reviews the assets and publishes the prerelease. A private

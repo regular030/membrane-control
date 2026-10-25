@@ -8,7 +8,7 @@ import sys
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Basu Lab Membrane Control")
+    parser = argparse.ArgumentParser(description="Membrane Control")
     parser.add_argument("--demo", action="store_true", help="Use simulated devices (default)")
     parser.add_argument("--data-dir", type=Path, help="Operator data directory")
     parser.add_argument("--screenshot", type=Path, help="Save a UI screenshot after startup")
@@ -37,7 +37,7 @@ def main():
                         (QPalette.ColorRole.HighlightedText, "#ffffff")):
         palette.setColor(role, QColor(color))
     app.setPalette(palette)
-    app.setApplicationName("Basu Membrane Control")
+    app.setApplicationName("Membrane Control")
     app.setOrganizationName("Basu Lab")
     controller = AppController(data_dir)
     window = MainWindow(controller)

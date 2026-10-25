@@ -1,2 +1,2 @@
-"""Basu Lab membrane experiment control."""
-__version__ = "0.1.3"
+"""Membrane experiment control for Dr. Onita Basu's research lab."""
+__version__ = "0.1.4"
