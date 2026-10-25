@@ -135,3 +135,74 @@ def test_stop_pending_locks_start_and_mode(screen):
     assert not window.simulation_check.isEnabled()
     assert not window.manual_apply.isEnabled()
     assert window.state_chip.text() == "STOPPING"
+
+
+def test_dashboard_device_panel_identifies_demo_as_simulated(screen):
+    window, controller, _ = screen
+    assert len(window.device_status_labels) == 6
+    for label in window.device_status_labels.values():
+        assert label.text() == "Simulated"
+        assert label.property("statusLevel") == "warning"
+        assert label.toolTip()
+        assert "Simulated" in label.accessibleName()
+    assert not window.device_panel.isHidden()
+
+
+def test_dashboard_device_panel_hardware_disconnected(screen):
+    window, controller, _ = screen
+    controller.set_simulation(False)
+    window._update_view(dict(controller.snapshot))
+    labels = window.device_status_labels
+    assert labels["controller"].text() == "Not connected"
+    assert "ESP32 is not connected" in window.banner.text()
+    assert labels["balance"].text() == "Not connected"
+    assert all(labels[key].text() == "No reading" for key in ("pressure", "flow", "pump_feedback"))
+    assert labels["outputs"].text() == "Not monitored"
+    assert "physical" in labels["outputs"].accessibleDescription()
+
+
+def test_dashboard_device_panel_distinguishes_received_readings_from_connections(screen):
+    window, controller, _ = screen
+    controller.set_simulation(False)
+    controller.snapshot.update(controller_connected=True, simulation=False,
+        hardware_verified=True, balance_connected=False, mass_g=None,
+        pressure_psi=12, flow_ml_min=30, pump_feedback_v=2.5)
+    window._update_view(dict(controller.snapshot))
+    labels = window.device_status_labels
+    assert labels["controller"].text() == "Connected"
+    assert labels["balance"].text() == "Not connected"
+    for key in ("pressure", "flow", "pump_feedback"):
+        assert labels[key].text() == "Reading received"
+        assert labels[key].property("statusLevel") == "success"
+    assert labels["outputs"].text() == "Not monitored"
+
+
+def test_dashboard_device_panel_dry_run_firmware_can_have_real_scale(screen):
+    window, controller, _ = screen
+    controller.set_simulation(False)
+    controller.snapshot.update(controller_connected=True, simulation=True,
+        balance_connected=True, mass_g=123, pressure_psi=1, flow_ml_min=2,
+        pump_feedback_v=0.5)
+    window._update_view(dict(controller.snapshot))
+    labels = window.device_status_labels
+    assert labels["controller"].text() == "Connected (dry run)"
+    assert labels["controller"].property("statusLevel") == "warning"
+    assert labels["balance"].text() == "Connected"
+    assert labels["balance"].property("statusLevel") == "success"
+    assert all(labels[key].text() == "Simulated" for key in ("pressure", "flow", "pump_feedback", "outputs"))
+    assert not window.simulation_check.isChecked()
+
+
+def test_compact_window_keeps_device_panel_visible_and_controls_unclipped(screen, qt_app):
+    window, _, _ = screen
+    window.resize(1080, 760)
+    window.show()
+    qt_app.processEvents()
+    assert window.device_panel.isVisible()
+    assert window.dashboard_scroll.verticalScrollBar().maximum() > 0
+    window.dashboard_scroll.verticalScrollBar().setValue(window.dashboard_scroll.verticalScrollBar().maximum())
+    qt_app.processEvents()
+    for label in window.device_status_labels.values():
+        assert label.fontMetrics().horizontalAdvance(label.text()) <= label.contentsRect().width()
+    for button in window.valve_buttons:
+        assert button.height() >= button.sizeHint().height()

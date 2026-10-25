@@ -1,8 +1,8 @@
-Basu Membrane Control 0.1.0
+Basu Membrane Control 0.1.1
 Lab prototype for Windows 11 x64
 
 1. Extract this ZIP to a local folder.
-2. Double-click BasuMembraneControl-0.1.0-windows-x64.exe.
+2. Double-click BasuMembraneControl-0.1.1-windows-x64.exe.
 3. Leave Simulation mode checked (Demo). All demo measurements are simulated.
 
 The executable includes Python and the application libraries. Python, pip and

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 import pyqtgraph as pg
 
 from .models import Recipe, Step
+from .device_status import device_statuses
 
 
 STYLE = """
@@ -36,6 +37,9 @@ QLabel#subtitle, QLabel#muted { color: #617482; }
 QLabel#metricValue { font-size: 25pt; font-weight: 600; color: #142b3b; }
 QLabel#metricUnit { color: #617482; font-size: 9pt; }
 QFrame#metricCard { background: white; border: 1px solid #dce4e9; border-radius: 8px; }
+QFrame#devicePanel { background: white; border: 1px solid #dce4e9; border-radius: 7px; }
+QLabel#deviceCaption { font-size: 9pt; font-weight: 600; color: #3c5666; }
+QLabel#deviceName { font-size: 9pt; color: #617482; }
 QLabel#simulationBanner { color: #79520a; background: #fff5dc; border: 1px solid #ead398; border-radius: 6px; padding: 10px; }
 QLabel#hardwareBanner { color: #215265; background: #eaf3f7; border: 1px solid #cbdfe8; border-radius: 6px; padding: 10px; }
 QLabel#faultBanner { color: #962f34; background: #fff0f0; border: 1px solid #edc1c3; border-radius: 6px; padding: 9px; }
@@ -118,6 +122,9 @@ class MainWindow(QMainWindow):
         self._plot_data = {key: deque(maxlen=600) for key in ("flow_ml_min", "pressure_psi", "flux_lmh", "mass_g")}
         self._curves: dict[str, Any] = {}
         self._metric_labels: dict[str, QLabel] = {}
+        self.device_status_labels: dict[str, QLabel] = {}
+        self._device_status_names: dict[str, QLabel] = {}
+        self._device_status_containers: dict[str, QWidget] = {}
         self._presets: dict[str, Recipe] = {}
         self._editor_recipe: Recipe | None = None
         self._history: list[dict] = []
@@ -207,18 +214,43 @@ class MainWindow(QMainWindow):
         controls.addStretch()
         self.controller_badge = _label("Controller: disconnected", "muted")
         self.balance_badge = _label("Balance: disconnected", "muted")
-        controls.addWidget(self.controller_badge)
-        controls.addSpacing(10)
-        controls.addWidget(self.balance_badge)
-        outer.addLayout(controls)
+        self.controller_badge.hide()
+        self.balance_badge.hide()
         self.run_summary = _label("No run active. Load a demo template or edit a custom sequence.", "muted", True)
-        outer.addWidget(self.run_summary)
+        self.run_summary.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        controls.addWidget(self.run_summary, 1)
+        outer.addLayout(controls)
+        self.device_panel = QFrame()
+        self.device_panel.setObjectName("devicePanel")
+        self.device_panel.setAccessibleName("Device connections")
+        devices = QHBoxLayout(self.device_panel)
+        devices.setContentsMargins(12, 7, 12, 7)
+        devices.setSpacing(12)
+        caption = _label("Device\nconnections", "deviceCaption")
+        caption.setMinimumWidth(81)
+        devices.addWidget(caption)
+        for key, name in [("controller", "ESP32"), ("balance", "Scale"), ("pressure", "Pressure"),
+                          ("flow", "Flow"), ("pump_feedback", "Pump feedback"), ("outputs", "Valves and pump")]:
+            holder = QWidget()
+            cell = QVBoxLayout(holder)
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.setSpacing(1)
+            title = _label(name, "deviceName")
+            status = _label("Checking")
+            status.setAccessibleName(f"{name} connection status")
+            cell.addWidget(title)
+            cell.addWidget(status)
+            self._device_status_names[key] = title
+            self.device_status_labels[key] = status
+            self._device_status_containers[key] = holder
+            devices.addWidget(holder, 1)
+        outer.addWidget(self.device_panel)
         metric_row = QHBoxLayout()
         for key, title, unit in [("flow_ml_min", "Flow", "mL/min"), ("pressure_psi", "Pressure", "psi"), ("flux_lmh", "Flux", "L/m²/h"), ("mass_g", "Balance mass", "g")]:
             frame = QFrame()
             frame.setObjectName("metricCard")
             card = QVBoxLayout(frame)
-            card.setContentsMargins(13, 9, 13, 9)
+            card.setContentsMargins(13, 6, 13, 6)
             card.setSpacing(0)
             card.addWidget(_label(title, "muted"))
             value = _label("Waiting", "metricValue")
@@ -230,6 +262,8 @@ class MainWindow(QMainWindow):
         outer.addLayout(metric_row)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.setMinimumHeight(460)
         charts = QWidget()
         grid = QGridLayout(charts)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -237,7 +271,7 @@ class MainWindow(QMainWindow):
         definitions = [("flow_ml_min", "Flow", "mL/min", "#258b91"), ("pressure_psi", "Pressure", "psi", "#497eae"), ("flux_lmh", "Flux", "L/m²/h", "#8667aa"), ("mass_g", "Balance mass", "g", "#bb8250")]
         for index, (key, title, unit, color) in enumerate(definitions):
             plot = pg.PlotWidget()
-            plot.setMinimumHeight(135)
+            plot.setMinimumHeight(120)
             plot.setTitle(title, color="#385366", size="10pt")
             plot.setLabel("left", unit)
             plot.setLabel("bottom", "Time", units="s")
@@ -296,7 +330,13 @@ class MainWindow(QMainWindow):
         splitter.addWidget(lower)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 2)
-        outer.addWidget(splitter, 1)
+        self.dashboard_scroll = QScrollArea()
+        self.dashboard_scroll.setWidgetResizable(True)
+        self.dashboard_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.dashboard_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.dashboard_scroll.setAccessibleName("Live charts and manual controls")
+        self.dashboard_scroll.setWidget(splitter)
+        outer.addWidget(self.dashboard_scroll, 1)
         trace_row = QHBoxLayout()
         trace_row.addWidget(_label("Live traces retain the latest 600 points. CSV recording is configured separately.", "muted"))
         trace_row.addStretch()
@@ -803,6 +843,7 @@ class MainWindow(QMainWindow):
             state = str(snap.get("state", "idle"))
             simulation = bool(snap.get("simulation", True))
             desktop_simulation = bool(getattr(self.controller, "simulation", simulation))
+            self._update_device_statuses(snap, desktop_simulation)
             active = state.upper() in {"RUNNING", "PAUSED", "STOPPING"} or bool(snap.get("start_pending")) or bool(snap.get("stop_pending"))
             operating = active or state.upper() == "MANUAL"
             fault = str(snap.get("fault") or self._timer_fault or "")
@@ -819,7 +860,17 @@ class MainWindow(QMainWindow):
             self.simulation_check.setEnabled(not operating)
             self.banner.setObjectName("simulationBanner" if simulation else "hardwareBanner")
             self.banner.setStyleSheet("color: #79520a; background: #fff5dc; border: 1px solid #ead398; border-radius: 6px; padding: 10px;" if simulation else "color: #215265; background: #eaf3f7; border: 1px solid #cbdfe8; border-radius: 6px; padding: 10px;")
-            self.banner.setText("SIMULATION  •  Generated measurements and virtual outputs. No connected hardware is controlled." if desktop_simulation else ("DRY RUN FIRMWARE  •  The connected controller reports simulated measurements and outputs." if simulation and connected else ("HARDWARE MODE  •  Device readings are live. Verify the selected recipe and installation before starting." if verified else "HARDWARE MODE  •  Firmware reports an unverified installation. Hardware output commands are locked.")))
+            if desktop_simulation:
+                banner_text = "SIMULATION  •  Generated measurements and virtual outputs. No connected hardware is controlled."
+            elif not connected:
+                banner_text = "HARDWARE MODE  •  ESP32 is not connected. Select the controller and scale in Connections and settings."
+            elif simulation:
+                banner_text = "DRY RUN FIRMWARE  •  The connected controller reports simulated measurements and outputs."
+            elif verified:
+                banner_text = "HARDWARE MODE  •  Device readings are live. Verify the selected recipe and installation before starting."
+            else:
+                banner_text = "HARDWARE MODE  •  Firmware reports an unverified installation. Hardware output commands are locked."
+            self.banner.setText(banner_text)
             self.fault_label.setVisible(bool(fault))
             self.fault_label.setText(f"Run stopped or blocked: {fault}" if fault else "")
             self.start_button.setEnabled(not operating and ready and not fault and self.steps_table.rowCount() > 0)
@@ -880,6 +931,26 @@ class MainWindow(QMainWindow):
             self._previous_state = state
         finally:
             self._updating = False
+
+    def _update_device_statuses(self, snapshot: dict, desktop_simulation: bool):
+        colors = {"success": "#216b51", "warning": "#8a5d08", "muted": "#657984", "error": "#a3333b"}
+        for item in device_statuses(snapshot, desktop_simulation):
+            key = item["key"]
+            if key not in self.device_status_labels:
+                continue
+            status = self.device_status_labels[key]
+            name = str(item["label"])
+            value = str(item["status"])
+            detail = str(item["detail"])
+            level = str(item["level"])
+            self._device_status_names[key].setText(name)
+            status.setText(value)
+            status.setProperty("statusLevel", level)
+            status.setStyleSheet(f"font-size: 9pt; font-weight: 600; color: {colors.get(level, colors['muted'])};")
+            status.setAccessibleName(f"{name}: {value}")
+            status.setAccessibleDescription(detail)
+            for widget in (status, self._device_status_names[key], self._device_status_containers[key]):
+                widget.setToolTip(detail)
 
     def closeEvent(self, event):
         self.timer.stop()

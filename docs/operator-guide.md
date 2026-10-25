@@ -18,6 +18,26 @@ recovered LabVIEW procedures or approved chemical-cleaning instructions.
 5. Export a CSV and check its units, timestamps and run identification before
    using it in analysis. Demo data is for exercising the app, not lab results.
 
+## Check device connections
+
+The Dashboard's **Device connections** panel stays visible above the readings.
+
+| Status | Meaning |
+| --- | --- |
+| Connected | The ESP32 is responding, or fresh scale readings are arriving. |
+| Not connected | The required communication or scale data is unavailable. Select the device in Connections and settings. |
+| Connected (dry run) | A real ESP32 is responding with firmware that simulates measurements and outputs. |
+| Reading received | A valid analog reading is arriving from the controller. This does not establish correct wiring or calibration. |
+| No reading | No current valid value is available for that input. |
+| Simulated | The displayed device or measurement belongs to desktop Demo mode or ESP32 dry-run firmware. |
+| Not monitored | Physical valve position and pump-running status are not measured by the current interfaces. |
+
+The status panel does not open ports automatically. In desktop Simulation mode,
+every device is labelled Simulated. With desktop Simulation mode off, a real
+scale can be Connected while an ESP32 running dry-run firmware still supplies
+simulated pressure, flow and pump feedback. Missing or stale controller data
+must not leave an old reading marked available. Hover over a status for details.
+
 ## Configure an experiment
 
 Define the complete state of V1 through V7 for every step, plus pump enable

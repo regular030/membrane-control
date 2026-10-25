@@ -1,21 +1,27 @@
-Basu Membrane Control 0.1.0 is a lab prototype of the replacement desktop
-application and ESP32 controller firmware.
+Basu Membrane Control 0.1.1 adds a visible Device connections panel to the dashboard.
 
-The Windows executable bundles its Python runtime and application libraries.
-Start in Demo mode to explore the dashboard, simulated instruments, recipe
-workflow and data recording. USB drivers remain separate vendor components.
+- ESP32 and scale show Connected or Not connected.
+- Pressure, flow and pump-voltage inputs show Reading received or No reading.
+- Desktop Demo devices and ESP32 dry-run measurements are labelled Simulated.
+- Valves and pump movement show Not monitored because the current interfaces do not provide physical position/running feedback.
+- Compact windows keep the connection panel visible while charts and manual controls scroll.
 
-Local validation: 58 desktop tests, 16 native firmware tests, both ESP32 builds
-and a clean launch/exit of the packaged Windows EXE passed. GitHub-hosted CI
-was unavailable for this release; these assets were built and checked locally.
-See docs/validation.md in the repository for scope and remaining bench checks.
+Download the Windows x64 EXE and double-click it, or extract the matching ZIP.
+Python and the application libraries are bundled. USB drivers remain separate
+vendor components. Existing recorded data is preserved in the operator data
+folder when replacing the EXE.
 
-The physical rig has not been commissioned. The factory firmware build uses
-dry-run outputs. Hardware pin assignments, pump interfaces, sensor calibration,
-valve safe states and process limits require verification before operation.
-CIP, CWF and Fouling examples demonstrate the new software workflow; they are
-not approved reproductions of the missing LabVIEW sequence logic.
+Local validation: 72 desktop tests passed. The packaged Windows EXE was also
+launched and checked for a screenshot and clean exit. Firmware is unchanged
+from 0.1.0, whose two ESP32 builds and 16 native firmware tests passed.
+GitHub-hosted Actions remain unavailable for this account; the release is built
+and checked locally.
 
-Download the Windows x64 executable directly, or download and extract the ZIP
-for the executable and operating instructions. SHA256SUMS.txt identifies the
-published build files. Private repository downloads require GitHub access.
+The physical rig has not been commissioned. The default ESP32 firmware uses
+dry-run outputs, and its physical profile remains unconfigured. CIP, CWF and
+Fouling recipes are examples pending lab approval.
+
+[Installation](https://github.com/regular030/basu-membrane-control/blob/v0.1.1/docs/installation.md) |
+[Operator guide](https://github.com/regular030/basu-membrane-control/blob/v0.1.1/docs/operator-guide.md) |
+[Firmware setup](https://github.com/regular030/basu-membrane-control/blob/v0.1.1/firmware/README.md) |
+[Validation](https://github.com/regular030/basu-membrane-control/blob/v0.1.1/docs/validation.md)

@@ -1,4 +1,19 @@
-# Version 0.1.0 validation
+# Software validation
+
+## Desktop version 0.1.1
+
+Local checks on Windows 11 x64, 25 October 2026: **72 desktop tests passed**.
+The device-status tests cover desktop simulation, disconnected hardware, stale
+values, valid zero readings, invalid values, a real scale alongside dry-run
+firmware, and unavailable physical output feedback. Qt tests also check the
+visible status text and the compact window layout. The packaged EXE is smoke
+tested separately for launch, screenshot and clean exit.
+
+The ESP32 firmware is unchanged from 0.1.0. The physical rig remains
+uncommissioned. Connected communication, received analog values and physical
+actuator feedback are deliberately different statuses.
+
+## Version 0.1.0 baseline
 
 Local checks completed on Windows 11 x64, 25 October 2026.
 

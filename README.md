@@ -4,14 +4,14 @@ A Windows desktop application and ESP32 firmware for the ceramic membrane
 experiment rig. The prototype combines valve and pump sequences, pressure and
 flow measurements, balance readings, live graphs and recorded runs.
 
-**Version 0.1.0 is a software prototype.** It opens in Simulation mode and
+**Version 0.1.1 is a software prototype.** It opens in Simulation mode and
 does not connect hardware automatically. The firmware's default build also
 uses simulated measurements and dry-run outputs. The physical rig, board pin
 mapping, pump interface and calibrations have not been commissioned.
 
 ## Open the Windows app
 
-Download `BasuMembraneControl-0.1.0-windows-x64.exe` from
+Download `BasuMembraneControl-0.1.1-windows-x64.exe` from
 [Releases](https://github.com/regular030/basu-membrane-control/releases), or
 extract the matching portable ZIP. A private repository requires GitHub access.
 If an executable release is not listed yet, use the source instructions below.
@@ -36,6 +36,11 @@ messages, identity, acknowledgements, heartbeat, telemetry and fault states.
 The desktop separates instrument communication from the UI, marks stale data
 unavailable and never resumes a run merely because a device reconnects.
 Graphs retain a bounded recent history; persistent records are kept separately.
+
+The Dashboard's device checklist shows ESP32 and scale connections, available
+pressure/flow/pump-voltage readings and simulated devices. Valve and pump
+movement are labelled **Not monitored** because commands do not prove physical
+operation. Status updates use existing data and never open ports automatically.
 
 Demo templates are examples. Missing native LabVIEW `.vi` and `.lvproj` files
 mean the original experiment sequences have not been recovered. Valve states
@@ -91,7 +96,7 @@ controller or energize hardware.
 ## Documentation and validation
 
 - [Architecture and design choices](docs/architecture.md): how the software fits together and why.
-- [Version 0.1.0 validation](docs/validation.md): completed software checks and remaining bench work.
+- [Version 0.1.1 validation](docs/validation.md): completed software checks and remaining bench work.
 - [Hardware baseline](hardware/README.md): confirmed instruments and unresolved interfaces.
 - [Procurement](hardware/procurement.md): selected board, adapter and power candidates.
 - [Wire protocol](protocol/v1.md): desktop/firmware contract.
