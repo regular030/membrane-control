@@ -144,6 +144,7 @@ def build(version: str, clean: bool = True) -> Path:
         archive.write(manifest_path, "BUILD-INFO.json")
         for source, name in (
             (ROOT / "packaging" / "PORTABLE-README.txt", "READ-ME-FIRST.txt"),
+            (ROOT / "docs" / "START-HERE.md", "START-HERE.md"),
             (ROOT / "docs" / "installation.md", "installation.md"),
             (ROOT / "docs" / "operator-guide.md", "operator-guide.md"),
         ):

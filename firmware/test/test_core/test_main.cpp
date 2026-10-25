@@ -260,6 +260,40 @@ void test_protocol_envelope_rejects_boolean_versions_and_ids() {
   TEST_ASSERT_EQUAL(2, id);
 }
 
+void test_json_rejects_embedded_nul_and_malformed_unicode() {
+  JsonDocument document;
+  const char* invalid[] = {
+    R"({"v":1,"id":1,"cmd":"stop\u0000junk"})",
+    R"({"cmd":"\ud800"})", R"({"cmd":"\udc00"})",
+    R"({"cmd":"\ud800x"})", R"({"cmd":"\ud800\u0041"})",
+    "{\"cmd\":\"raw\nline\"}", "{\"cmd\":\"\xc0\xaf\"}",
+    "{\"cmd\":\"\xed\xa0\x80\"}", "{\"cmd\":\"\xf4\x90\x80\x80\"}",
+    "{'cmd':'stop'}", "{cmd:\"stop\"}",
+    R"({"id":+1})", R"({"id":01})", R"({"id":1.})",
+    R"({"id":.1})", R"({"id":1e})", R"({"id":1,"id":})"
+  };
+  for (const char* input : invalid)
+    TEST_ASSERT_NOT_NULL_MESSAGE(decodeObject(input, std::strlen(input), document), input);
+}
+
+void test_json_accepts_unicode_escapes_and_exact_frame_limits() {
+  JsonDocument document;
+  const char* valid[] = {
+    R"({"text":"\ud83d\ude80 \u00e9 \n \t \\u0000","number":-1.25e+2,"ok":true,"none":null})",
+    "{\"text\":\"\xc3\xa9 \xf0\x9f\x9a\x80\"}",
+    R"({"x":[[[[[[[1]]]]]]]})"
+  };
+  for (const char* input : valid)
+    TEST_ASSERT_NULL_MESSAGE(decodeObject(input, std::strlen(input), document), input);
+  std::string frame = "{}";
+  frame.resize(kMaxLineBytes, ' ');
+  TEST_ASSERT_NULL(decodeObject(frame.data(), frame.size(), document));
+  frame.push_back(' ');
+  TEST_ASSERT_NOT_NULL(decodeObject(frame.data(), frame.size(), document));
+  const char* tooDeep = R"({"x":[[[[[[[[1]]]]]]]]})";
+  TEST_ASSERT_NOT_NULL(decodeObject(tooDeep, std::strlen(tooDeep), document));
+}
+
 BoardConfig mockedPhysicalProfile() {
   // Test fixture only, never a production pin map.
   BoardConfig config;
@@ -336,6 +370,8 @@ int main(int, char**) {
   RUN_TEST(test_json_wrong_types_and_trailing_data_rejected);
   RUN_TEST(test_recipe_json_validation_is_atomic);
   RUN_TEST(test_protocol_envelope_rejects_boolean_versions_and_ids);
+  RUN_TEST(test_json_rejects_embedded_nul_and_malformed_unicode);
+  RUN_TEST(test_json_accepts_unicode_escapes_and_exact_frame_limits);
   RUN_TEST(test_dry_run_never_accesses_gpio_or_i2c);
   RUN_TEST(test_unverified_physical_profile_never_accesses_gpio_or_i2c);
   RUN_TEST(test_dac_failure_restores_valves_after_first_actuation_attempt);

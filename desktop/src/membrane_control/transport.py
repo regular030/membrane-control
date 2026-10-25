@@ -7,6 +7,7 @@ import threading
 import time
 from .engine import SequenceEngine
 from .models import Recipe
+from . import __version__
 
 MAX_LINE = 8192
 
@@ -22,9 +23,10 @@ class SerialTransport:
         self._thread.start()
 
     def send(self, message):
-        payload = json.dumps(message, separators=(",", ":"), allow_nan=False).encode() + b"\n"
-        if len(payload) > MAX_LINE:
+        body = json.dumps(message, separators=(",", ":"), allow_nan=False, ensure_ascii=False).encode("utf-8")
+        if len(body) > MAX_LINE:
             raise ValueError("Command exceeds serial line limit")
+        payload = body + b"\n"
         self._counter += 1
         if message.get("cmd") == "stop":
             # Do not execute an older queued start/manual command after a stop.
@@ -83,7 +85,7 @@ class SerialTransport:
                         discarding = False
                     elif not discarding:
                         buffer.append(byte)
-                        if len(buffer) >= (256 if self.raw else MAX_LINE):
+                        if len(buffer) > (256 if self.raw else MAX_LINE):
                             buffer.clear()
                             discarding = True
                             self._emit({"type": "parse_error", "error": "Serial line too long"})
@@ -117,28 +119,45 @@ class Simulator:
         self.started = clock()
         self.engine = SequenceEngine()
         self.events = []
-        self.last_heartbeat = clock()
-        self.last_poll = clock()
+        self.last_heartbeat = self.started
+        self.last_poll = self.started
         self.mass = 0.0
+
+    def _advance(self, now):
+        # Model the controller's independent clock before a newly arrived host
+        # command can refresh its heartbeat. A recipe that already ended before
+        # the deadline was safely idle; equality faults because firmware checks
+        # the watchdog before advancing a step at that instant.
+        deadline = self.last_heartbeat + 3.0
+        if self.engine.state in ("running", "manual") and now >= deadline:
+            completed_before_timeout = (self.engine.state == "running"
+                and self.engine.started + self.engine.recipe.duration_s < deadline)
+            if not completed_before_timeout:
+                self.engine.fail("Controller heartbeat timeout")
+                return
+        self.engine.tick(now)
 
     def send(self, packet):
         now = self.clock()
+        self._advance(now)
         command = packet.get("cmd")
         reply = {"v": 1, "id": packet["id"], "type": "ack", "ok": True}
         try:
             if command == "hello":
-                reply.update(type="hello", device="basu-membrane-control", firmware_version="0.1.0",
+                reply.update(type="hello", device="basu-membrane-control", firmware_version=__version__,
                              protocol_version=1, valve_count=7, hardware_verified=False, simulation=True)
             elif command == "heartbeat":
                 self.last_heartbeat = now
             elif command == "load_recipe":
                 self.engine.load(Recipe.from_dict(packet["recipe"]))
             elif command == "start":
-                self.last_heartbeat = now
                 self.engine.start(now)
-            elif command == "manual":
-                self.engine.manual(packet["valves"], packet["pump_percent"])
                 self.last_heartbeat = now
+            elif command == "manual":
+                was_idle = self.engine.state == "idle"
+                self.engine.manual(packet["valves"], packet["pump_percent"])
+                if was_idle:
+                    self.last_heartbeat = now
             elif command == "stop":
                 self.engine.stop()
             elif command == "clear_fault":
@@ -151,16 +170,14 @@ class Simulator:
 
     def poll(self, now=None):
         now = self.clock() if now is None else now
-        if self.engine.state in ("running", "manual") and now - self.last_heartbeat > 3:
-            self.engine.fail("Controller heartbeat timeout")
-        self.engine.tick(now)
+        self._advance(now)
         pump = self.engine.pump_percent
         flow = pump * 1.5 if any(self.engine.valves) else 0.0
         flow *= 1 + 0.015 * math.sin(now)
         self.mass += flow / 60 * max(0, min(now - self.last_poll, 5.0))
         self.last_poll = now
         events, self.events = self.events, []
-        events.append({"v": 1, "type": "telemetry", "uptime_ms": int((now-self.started)*1000),
+        events.append({"v": 1, "type": "telemetry", "uptime_ms": int((now-self.started)*1000) & 0xffffffff,
             "state": self.engine.state, "step_index": self.engine.step_index, "cycle": self.engine.cycle,
             "remaining_s": self.engine.remaining_s, "valves": list(self.engine.valves), "pump_percent": pump,
             "pressure_psi": pump * 0.12, "flow_ml_min": flow, "pump_feedback_v": pump / 10,

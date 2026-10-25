@@ -43,6 +43,7 @@ class AppController:
         self.pending = {}
         self.next_id = 0
         self.last_telemetry = None
+        self.last_controller_uptime = None
         self.last_mass = None
         self.last_heartbeat = -100.0
         self.connect_started = None
@@ -50,6 +51,8 @@ class AppController:
         self.local_fault = None
         self.mass_flow = MassFlow()
         self.start_phase = None
+        self.manual_pending = False
+        self.manual_requested = None
         self.stop_pending = False
         self.run_started = None
         self.last_record = -100.0
@@ -62,7 +65,7 @@ class AppController:
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
             "elapsed_s": 0.0, "run_id": None, "log": [], "recipe_name": self.recipe.name,
-            "step_name": "Ready", "start_pending": False, "stop_pending": False}
+            "step_name": "Ready", "start_pending": False, "manual_pending": False, "stop_pending": False}
         self.set_simulation(True)
 
     @staticmethod
@@ -81,7 +84,7 @@ class AppController:
         self.log.append(time.strftime("%H:%M:%S") + "  " + str(message))
 
     def _active(self):
-        return self.start_phase is not None or self.stop_pending or self.snapshot["state"] in ("running", "manual")
+        return self.start_phase is not None or self.manual_pending or self.stop_pending or self.snapshot["state"] in ("running", "manual")
 
     def _request(self, command, **values):
         if self.driver is None:
@@ -147,6 +150,7 @@ class AppController:
             self.driver = Simulator(self.clock)
             self.connect_started = self.clock()
             self._request("hello")
+            self.last_hello = self.clock()
             self._log("Demo mode: all measurements and outputs are simulated")
         else:
             self._log("Hardware mode: select controller and balance ports")
@@ -180,14 +184,17 @@ class AppController:
         self.driver = None
         self.pending.clear()
         self.start_phase = None
+        self.manual_pending = False
+        self.manual_requested = None
         self.stop_pending = False
         self.device = {}
         self.last_telemetry = None
+        self.last_controller_uptime = None
         if self.run_id is not None:
             self._finish_run("disconnected")
         if hasattr(self, "snapshot"):
             self.snapshot.update(controller_connected=False, controller_status="Disconnected",
-                state="idle", start_pending=False, stop_pending=False, valves=[False]*7, pump_percent=0,
+                state="idle", start_pending=False, manual_pending=False, stop_pending=False, valves=[False]*7, pump_percent=0,
                 pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None, hardware_verified=False)
 
     def connect_balance(self, port, baud=9600):
@@ -228,6 +235,7 @@ class AppController:
         if (self.recipe.require_balance or self.settings["require_balance"]) and not self.snapshot["balance_connected"]:
             raise ValueError("This run requires a fresh balance reading")
         self.start_phase = "loading"
+        self.run_started = None
         self.snapshot["start_pending"] = True
         try:
             self._request("load_recipe", recipe=self.recipe.to_dict())
@@ -238,6 +246,9 @@ class AppController:
 
     def stop_run(self):
         self.start_phase = None
+        self.manual_pending = False
+        self.manual_requested = None
+        self.snapshot["manual_pending"] = False
         self.snapshot["start_pending"] = False
         if self.stop_pending:
             return  # Repeated clicks must not extend the acknowledgement deadline.
@@ -255,17 +266,28 @@ class AppController:
         self._log("Stop requested")
 
     def set_manual(self, valves, pump_percent):
-        if self.start_phase or self.stop_pending or self.snapshot["state"] not in ("idle", "manual") or self.local_fault:
+        if self.start_phase or self.manual_pending or self.stop_pending or self.snapshot["state"] not in ("idle", "manual") or self.local_fault:
             raise ValueError("Stop the sequence or clear the fault first")
         if not self.snapshot["controller_connected"]:
             raise ValueError("Controller is not responding")
+        if self.last_telemetry is None or self.clock() - self.last_telemetry > 2:
+            raise ValueError("Controller telemetry is stale; wait for a fresh reading")
         valves, pump_percent = valve_states(valves), number(pump_percent, "Pump setting", 0, 100)
         if not self.snapshot["simulation"]:
             if not self.snapshot["hardware_verified"] or not self.recipe.hardware_approved:
                 raise ValueError("Physical controls are locked until hardware and recipe are approved")
             if self.snapshot["pressure_psi"] is None:
                 raise ValueError("Physical controls require a valid pressure reading")
-        self._request("manual", valves=list(valves), pump_percent=pump_percent)
+        self.manual_requested = (list(valves), pump_percent)
+        self.manual_pending = True
+        self.snapshot["manual_pending"] = True
+        try:
+            self._request("manual", valves=list(valves), pump_percent=pump_percent)
+        except Exception:
+            self.manual_requested = None
+            self.manual_pending = False
+            self.snapshot["manual_pending"] = False
+            raise
 
     def clear_fault(self):
         if not self.snapshot["controller_connected"]:
@@ -280,6 +302,9 @@ class AppController:
         Continuing heartbeat traffic after a failed stop would prevent the
         controller watchdog from protecting a still-active output.
         """
+        self._disconnect_with_fault(reason, "Stop unconfirmed; connection closed for watchdog stop")
+
+    def _disconnect_with_fault(self, reason, status):
         if self.local_fault and self.local_fault not in reason:
             reason = self.local_fault + "; " + reason
         driver, self.driver = self.driver, None
@@ -291,11 +316,14 @@ class AppController:
         self.pending.clear()
         self.device = {}
         self.last_telemetry = None
+        self.last_controller_uptime = None
         self.start_phase = None
+        self.manual_pending = False
+        self.manual_requested = None
         self.stop_pending = False
         self.local_fault = reason
-        self.snapshot.update(state="fault", fault=reason, start_pending=False, stop_pending=False,
-            controller_connected=False, controller_status="Stop unconfirmed; connection closed for watchdog stop",
+        self.snapshot.update(state="fault", fault=reason, start_pending=False, manual_pending=False, stop_pending=False,
+            controller_connected=False, controller_status=status,
             hardware_verified=False, pressure_psi=None, flow_ml_min=None, flux_lmh=None, pump_feedback_v=None)
         self._finish_run("fault")
         self._log(reason)
@@ -315,7 +343,9 @@ class AppController:
             return
         self.local_fault = self.local_fault or reason
         self.start_phase = None
-        self.snapshot.update(fault=self.local_fault, state="fault", start_pending=False)
+        self.manual_pending = False
+        self.manual_requested = None
+        self.snapshot.update(fault=self.local_fault, state="fault", start_pending=False, manual_pending=False)
         if self.stop_pending:
             # A second fault must not replace an outstanding stop or extend
             # its deadline. Otherwise two alternating faults defeat the watchdog.
@@ -340,6 +370,7 @@ class AppController:
                 self._log(packet.get("error", "Invalid serial message"))
             return
         if kind == "disconnected":
+            self.snapshot.update(pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None)
             if self._active():
                 self._abort("Controller disconnected")
             self.snapshot["controller_connected"] = False
@@ -348,11 +379,19 @@ class AppController:
         if type(packet.get("v")) is not int or packet["v"] != 1:
             return
         if kind in ("hello", "ack", "error"):
-            pending = self.pending.pop(packet.get("id"), None)
+            request_id = packet.get("id")
+            if type(request_id) is not int or not 0 < request_id <= 0xffffffff:
+                return
+            pending = self.pending.get(request_id)
             if pending is None:
                 return
             command = pending[0]
-            if packet.get("ok") is not True:
+            expected = "hello" if command == "hello" else "ack"
+            if not ((kind == expected and packet.get("ok") is True)
+                    or (kind == "error" and packet.get("ok") is False)):
+                return  # An invalid or mismatched frame cannot confirm a command.
+            self.pending.pop(request_id)
+            if packet["ok"] is False:
                 self._log(f"Controller rejected {command}: {packet.get('error', 'unknown error')}")
                 if command == "stop":
                     self._stop_failed("Controller rejected stop: " + str(packet.get("error", "unknown error")))
@@ -362,7 +401,8 @@ class AppController:
             if command == "hello":
                 if (kind != "hello" or packet.get("device") != "basu-membrane-control"
                     or type(packet.get("protocol_version")) is not int or packet["protocol_version"] != 1
-                    or packet.get("valve_count") != 7 or type(packet.get("simulation")) is not bool
+                    or type(packet.get("valve_count")) is not int or packet["valve_count"] != 7
+                    or type(packet.get("simulation")) is not bool
                     or type(packet.get("hardware_verified")) is not bool):
                     self.snapshot["controller_status"] = "Unsupported controller identity or protocol"
                     return
@@ -372,19 +412,27 @@ class AppController:
                 self._log("Controller identified: " + str(packet.get("firmware_version", "unknown")))
             elif command == "load_recipe" and self.start_phase == "loading":
                 self.start_phase = "starting"
+                # Use the earliest possible start, not the later ACK receipt.
+                # Very short recipes may already be finished when it arrives.
+                self.run_started = self.clock()
                 self._request("start")
             elif command == "start" and self.start_phase == "starting":
                 self.start_phase = None
                 self.snapshot["start_pending"] = False
-                self.run_started = now
                 self.last_record = -100.0
                 self.run_id = self.store.start(self.recipe, self.settings, self.device)
                 self.snapshot["run_id"] = self.run_id
                 self._log(f"Started run {self.run_id}: {self.recipe.name}")
+            elif command == "manual" and self.manual_pending:
+                valves, pump = self.manual_requested
+                self.manual_pending = False
+                self.manual_requested = None
+                self.snapshot.update(manual_pending=False, state="manual", valves=valves,
+                    pump_percent=pump, step_index=-1, cycle=0, remaining_s=0)
             elif command == "stop":
                 self.stop_pending = False
                 self.snapshot.update(stop_pending=False, state="fault" if self.local_fault else "idle",
-                    valves=[False]*7, pump_percent=0, step_index=-1, cycle=0, remaining_s=0)
+                    pump_percent=0, step_index=-1, cycle=0, remaining_s=0)
                 self._finish_run("stopped")
                 self._log("Stop acknowledged")
             elif command == "clear_fault":
@@ -395,15 +443,16 @@ class AppController:
         if kind != "telemetry" or not self.device:
             return
         try:
+            uptime = packet.get("uptime_ms")
+            if type(uptime) is not int or not 0 <= uptime <= 0xffffffff:
+                raise ValueError("Invalid controller uptime")
             valves = valve_states(packet.get("valves"))
             pump = number(packet.get("pump_percent"), "Pump telemetry", 0, 100)
             state = packet.get("state")
             if state not in ("idle", "running", "manual", "fault"):
                 raise ValueError("Invalid controller state")
-            if packet.get("simulation") is not self.device["simulation"]:
-                raise ValueError("Controller mode changed; reconnect required")
-            if packet.get("hardware_verified") is not self.device["hardware_verified"]:
-                raise ValueError("Controller hardware status changed")
+            if type(packet.get("simulation")) is not bool or type(packet.get("hardware_verified")) is not bool:
+                raise ValueError("Invalid controller mode or hardware status")
             values = {}
             for key, low, high in (("pressure_psi", -100, 1000), ("flow_ml_min", -1e6, 1e6), ("pump_feedback_v", -1, 12)):
                 value = packet.get(key)
@@ -419,8 +468,22 @@ class AppController:
         except ValueError as error:
             self._log(str(error))
             return
-        previous = self.snapshot["state"]
+        if self.last_controller_uptime is not None:
+            # Modulo subtraction accepts the normal 49.7-day millis rollover,
+            # but a reset produces an implausible jump relative to the host clock.
+            device_elapsed = (uptime - self.last_controller_uptime) & 0xffffffff
+            host_elapsed = max(0.0, now - self.last_telemetry) * 1000
+            if device_elapsed > host_elapsed + 5000:
+                self._disconnect_with_fault("Controller restarted or its clock changed",
+                    "Controller restarted; reconnect before continuing")
+                return
+        if (packet["simulation"] is not self.device["simulation"]
+                or packet["hardware_verified"] is not self.device["hardware_verified"]):
+            self._disconnect_with_fault("Controller mode or hardware verification changed",
+                "Controller setup changed; reconnect before continuing")
+            return
         self.last_telemetry = now
+        self.last_controller_uptime = uptime
         self.snapshot.update(values)
         self.snapshot.update(valves=list(valves), pump_percent=pump, step_index=step, cycle=cycle,
             remaining_s=remaining, state="fault" if self.local_fault else state,
@@ -428,9 +491,12 @@ class AppController:
             controller_status="Connected (dry run)" if packet["simulation"] else "Connected")
         self.snapshot["step_name"] = self.recipe.steps[step].name if 0 <= step < len(self.recipe.steps) else "Ready"
         if state == "fault":
-            self._finish_run("fault")
-        elif previous == "running" and state == "idle" and self.run_id is not None and not self.stop_pending:
-            self._finish_run("completed")
+            self._abort(fault or "Controller reported a fault without a description")
+        elif state == "idle" and self.run_id is not None and not self.stop_pending and not self.local_fault:
+            if self.run_started is None or now - self.run_started + 1e-6 < self.recipe.duration_s:
+                self._abort("Controller returned to idle before the sequence could finish")
+            else:
+                self._finish_run("completed")
         if (not packet["simulation"] and values["pressure_psi"] is None
                 and (state in ("running", "manual") or self.start_phase is not None)):
             self._abort("Pressure reading unavailable during physical operation")
@@ -454,10 +520,12 @@ class AppController:
                 self.driver = None
             self.pending.clear()
             self.start_phase = None
+            self.manual_pending = False
+            self.manual_requested = None
             self.stop_pending = False
             self.local_fault = "Application stopped: " + str(error)
             self.snapshot.update(state="fault", fault=self.local_fault, controller_connected=False,
-                controller_status="Stopped after application error", start_pending=False, stop_pending=False,
+                controller_status="Stopped after application error", start_pending=False, manual_pending=False, stop_pending=False,
                 pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None)
             self._log(self.local_fault)
 
@@ -535,6 +603,8 @@ class AppController:
         return self.store.list_runs()
 
     def export_csv(self, path, run_id=None):
+        if self._active():
+            raise ValueError("Stop the operation before exporting. Readings are already being saved.")
         self.store.export(path, run_id)
         self._log("Exported " + str(path))
 

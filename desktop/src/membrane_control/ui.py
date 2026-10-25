@@ -14,17 +14,17 @@ import time
 from typing import Any
 
 from PySide6.QtCore import Qt, QSignalBlocker, QTimer
-from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTabWidget,
-    QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
+    QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 import pyqtgraph as pg
 
-from .models import Recipe, Step
+from .models import MAX_STEPS, Recipe
 from .device_status import device_statuses
 
 
@@ -128,6 +128,8 @@ class MainWindow(QMainWindow):
         self._presets: dict[str, Recipe] = {}
         self._editor_recipe: Recipe | None = None
         self._history: list[dict] = []
+        self._last_run_id = None
+        self._next_step_index = 4
         self.setWindowTitle("Membrane Control")
         self.resize(1360, 940)
         self.setMinimumSize(1080, 760)
@@ -158,6 +160,7 @@ class MainWindow(QMainWindow):
         self._build_editor()
         self._build_connections()
         self._build_history()
+        self._build_help()
         self.statusBar().showMessage("Ready. Simulation is the default; no hardware connection is opened automatically.")
 
         self._load_presets()
@@ -191,6 +194,9 @@ class MainWindow(QMainWindow):
         self.simulation_check.toggled.connect(self._toggle_simulation)
         row.addSpacing(12)
         row.addWidget(self.simulation_check)
+        self.help_button = _button("Start here", lambda: self.tabs.setCurrentIndex(4))
+        self.help_button.setAccessibleName("Open the beginner guide")
+        row.addWidget(self.help_button)
         layout.addLayout(row)
 
     def _build_dashboard(self):
@@ -220,6 +226,13 @@ class MainWindow(QMainWindow):
         self.run_summary.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         controls.addWidget(self.run_summary, 1)
         outer.addLayout(controls)
+        readiness = QHBoxLayout()
+        self.readiness_label = _label("", "muted", True)
+        self.readiness_label.setAccessibleName("What to do next")
+        readiness.addWidget(self.readiness_label, 1)
+        self.next_step_button = _button("Start here", lambda: self.tabs.setCurrentIndex(self._next_step_index))
+        readiness.addWidget(self.next_step_button)
+        outer.addLayout(readiness)
         self.device_panel = QFrame()
         self.device_panel.setObjectName("devicePanel")
         self.device_panel.setAccessibleName("Device connections")
@@ -263,7 +276,7 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
-        splitter.setMinimumHeight(460)
+        splitter.setMinimumHeight(430)
         charts = QWidget()
         grid = QGridLayout(charts)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -271,7 +284,7 @@ class MainWindow(QMainWindow):
         definitions = [("flow_ml_min", "Flow", "mL/min", "#258b91"), ("pressure_psi", "Pressure", "psi", "#497eae"), ("flux_lmh", "Flux", "L/m²/h", "#8667aa"), ("mass_g", "Balance mass", "g", "#bb8250")]
         for index, (key, title, unit, color) in enumerate(definitions):
             plot = pg.PlotWidget()
-            plot.setMinimumHeight(120)
+            plot.setMinimumHeight(110)
             plot.setTitle(title, color="#385366", size="10pt")
             plot.setLabel("left", unit)
             plot.setLabel("bottom", "Time", units="s")
@@ -279,6 +292,7 @@ class MainWindow(QMainWindow):
             plot.setMenuEnabled(False)
             plot.setMouseEnabled(x=True, y=True)
             plot.getAxis("left").setWidth(58)
+            plot.getAxis("left").setTickDensity(0.6)
             plot.getAxis("left").enableAutoSIPrefix(False)
             plot.getAxis("bottom").enableAutoSIPrefix(False)
             plot.getViewBox().setLimits(xMin=0, minXRange=5,
@@ -290,9 +304,9 @@ class MainWindow(QMainWindow):
         lower = QWidget()
         low_layout = QHBoxLayout(lower)
         low_layout.setContentsMargins(0, 0, 0, 0)
-        manual = QGroupBox("Manual output commands")
+        manual = QGroupBox("Manual controls")
         manual_layout = QVBoxLayout(manual)
-        manual_layout.addWidget(_label("Commanded states only. Valve position feedback is not available.", "muted", True))
+        manual_layout.addWidget(_label("These show the commands sent. The app cannot confirm that a valve actually moved.", "muted", True))
         valve_row = QHBoxLayout()
         self.valve_buttons: list[QToolButton] = []
         for index in range(7):
@@ -301,12 +315,12 @@ class MainWindow(QMainWindow):
             button.setCheckable(True)
             button.setAccessibleName(f"Valve {index + 1} commanded state")
             button.setToolTip(f"Command valve {index + 1}; this does not confirm physical position")
-            button.clicked.connect(self._manual_command)
+            button.clicked.connect(self._manual_valve_command)
             self.valve_buttons.append(button)
             valve_row.addWidget(button)
         manual_layout.addLayout(valve_row)
         pump_row = QHBoxLayout()
-        pump_row.addWidget(_label("Pump command"))
+        pump_row.addWidget(_label("New pump setting"))
         self.manual_pump = QDoubleSpinBox()
         self.manual_pump.setRange(0, 100)
         self.manual_pump.setDecimals(1)
@@ -315,6 +329,8 @@ class MainWindow(QMainWindow):
         pump_row.addWidget(self.manual_pump)
         self.manual_apply = _button("Apply pump", self._manual_command)
         pump_row.addWidget(self.manual_apply)
+        self.manual_pump_sent = _label("Sent: 0.0 %", "muted")
+        pump_row.addWidget(self.manual_pump_sent)
         pump_row.addStretch()
         manual_layout.addLayout(pump_row)
         low_layout.addWidget(manual, 3)
@@ -338,7 +354,7 @@ class MainWindow(QMainWindow):
         self.dashboard_scroll.setWidget(splitter)
         outer.addWidget(self.dashboard_scroll, 1)
         trace_row = QHBoxLayout()
-        trace_row.addWidget(_label("Live traces retain the latest 600 points. CSV recording is configured separately.", "muted"))
+        trace_row.addWidget(_label("Runs save automatically. Export CSV saves a file that Excel can open.", "muted", True))
         trace_row.addStretch()
         trace_row.addWidget(_button("Clear traces", self._clear_traces))
         outer.addLayout(trace_row)
@@ -364,9 +380,9 @@ class MainWindow(QMainWindow):
         self.sample_spin.setSuffix(" s")
         self.sample_spin.setValue(30)
         self.sample_spin.setAccessibleName("Recipe recording interval seconds")
-        self.recipe_balance = QCheckBox("Require balance data")
-        self.recipe_approved = QCheckBox("Recipe verified for this hardware")
-        self.recipe_approved.setToolTip("Record this only after checking every output and transition against the installed system")
+        self.recipe_balance = QCheckBox("Require scale readings during this sequence")
+        self.recipe_approved = QCheckBox("Sequence reviewed for this rig")
+        self.recipe_approved.setToolTip("Tick only after a trained operator has checked the valve choices, pump settings and timing. This does not approve the equipment setup.")
         form.addWidget(_label("Name"), 0, 0)
         form.addWidget(self.recipe_name, 0, 1, 1, 3)
         form.addWidget(_label("Description"), 1, 0)
@@ -377,6 +393,8 @@ class MainWindow(QMainWindow):
         form.addWidget(self.sample_spin, 2, 3)
         form.addWidget(self.recipe_balance, 3, 1)
         form.addWidget(self.recipe_approved, 3, 3)
+        self.recipe_approval_note = _label("Sequence review is separate from equipment setup. This box cannot unlock an unfinished controller.", "muted", True)
+        form.addWidget(self.recipe_approval_note, 4, 1, 1, 3)
         form.setColumnStretch(1, 2)
         form.setColumnStretch(3, 2)
         layout.addLayout(form)
@@ -478,10 +496,10 @@ class MainWindow(QMainWindow):
         self.pressure_limit_spin.setDecimals(1)
         self.pressure_limit_spin.setSuffix(" psi")
         self.pressure_limit_spin.setAccessibleName("Desktop pressure stop threshold psi")
-        self.hardware_status = _label("Interface verification is reported by the controller firmware.", "muted", True)
+        self.hardware_status = _label("The controller reports whether its equipment setup has been checked.", "muted", True)
         settings.addRow("Membrane area", self.area_spin)
         settings.addRow("Liquid density", self.density_spin)
-        settings.addRow("Desktop pressure stop threshold", self.pressure_limit_spin)
+        settings.addRow("Stop if pressure goes above", self.pressure_limit_spin)
         settings.addRow(self.require_balance)
         settings.addRow(self.hardware_status)
         settings.addRow(_label("Flux uses the configured membrane area. Balance flow uses changes in mass and the configured liquid density.", "muted", True))
@@ -515,6 +533,52 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
         self.tabs.addTab(page, "Run history")
         self.tabs.currentChanged.connect(lambda index: self._refresh_history() if index == 3 else None)
+
+    def _build_help(self):
+        page = QScrollArea()
+        page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(14)
+        title = _label("Start with a practice run")
+        title.setStyleSheet("font-size: 17pt; font-weight: 600;")
+        layout.addWidget(title)
+        layout.addWidget(_label("Leave Simulation mode checked while learning. The app makes up readings and no real equipment moves.", "", True))
+        practice = QGroupBox("Three steps to try the app")
+        steps = QVBoxLayout(practice)
+        for text in ("1. Open Dashboard, choose CWF under Preset, then click Start run.",
+                     "2. Watch the readings and graphs. Click Stop run when you want to stop.",
+                     "3. Open Run history. The newest run is selected for you. Click Export selected run and choose where to save the CSV file; Excel can open it."):
+            steps.addWidget(_label(text, "", True))
+        actions = QHBoxLayout()
+        actions.addWidget(_button("Open Dashboard", lambda: self.tabs.setCurrentIndex(0)))
+        actions.addWidget(_button("Open Run history", lambda: self.tabs.setCurrentIndex(3)))
+        actions.addStretch()
+        steps.addLayout(actions)
+        layout.addWidget(practice)
+        modes = QGroupBox("What the three modes mean")
+        mode_layout = QVBoxLayout(modes)
+        for text in ("Computer simulation: Simulation mode is checked. Everything is pretend, so you do not need the rig or USB cables.",
+                     "Connected board test, also called dry run: Simulation mode is unchecked and a real ESP32 is connected. Its test program still makes up sensor readings and does not move valves or the pump. A connected scale may still provide real weights.",
+                     "Real equipment: the controller must report that equipment setup is approved. A trained operator must also review the sequence and check the pressure and required scale readings. The sequence review box alone cannot enable real equipment."):
+            mode_layout.addWidget(_label(text, "", True))
+        layout.addWidget(modes)
+        equipment = QGroupBox("When you are ready to connect the rig")
+        equipment_layout = QVBoxLayout(equipment)
+        equipment_layout.addWidget(_label("Ask the lab maintainer to finish and check the controller setup first. Then uncheck Simulation mode, open Connections and settings, and select the ESP32 and scale USB connections. Windows names these connections COM ports. The scale baud rate must match the setting on the scale.", "", True))
+        equipment_layout.addWidget(_label("The Dashboard explains why Start run is unavailable and gives you the next action. ON and OFF are commands, not proof that equipment moved. Stop run is a software stop; use the lab's physical stop procedure in an emergency.", "", True))
+        buttons = QHBoxLayout()
+        buttons.addWidget(_button("Open connections", lambda: self.tabs.setCurrentIndex(2)))
+        buttons.addWidget(_button("Open Sequence editor", lambda: self.tabs.setCurrentIndex(1)))
+        buttons.addStretch()
+        equipment_layout.addLayout(buttons)
+        layout.addWidget(equipment)
+        layout.addWidget(_label("To change an experiment, open Sequence editor. Each row sets how long a step lasts, which valves receive ON commands and the pump setting. Record every controls the saved reading interval, not the speed of the live graphs. Save as keeps a custom preset; Import JSON opens a saved sequence file.", "muted", True))
+        layout.addStretch()
+        page.setWidget(content)
+        self.tabs.addTab(page, "Help")
 
     def _action(self, callback, success: str = "", show_dialog: bool = True):
         try:
@@ -566,6 +630,18 @@ class MainWindow(QMainWindow):
         self.recipe_balance.setChecked(recipe.require_balance)
         self.recipe_approved.setChecked(recipe.hardware_approved)
         self._populate_steps([{"name": s.name, "duration_s": s.duration_s, "valves": list(s.valves), "pump_percent": s.pump_percent} for s in recipe.steps])
+        self._show_recipe_in_dropdown(recipe)
+
+    def _show_recipe_in_dropdown(self, recipe: Recipe):
+        with QSignalBlocker(self.preset_combo):
+            for index in range(self.preset_combo.count() - 1, -1, -1):
+                if str(self.preset_combo.itemData(index)).startswith("__current__:"):
+                    self.preset_combo.removeItem(index)
+            index = self.preset_combo.findData(recipe.name)
+            if index < 0:
+                self.preset_combo.addItem(recipe.name + "  |  current sequence", "__current__:" + recipe.name)
+                index = self.preset_combo.count() - 1
+            self.preset_combo.setCurrentIndex(index)
 
     def _populate_steps(self, steps: list[dict]):
         self.steps_table.setRowCount(0)
@@ -630,10 +706,14 @@ class MainWindow(QMainWindow):
             recipe = self._collect_recipe()
             self.controller.load_recipe(recipe)
             self._editor_recipe = recipe
+            self._show_recipe_in_dropdown(recipe)
         self._action(apply, "Sequence applied. Ready to start when required devices are available.")
 
     def _add_step(self):
         steps = self._step_data()
+        if len(steps) >= MAX_STEPS:
+            self.statusBar().showMessage(f"A sequence can contain up to {MAX_STEPS} steps.", 6000)
+            return
         steps.append({"name": f"Step {len(steps) + 1}", "duration_s": 60, "valves": [False] * 7, "pump_percent": 0})
         self._populate_steps(steps)
         self.steps_table.selectRow(len(steps) - 1)
@@ -665,7 +745,8 @@ class MainWindow(QMainWindow):
         name, accepted = QInputDialog.getText(self, "Save custom recipe", "Recipe name", text=self.recipe_name.text())
         if accepted and name.strip():
             self.recipe_name.setText(name.strip())
-            self._export_recipe()
+            if self._export_recipe():
+                self._apply_recipe()
 
     def _export_recipe(self):
         try:
@@ -681,7 +762,10 @@ class MainWindow(QMainWindow):
             def save():
                 self.controller.save_recipe(path, recipe)
                 self._load_presets()
-            self._action(save, f"Recipe saved to {path}")
+                self._show_recipe_in_dropdown(recipe)
+                return True
+            return self._action(save, f"Recipe saved to {path}")
+        return False
 
     def _import_recipe(self):
         path, _ = QFileDialog.getOpenFileName(self, "Import recipe", "", "Recipe JSON (*.json)")
@@ -698,6 +782,7 @@ class MainWindow(QMainWindow):
             recipe = self._collect_recipe()
             self.controller.load_recipe(recipe)
             self._editor_recipe = recipe
+            self._show_recipe_in_dropdown(recipe)
             self.controller.start_run()
         self._action(start, "Run started")
 
@@ -716,6 +801,14 @@ class MainWindow(QMainWindow):
         if self._updating:
             return
         self._action(lambda: self.controller.set_manual([b.isChecked() for b in self.valve_buttons], self.manual_pump.value()), "Manual output command sent")
+
+    def _manual_valve_command(self, *_):
+        if self._updating:
+            return
+        # Changing a valve must not also apply a pump value which the operator
+        # has typed but has not yet sent with Apply pump.
+        pump = float(self.controller.snapshot.get("pump_percent") or 0)
+        self._action(lambda: self.controller.set_manual([b.isChecked() for b in self.valve_buttons], pump), "Valve command sent; pump setting unchanged")
 
     def _toggle_simulation(self, enabled: bool):
         if not hasattr(self, "banner"):
@@ -770,6 +863,10 @@ class MainWindow(QMainWindow):
 
     def _refresh_history(self):
         try:
+            selected_row = self.history_table.currentRow()
+            selected_id = None
+            if 0 <= selected_row < len(self._history):
+                selected_id = self._history[selected_row].get("run_id", self._history[selected_row].get("id"))
             self._history = self.controller.list_runs()
             self.history_table.setRowCount(len(self._history))
             for row, run in enumerate(self._history):
@@ -777,7 +874,11 @@ class MainWindow(QMainWindow):
                 for column, value in enumerate(values):
                     self.history_table.setItem(row, column, QTableWidgetItem(str(value)))
             self.history_empty.setVisible(not self._history)
-            self.history_export.setEnabled(bool(self._history))
+            self.history_export.setEnabled(bool(self._history) and not self._operation_in_progress(self.controller.snapshot))
+            if self._history:
+                selected = next((index for index, run in enumerate(self._history)
+                                 if run.get("run_id", run.get("id")) == selected_id), 0)
+                self.history_table.selectRow(selected)
         except Exception as exc:
             self.history_empty.setText(f"Run history unavailable: {exc}")
             self.history_empty.show()
@@ -787,6 +888,9 @@ class MainWindow(QMainWindow):
 
     def _export_history(self):
         row = self.history_table.currentRow()
+        if row < 0 and self._history:
+            row = 0
+            self.history_table.selectRow(row)
         if not 0 <= row < len(self._history):
             self.statusBar().showMessage("Select a recorded run to export", 6000)
             return
@@ -794,11 +898,52 @@ class MainWindow(QMainWindow):
         self._export_csv(run.get("run_id", run.get("id")))
 
     def _export_csv(self, run_id):
+        if self._operation_in_progress(self.controller.snapshot):
+            self.statusBar().showMessage("Click Stop run and wait for it to stop before exporting. Readings are saved automatically.", 10000)
+            return
         path, _ = QFileDialog.getSaveFileName(self, "Export measurements", "membrane-run.csv", "CSV files (*.csv)")
         if path:
             if not path.lower().endswith(".csv"):
                 path += ".csv"
             self._action(lambda: self.controller.export_csv(path, run_id=run_id), f"CSV exported to {path}")
+
+    @staticmethod
+    def _operation_in_progress(snapshot):
+        return str(snapshot.get("state", "")).lower() in {"running", "manual", "paused", "stopping"} or any(
+            snapshot.get(key) for key in ("start_pending", "stop_pending", "manual_pending"))
+
+    def _readiness(self, snap, *, operating, fault, connected, fresh, simulation, desktop_simulation, verified, balanced, needs_balance):
+        """Operator-facing next action, separate from the controller's gates."""
+        if snap.get("stop_pending"):
+            return "Stopping. Wait for the controller to confirm that it has stopped.", None, ""
+        if fault:
+            return "Stopped after a problem. Check the equipment, then use Clear fault.", 4, "Read the guide"
+        if snap.get("start_pending"):
+            return "Starting. Wait for the controller to confirm the sequence.", None, ""
+        if snap.get("manual_pending"):
+            return "Sending a manual command. Wait for the controller to confirm it.", None, ""
+        if operating:
+            return ("Manual controls are active. Click Stop run before starting a sequence." if str(snap.get("state")).lower() == "manual"
+                    else "Run in progress. Click Stop run whenever you need to stop."), None, ""
+        if not connected:
+            if desktop_simulation:
+                return "Preparing practice devices. This usually takes a moment.", None, ""
+            return "Cannot start: ESP32 is not connected. Connect it in Connections and settings.", 2, "Open connections"
+        if not fresh:
+            return "Cannot start: waiting for new controller readings. Check its USB connection and power.", 2, "Open connections"
+        if not simulation and not verified:
+            return "Cannot start: equipment setup is unfinished. Ask the lab maintainer; the sequence review box cannot unlock it.", 4, "Read setup guide"
+        if not simulation and snap.get("pressure_psi") is None:
+            return "Cannot start: no pressure reading. Have the pressure sensor and its wiring checked.", 2, "Open connections"
+        if needs_balance and not balanced:
+            return "Cannot start: this run needs scale readings. Connect the scale and check its settings.", 2, "Open connections"
+        if not simulation and not self.recipe_approved.isChecked():
+            return "Cannot start: a trained operator must review this sequence for the rig.", 1, "Review sequence"
+        try:
+            self._collect_recipe()
+        except (ValueError, TypeError) as error:
+            return "Check the sequence before starting: " + str(error), 1, "Review sequence"
+        return "Ready to start. Start run uses the settings shown in Sequence editor.", None, ""
 
     def _clear_traces(self):
         self._plot_time.clear()
@@ -844,9 +989,9 @@ class MainWindow(QMainWindow):
             simulation = bool(snap.get("simulation", True))
             desktop_simulation = bool(getattr(self.controller, "simulation", simulation))
             self._update_device_statuses(snap, desktop_simulation)
-            active = state.upper() in {"RUNNING", "PAUSED", "STOPPING"} or bool(snap.get("start_pending")) or bool(snap.get("stop_pending"))
+            active = state.upper() in {"RUNNING", "PAUSED", "STOPPING"} or bool(snap.get("start_pending")) or bool(snap.get("stop_pending")) or bool(snap.get("manual_pending"))
             operating = active or state.upper() == "MANUAL"
-            fault = str(snap.get("fault") or self._timer_fault or "")
+            fault = str(snap.get("fault") or self._timer_fault or ("Controller needs a fault check before continuing" if state.upper() == "FAULT" else ""))
             connected = bool(snap.get("controller_connected", False))
             balanced = bool(snap.get("balance_connected", False))
             verified = bool(snap.get("hardware_verified", False))
@@ -854,36 +999,47 @@ class MainWindow(QMainWindow):
             last_telemetry = getattr(self.controller, "last_telemetry", None)
             fresh = last_telemetry is not None and self.controller.clock() - last_telemetry <= 2 if hasattr(self.controller, "clock") else connected
             ready = connected and fresh and (simulation or (verified and self.recipe_approved.isChecked() and snap.get("pressure_psi") is not None)) and (balanced or not needs_balance)
-            self.state_chip.setText("STOPPING" if snap.get("stop_pending") else ("STARTING" if snap.get("start_pending") else state.replace("_", " ").upper()))
+            next_text, next_index, next_button = self._readiness(snap, operating=operating, fault=fault,
+                connected=connected, fresh=fresh, simulation=simulation, desktop_simulation=desktop_simulation,
+                verified=verified, balanced=balanced, needs_balance=needs_balance)
+            self.readiness_label.setText(next_text)
+            self._next_step_index = next_index if next_index is not None else 4
+            self.next_step_button.setText(next_button)
+            self.next_step_button.setVisible(next_index is not None)
+            self.state_chip.setText("STOPPING" if snap.get("stop_pending") else ("STARTING" if snap.get("start_pending") else ("APPLYING" if snap.get("manual_pending") else state.replace("_", " ").upper())))
             with QSignalBlocker(self.simulation_check):
                 self.simulation_check.setChecked(desktop_simulation)
             self.simulation_check.setEnabled(not operating)
             self.banner.setObjectName("simulationBanner" if simulation else "hardwareBanner")
             self.banner.setStyleSheet("color: #79520a; background: #fff5dc; border: 1px solid #ead398; border-radius: 6px; padding: 10px;" if simulation else "color: #215265; background: #eaf3f7; border: 1px solid #cbdfe8; border-radius: 6px; padding: 10px;")
             if desktop_simulation:
-                banner_text = "SIMULATION  •  Generated measurements and virtual outputs. No connected hardware is controlled."
+                banner_text = "SIMULATION  •  Practice with made up readings. No real equipment will move. Use Start here if this is your first visit."
             elif not connected:
                 banner_text = "HARDWARE MODE  •  ESP32 is not connected. Select the controller and scale in Connections and settings."
             elif simulation:
-                banner_text = "DRY RUN FIRMWARE  •  The connected controller reports simulated measurements and outputs."
+                banner_text = "DRY RUN FIRMWARE  •  A real ESP32 is connected in test mode. Its readings are made up and valves and pump will not move."
             elif verified:
                 banner_text = "HARDWARE MODE  •  Device readings are live. Verify the selected recipe and installation before starting."
             else:
-                banner_text = "HARDWARE MODE  •  Firmware reports an unverified installation. Hardware output commands are locked."
+                banner_text = "HARDWARE MODE  •  Equipment setup is unfinished. Ask the lab maintainer before using the rig."
             self.banner.setText(banner_text)
             self.fault_label.setVisible(bool(fault))
             self.fault_label.setText(f"Run stopped or blocked: {fault}" if fault else "")
-            self.start_button.setEnabled(not operating and ready and not fault and self.steps_table.rowCount() > 0)
-            self.start_button.setToolTip("Start the edited sequence" if ready else "Connect required devices and verify the hardware installation")
+            self.start_button.setEnabled(not operating and ready and not fault and next_index is None)
+            self.start_button.setToolTip(next_text)
             self.stop_button.setEnabled(connected or operating or bool(fault))
             self.clear_fault_button.setVisible(bool(fault))
-            self.clear_fault_button.setEnabled(bool(fault) and connected)
+            self.clear_fault_button.setEnabled(bool(fault) and connected and not snap.get("stop_pending") and not snap.get("start_pending") and not snap.get("manual_pending"))
             for widget in (self.preset_combo, self.apply_recipe_button, self.steps_table, self.recipe_approved,
                            self.settings_apply, self.recipe_name, self.recipe_description, self.repeat_spin,
                            self.sample_spin, self.recipe_balance, self.import_button, self.save_as_button,
                            *self._editor_edit_buttons):
                 widget.setEnabled(not operating)
-            manual = not active and ready and not fault
+            applied_recipe = getattr(self.controller, "recipe", None)
+            applied_approved = bool(getattr(applied_recipe, "hardware_approved", False))
+            manual_needs_scale = bool(getattr(applied_recipe, "require_balance", False)) or bool(self.controller.settings.get("require_balance", False))
+            manual_ready = connected and fresh and (simulation or (verified and applied_approved and snap.get("pressure_psi") is not None)) and (balanced or not manual_needs_scale)
+            manual = not active and manual_ready and not fault
             for index, button in enumerate(self.valve_buttons):
                 actual = list(snap.get("valves") or [False] * 7)
                 commanded = bool(actual[index]) if index < len(actual) else False
@@ -893,7 +1049,11 @@ class MainWindow(QMainWindow):
                 button.setEnabled(manual)
             self.manual_pump.setEnabled(manual)
             self.manual_apply.setEnabled(manual)
-            if active or state.upper() == "FAULT" or (self._previous_state != state and state.upper() == "IDLE"):
+            self.manual_apply.setToolTip("Apply the reviewed sequence first in Sequence editor." if not simulation and verified and not applied_approved
+                                         else "Send the new pump setting. Valve settings stay as shown.")
+            self.manual_pump_sent.setText("Sent: " + _number(snap.get("pump_percent", 0), 1) + " %")
+            if (state.upper() in {"RUNNING", "PAUSED", "STOPPING", "FAULT"} or snap.get("start_pending")
+                    or snap.get("stop_pending") or (self._previous_state != state and state.upper() == "IDLE")):
                 self.manual_pump.setValue(float(snap.get("pump_percent") or 0))
             for key, label in self._metric_labels.items():
                 label.setText(_number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2))
@@ -901,12 +1061,29 @@ class MainWindow(QMainWindow):
             self.balance_badge.setText(f"Balance: {'simulated' if desktop_simulation else ('connected' if balanced else 'disconnected')}")
             self.controller_detail.setText(str(snap.get("controller_status") or "No responding controller"))
             self.balance_detail.setText(str(snap.get("balance_status") or "No valid balance data"))
-            self.hardware_status.setText("Controller interface verification: " + ("simulated" if simulation else ("verified by firmware" if verified else "not verified by firmware")))
+            if desktop_simulation:
+                hardware_text = "Practice mode: no equipment setup is needed."
+            elif not connected:
+                hardware_text = "Equipment setup: waiting for a controller connection."
+            elif simulation:
+                hardware_text = "Connected board test: the ESP32 will not move the real valves or pump."
+            elif verified:
+                hardware_text = "Equipment setup: approved by the controller. A trained operator must also review the sequence."
+            else:
+                hardware_text = "Equipment setup is unfinished. Ask the lab maintainer; this cannot be changed here."
+            self.hardware_status.setText(hardware_text)
             self.controller_connect.setEnabled(not operating and not desktop_simulation)
             self.balance_connect.setEnabled(not operating and not desktop_simulation)
             self.controller_disconnect.setEnabled(not operating and connected and not desktop_simulation)
             self.balance_disconnect.setEnabled(not operating and balanced and not desktop_simulation)
-            self.export_current_button.setEnabled(bool(snap.get("run_id")))
+            current_run_id = snap.get("run_id")
+            if self._last_run_id is not None and current_run_id is None:
+                self._refresh_history()
+            self._last_run_id = current_run_id
+            self.export_current_button.setEnabled(not operating and (bool(current_run_id) or bool(self._history)))
+            self.history_export.setEnabled(not operating and bool(self._history))
+            self.export_current_button.setToolTip("Stop the run before exporting. Readings are saved automatically." if operating
+                                                  else "Export the most recent recorded run to a CSV file for Excel")
             recipe_name = snap.get("recipe_name") or self.recipe_name.text() or "No sequence"
             if active:
                 self.run_summary.setText(f"{recipe_name}  |  Cycle {snap.get('cycle', 1)}  |  {snap.get('step_name') or 'Step ' + str(int(snap.get('step_index', 0)) + 1)}  |  {_number(snap.get('remaining_s'), 1)} s remaining  |  {_number(snap.get('elapsed_s'), 1)} s elapsed")
@@ -945,8 +1122,9 @@ class MainWindow(QMainWindow):
             level = str(item["level"])
             self._device_status_names[key].setText(name)
             status.setText(value)
-            status.setProperty("statusLevel", level)
-            status.setStyleSheet(f"font-size: 9pt; font-weight: 600; color: {colors.get(level, colors['muted'])};")
+            if status.property("statusLevel") != level:
+                status.setProperty("statusLevel", level)
+                status.setStyleSheet(f"font-size: 9pt; font-weight: 600; color: {colors.get(level, colors['muted'])};")
             status.setAccessibleName(f"{name}: {value}")
             status.setAccessibleDescription(detail)
             for widget in (status, self._device_status_names[key], self._device_status_containers[key]):

@@ -29,11 +29,15 @@ def test_mass_slope_density_and_tare_reset():
 def test_storage_export_and_interruption_recovery(tmp_path):
     store = RunStore(tmp_path)
     run = store.start(Recipe(), {"density_g_ml": 1}, {"simulation": True})
-    store.sample(run, {"elapsed_s": 1, "valves": [False]*7, "simulation": True, "mass_g": 2})
+    store.sample(run, {"elapsed_s": 1, "valves": [False]*7, "simulation": True, "mass_g": 2,
+                       "pump_feedback_v": 2.5, "controller_status": "Connected", "balance_status": "Weight data stale"})
     store.export(tmp_path / "run.csv", run)
     with (tmp_path / "run.csv").open(encoding="utf-8-sig") as handle:
         rows = list(csv.DictReader(handle))
     assert rows[0]["mass_g"] == "2"
+    assert rows[0]["pump_feedback_v"] == "2.5"
+    assert rows[0]["controller_status"] == "Connected"
+    assert rows[0]["balance_status"] == "Weight data stale"
     metadata = json.loads((tmp_path / "run.metadata.json").read_text())
     assert metadata["recipe"]["schema_version"] == 1
     store.close()

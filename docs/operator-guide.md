@@ -1,97 +1,89 @@
-# Operator guide
+# Use the app
 
-This guide describes the prototype workflow. The initial release runs in Demo
-mode and has not been commissioned on the physical rig. Example CIP, CWF and
-Fouling recipes show how to use the software; their valve sequences are not
-recovered LabVIEW procedures or approved chemical-cleaning instructions.
+New user? Start with the [five-minute demo](START-HERE.md).
+The app opens with **Simulation mode** checked. Its demo needs no USB equipment
+and does not control the physical rig.
 
-## Explore Demo mode
+## Run a demo and save its results
 
-1. Open the application and leave **Simulation mode** checked (Demo). Check
-   that the interface identifies the readings as simulated.
-2. Inspect the device status, seven valve channels and the separate pump
-   command. A commanded relay state does not confirm physical valve position.
-3. Select a sample CIP, CWF or Fouling recipe. Review each step's duration,
-   explicit valve states and pump command before starting.
-4. Start a simulated run. Watch the current step, elapsed time, graphs and
-   event messages. Stop the run and inspect its recorded data.
-5. Export a CSV and check its units, timestamps and run identification before
-   using it in analysis. Demo data is for exercising the app, not lab results.
+1. On **Dashboard**, choose a **Preset**: CIP, CWF or Fouling.
+2. Click **Start run**. Watch the current step, readings and graphs.
+3. Click **Stop run** when you are finished.
+4. Click **Export CSV**, then choose a filename and folder.
+5. To export an older run, open **Run history**, select its row and click
+   **Export selected run**.
 
-## Check device connections
+Demo results are practice data, not lab measurements. The presets are example
+sequences, not approved copies of the old LabVIEW programs.
 
-The Dashboard's **Device connections** panel stays visible above the readings.
+Readings save automatically during a run. Export, editing and connection
+changes are unavailable while an operation is active. Click **Stop run** and
+wait for the stopped state before exporting or changing the setup.
+
+## Understand the screen
+
+The **Device connections** panel on Dashboard shows what the app actually
+knows. Hover over a status for more detail.
 
 | Status | Meaning |
 | --- | --- |
-| Connected | The ESP32 is responding, or fresh scale readings are arriving. |
-| Not connected | The required communication or scale data is unavailable. Select the device in Connections and settings. |
-| Connected (dry run) | A real ESP32 is responding with firmware that simulates measurements and outputs. |
-| Reading received | A valid analog reading is arriving from the controller. This does not establish correct wiring or calibration. |
-| No reading | No current valid value is available for that input. |
-| Simulated | The displayed device or measurement belongs to desktop Demo mode or ESP32 dry-run firmware. |
-| Not monitored | Physical valve position and pump-running status are not measured by the current interfaces. |
+| Connected | The ESP32 is responding, or current scale data is arriving. |
+| Connected (dry run) | A real ESP32 is responding, but its firmware is simulating readings and outputs. |
+| Simulated | This device or reading is generated for practice. |
+| Reading received | The controller supplied a valid value. Its accuracy still depends on wiring and calibration. |
+| Not connected / No reading | A current usable response is missing. |
+| Not monitored | The app has no sensor confirming actual valve movement or pump operation. |
 
-The status panel does not open ports automatically. In desktop Simulation mode,
-every device is labelled Simulated. With desktop Simulation mode off, a real
-scale can be Connected while an ESP32 running dry-run firmware still supplies
-simulated pressure, flow and pump feedback. Missing or stale controller data
-must not leave an old reading marked available. Hover over a status for details.
+A scale may provide real measurements while the ESP32 is in dry run. Read each
+status separately. An old point left on a graph is not a new measurement.
 
-## Configure an experiment
+If **Start run** is unavailable, read the reason and suggested next action on
+Dashboard. A recipe-review checkbox cannot make an unverified controller ready.
+Use **Start here** or the **Help** tab if you need the first-use instructions.
 
-Define the complete state of V1 through V7 for every step, plus pump enable
-and speed command. Use explicit duration units. Never infer the correct
-sequence from a green indicator in a legacy screenshot.
+## Review or change a sequence
 
-Keep the recording interval separate from acquisition and control timing.
-For example, a 30-second recording interval does not mean the controller waits
-30 seconds between monitoring or sequencing updates. The legacy screenshots
-label recording frequency in minutes and cycle durations in seconds; convert
-those values explicitly when transferring settings.
+Open **Sequence editor**. Each row is one step with a duration, valve settings
+and a pump setting. Check every row before applying changes. The recording
+interval controls how often results are saved, not how quickly the controls
+respond. All time fields show their units.
 
-Before deriving flux, record membrane area and units. Distinguish flow-meter
-flow from balance-derived flow, and pump speed feedback from liquid flow.
-Record liquid density for mass-to-volume conversions. A tare, container
-replacement or unstable balance reading must not create an artificial flow
-spike.
+**Apply sequence** uses your edited sequence. **Save as** asks for a name and
+file location, then saves and applies that sequence as a custom preset.
+**Import JSON** opens and applies a previously saved sequence. Check the
+selected preset and the rows before starting it.
 
-## Move to hardware after commissioning
+For a real experiment, use only the lab's approved sequence and measurement
+settings. Membrane area affects flux; liquid density affects flow calculated
+from the scale. Do not change these values just to make a graph look right.
 
-The controller profile must match the exact board and DB15 pump harness.
-The later DB25 pump needs a separately verified profile and harness. Connector
-pin counts do not establish signal compatibility.
+## Try manual controls
 
-| Before starting | What the operator should establish |
-| --- | --- |
-| Controller | Correct firmware identity; responsive heartbeat; verified hardware profile |
-| Balance | Correct instrument; fresh valid readings; expected units and stability status |
-| Sensors | Valid calibration; fresh readings; reasonable pressure and flow |
-| Recipe | Reviewed valve and pump sequence; explicit durations; appropriate limits |
-| Recording | Writable destination; correct run name; recording interval and units checked |
-| Rig | Ready for that sequence; correct liquid paths; independent shutdown available |
+With no sequence running, a valve button sends that valve command immediately.
+Typing a **New pump setting** does not send it until you click **Apply pump**.
+The **Sent** value shows the last command. Changing a valve keeps that sent pump
+setting. Click **Stop run** to leave manual control before starting a sequence.
+These are commands; the app cannot confirm physical valve movement.
 
-Begin with manual, supervised tests using the lab's commissioning procedure.
-Do not attach live mains loads for a first software test. The desktop Stop
-control depends on the computer and communication path; use the independent
-rig shutdown if the app or connection fails.
+## Use a commissioned rig
 
-Every launch starts in Demo mode. For a commissioned rig, stop the current run,
-uncheck **Simulation mode** and select the controller and balance ports explicitly in
-**Connections and settings**. The application does not probe arbitrary ports or reconnect
-instruments automatically. Keep each instrument on its intended connection.
+The person setting up the hardware must first verify the wiring, firmware,
+calibration and operating limits. Connecting USB or selecting Hardware mode
+is not that verification. See [installation](installation.md) for the USB steps
+and the online [ESP32 setup guide](https://github.com/regular030/basu-membrane-control/blob/main/firmware/README.md) for firmware work.
 
-## Respond to a fault
+Before a physical run, confirm the correct instruments are connected, readings
+are current, the approved preset is selected and the rig is ready for its liquid
+paths. Valve indicators describe commands unless position feedback exists.
 
-Treat missing or stale data as unavailable. Do not interpret the last plotted
-value as a fresh measurement. On a disconnect, stop using the affected
-measurement for analysis and follow the lab's agreed physical stop procedure.
+On a fault or disconnect, follow the lab's stop procedure and inspect the
+message. Reconnecting USB must not restart the experiment. Restore a known rig
+state before starting a new run. If the app is unresponsive, use the rig's
+independent shutdown; the screen's Stop button is not an emergency-stop circuit.
 
-The firmware's heartbeat timeout and process-specific safe states provide a
-local response; their actual wiring and behavior still require bench tests.
-Restoring USB or power must not automatically restart an experiment. Inspect
-the event log, restore a known rig state and explicitly start a new run.
+## Keep your records
 
-Keep the original database and CSV with any fault notes. Record the software,
-firmware, hardware profile and calibration used for a real experiment. Back
-up the data folder regularly and test recovery before an unattended run.
+Recorded runs stay in `%LOCALAPPDATA%\BasuMembraneControl`. Back up this folder
+and export important runs to CSV. Keep fault notes with the affected run and
+record the software and calibration used for real measurements. Stop the run
+and close the app before updating it or restarting the PC.

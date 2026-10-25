@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
 
 from membrane_control.controller import AppController
 from membrane_control.ui import MainWindow
+from membrane_control.models import Recipe, Step
 
 
 @pytest.fixture(scope="module")
@@ -124,6 +125,8 @@ def test_save_as_refreshes_custom_preset_dropdown(screen, monkeypatch):
     index = window.preset_combo.findData("My saved sequence")
     assert index >= 0
     assert "custom" in window.preset_combo.itemText(index)
+    assert controller.recipe.name == "My saved sequence"
+    assert window.preset_combo.currentData() == "My saved sequence"
 
 
 def test_stop_pending_locks_start_and_mode(screen):
@@ -206,3 +209,121 @@ def test_compact_window_keeps_device_panel_visible_and_controls_unclipped(screen
         assert label.fontMetrics().horizontalAdvance(label.text()) <= label.contentsRect().width()
     for button in window.valve_buttons:
         assert button.height() >= button.sizeHint().height()
+
+
+def test_start_here_opens_beginner_guide(screen):
+    window, _, _ = screen
+    window.help_button.click()
+    assert window.tabs.tabText(window.tabs.currentIndex()) == "Help"
+    assert "cannot unlock" in window.recipe_approval_note.text()
+
+
+def test_readiness_gives_connection_action_and_explains_hardware_gate(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    window._update_view(dict(controller.snapshot))
+    assert "ESP32 is not connected" in window.readiness_label.text()
+    window.next_step_button.click()
+    assert window.tabs.currentIndex() == 2
+    controller.snapshot.update(controller_connected=True, simulation=False,
+                               hardware_verified=False, pressure_psi=0)
+    controller.last_telemetry = now[0]
+    window.recipe_approved.setChecked(True)
+    window._update_view(dict(controller.snapshot))
+    assert "setup is unfinished" in window.readiness_label.text()
+    assert "cannot unlock" in window.readiness_label.text()
+    assert not window.start_button.isEnabled()
+    window.next_step_button.click()
+    assert window.tabs.currentIndex() == 4
+
+
+def test_invalid_edited_sequence_has_visible_next_step(screen):
+    window, controller, _ = screen
+    window.recipe_name.setText("")
+    window._update_view(dict(controller.snapshot))
+    assert "Check the sequence" in window.readiness_label.text()
+    assert not window.start_button.isEnabled()
+    window.next_step_button.click()
+    assert window.tabs.currentIndex() == 1
+
+
+def test_completed_run_can_be_exported_from_dashboard_and_is_selected(screen):
+    window, controller, now = screen
+    recipe = Recipe(name="Short UI run", steps=[Step("Observe", 0.1)])
+    controller.load_recipe(recipe)
+    window._populate_recipe(recipe)
+    controller.start_run()
+    controller.tick()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    now[0] += 0.2
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert controller.snapshot["run_id"] is None
+    assert window.export_current_button.isEnabled()
+    assert "most recent" in window.export_current_button.toolTip()
+    assert window.history_table.currentRow() == 0
+
+
+def test_valve_click_does_not_apply_an_unsent_pump_edit(screen):
+    window, controller, _ = screen
+    window.manual_pump.setValue(35)
+    window.valve_buttons[0].click()
+    assert controller.driver.engine.valves[0]
+    assert controller.driver.engine.pump_percent == 0
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert window.manual_pump.value() == 35
+    window.manual_apply.click()
+    assert controller.driver.engine.pump_percent == 35
+
+
+def test_manual_pending_locks_changes_but_keeps_stop(screen):
+    window, controller, _ = screen
+    controller.set_manual([True] + [False] * 6, 0)
+    window._update_view(dict(controller.snapshot))
+    assert controller.snapshot["manual_pending"]
+    assert window.stop_button.isEnabled()
+    assert not window.start_button.isEnabled()
+    assert not window.manual_apply.isEnabled()
+    assert not window.simulation_check.isEnabled()
+    assert not window.steps_table.isEnabled()
+    assert window.state_chip.text() == "APPLYING"
+
+
+def test_loaded_file_name_is_visible_in_preset_dropdown(screen):
+    window, controller, _ = screen
+    recipe = Recipe(name="Imported lab sequence")
+    controller.load_recipe(recipe)
+    window._populate_recipe(recipe)
+    assert "Imported lab sequence" in window.preset_combo.currentText()
+
+
+def test_manual_controls_use_applied_review_not_an_unsaved_checkbox(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.snapshot.update(controller_connected=True, simulation=False,
+                               hardware_verified=True, pressure_psi=0)
+    controller.last_telemetry = now[0]
+    window.recipe_approved.setChecked(True)
+    window._update_view(dict(controller.snapshot))
+    assert window.start_button.isEnabled()
+    assert not window.manual_apply.isEnabled()
+    assert "Apply the reviewed sequence first" in window.manual_apply.toolTip()
+    window._apply_recipe()
+    window._update_view(dict(controller.snapshot))
+    assert window.manual_apply.isEnabled()
+
+
+def test_csv_export_waits_until_operation_has_stopped(screen, monkeypatch):
+    window, controller, _ = screen
+    controller.start_run()
+
+    def unexpected_dialog(*args, **kwargs):
+        raise AssertionError("An export dialog must not open while a run is starting")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", unexpected_dialog)
+    window._update_view(dict(controller.snapshot))
+    assert not window.export_current_button.isEnabled()
+    window._export_csv(None)
+    assert "Stop run" in window.statusBar().currentMessage()

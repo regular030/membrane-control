@@ -44,7 +44,7 @@ class RunStore:
     def sample(self, run_id, snapshot):
         fields = {k: snapshot.get(k) for k in (
             "elapsed_s", "simulation", "state", "step_index", "cycle", "pressure_psi",
-            "flow_ml_min", "balance_flow_ml_min", "flux_lmh", "mass_g", "pump_percent",
+            "flow_ml_min", "balance_flow_ml_min", "flux_lmh", "mass_g", "pump_percent", "pump_feedback_v",
             "valves", "fault", "controller_status", "balance_status")}
         with self.connection:
             self.connection.execute("INSERT INTO samples(run_id,time_utc,payload_json) VALUES(?,?,?)",
@@ -76,7 +76,8 @@ class RunStore:
             raise ValueError("Run not found")
         path = Path(path)
         fields = ["time_utc", "elapsed_s", "simulation", "state", "step_index", "cycle", "pressure_psi",
-                  "flow_ml_min", "balance_flow_ml_min", "flux_lmh", "mass_g", "pump_percent", "valves", "fault"]
+                  "flow_ml_min", "balance_flow_ml_min", "flux_lmh", "mass_g", "pump_percent", "pump_feedback_v", "valves", "fault",
+                  "controller_status", "balance_status"]
         with path.open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()

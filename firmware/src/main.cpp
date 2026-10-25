@@ -38,7 +38,7 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false) {
   if (error) document["error"] = error;
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.0";
+    document["firmware_version"] = "0.1.3";
     document["protocol_version"] = 1;
     document["valve_count"] = basu::kValveCount;
     document["hardware_verified"] = controller.hardwareVerified();

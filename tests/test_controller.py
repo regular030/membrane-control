@@ -229,7 +229,7 @@ def test_physical_pressure_loss_aborts_active_or_starting_operation(app, state):
     controller.snapshot.update(simulation=False, hardware_verified=True, state=state)
     if state == "idle":
         controller.start_phase = "loading"
-    controller._handle_packet({"v": 1, "type": "telemetry", "state": state,
+    controller._handle_packet({"v": 1, "type": "telemetry", "uptime_ms": 0, "state": state,
         "simulation": False, "hardware_verified": True, "valves": [True] * 7,
         "pump_percent": 20, "pressure_psi": None, "flow_ml_min": 30,
         "step_index": -1, "cycle": 0, "remaining_s": 0, "fault": None}, clock())
@@ -246,7 +246,7 @@ def test_idle_telemetry_does_not_finish_a_stop_without_ack(app):
     controller.tick()
     controller.driver.engine.state = "running"
     controller.stop_run()
-    packet = {"v": 1, "type": "telemetry", "state": "idle", "simulation": True,
+    packet = {"v": 1, "type": "telemetry", "uptime_ms": 0, "state": "idle", "simulation": True,
               "hardware_verified": False, "valves": [False] * 7, "pump_percent": 0,
               "pressure_psi": 0, "flow_ml_min": 0, "step_index": -1,
               "cycle": 0, "remaining_s": 0, "fault": None}
@@ -288,8 +288,9 @@ def test_required_balance_stale_during_run_latches_fault_and_stops(app):
     controller.tick()
     controller.tick()
     assert controller.run_id is not None
-    clock.advance(3.1)
-    controller.tick()
+    for _ in range(7):
+        clock.advance(0.5)
+        controller.tick()
     assert controller.local_fault == "Required balance reading is unavailable"
     assert controller.snapshot["mass_g"] is None
     assert controller.snapshot["balance_flow_ml_min"] is None
@@ -342,3 +343,145 @@ def test_close_still_closes_devices_and_database_after_persistent_storage_error(
     assert controller.driver is None and controller.balance is None
     controller.close()  # Shutdown remains idempotent despite the failed final record.
     assert closed == [True]
+
+
+def telemetry_packet(**changes):
+    packet = {"v": 1, "type": "telemetry", "uptime_ms": 0, "state": "idle", "simulation": True,
+              "hardware_verified": False, "valves": [False] * 7, "pump_percent": 0,
+              "pressure_psi": 0, "flow_ml_min": 0, "pump_feedback_v": 0,
+              "step_index": -1, "cycle": 0, "remaining_s": 0, "fault": None}
+    return {**packet, **changes}
+
+
+def test_manual_waits_for_ack_and_ack_closes_idle_restart_window(app):
+    controller, clock = app
+    controller.set_manual([True] * 7, 20)
+    assert controller.manual_pending and controller.snapshot["manual_pending"]
+    with pytest.raises(ValueError, match="active"):
+        controller.start_run()
+    with pytest.raises(ValueError, match="Stop"):
+        controller.set_simulation(False)
+    with pytest.raises(ValueError, match="Stop"):
+        controller.set_manual([False] * 7, 0)
+    request_id = next(key for key, value in controller.pending.items() if value[0] == "manual")
+    controller._handle_packet({"v": 1, "type": "ack", "id": request_id, "ok": True}, clock())
+    assert not controller.manual_pending
+    assert controller.snapshot["state"] == "manual"
+    assert controller.snapshot["pump_percent"] == 20
+    with pytest.raises(ValueError, match="active"):
+        controller.start_run()  # Still blocked before the next telemetry frame.
+
+
+def test_stop_cancels_unconfirmed_manual_command(app):
+    controller, _ = app
+    controller.set_manual([True] * 7, 20)
+    controller.stop_run()
+    controller.tick()
+    assert not controller.manual_pending
+    assert not controller.stop_pending
+    assert controller.snapshot["state"] == "idle"
+    assert not any(controller.snapshot["valves"])
+
+
+@pytest.mark.parametrize("request_id", [True, "3", [], {}, None])
+def test_malformed_ack_ids_do_not_consume_pending_commands_or_crash(app, request_id):
+    controller, clock = app
+    controller.set_manual([True] * 7, 20)
+    before = dict(controller.pending)
+    controller._handle_packet({"v": 1, "type": "ack", "id": request_id, "ok": True}, clock())
+    assert controller.pending == before
+    assert controller.manual_pending
+
+
+def test_wrong_response_type_cannot_confirm_manual_action(app):
+    controller, clock = app
+    controller.set_manual([True] * 7, 20)
+    request_id = next(key for key, value in controller.pending.items() if value[0] == "manual")
+    controller._handle_packet({"v": 1, "type": "hello", "id": request_id, "ok": True}, clock())
+    assert request_id in controller.pending and controller.manual_pending
+
+
+def test_manual_control_rejects_stale_controller_readings(app):
+    controller, clock = app
+    clock.advance(2.1)
+    with pytest.raises(ValueError, match="stale"):
+        controller.set_manual([True] * 7, 20)
+    assert controller.driver.engine.state == "idle"
+
+
+@pytest.mark.parametrize("ack_delay", [0.2, 1.5])
+def test_short_run_completes_even_without_a_running_telemetry_frame(app, ack_delay):
+    controller, clock = app
+    controller.load_recipe(Recipe(name="Very short", steps=[Step("Observe", 0.1)]))
+    controller.start_run()
+    controller.tick()  # load ACK causes start, but its ACK has not been read.
+    clock.advance(ack_delay)
+    controller.tick()  # start ACK followed immediately by already-idle telemetry.
+    assert controller.run_id is None
+    assert controller.list_runs()[0]["status"] == "completed"
+    assert controller.snapshot["elapsed_s"] == pytest.approx(ack_delay)
+
+
+def test_unexpected_early_idle_faults_even_if_uptime_does_not_move_backwards(app):
+    controller, clock = app
+    controller.load_recipe(Recipe(name="Full minute", steps=[Step("Observe", 60)]))
+    controller.start_run()
+    controller.tick()
+    controller.tick()
+    clock.advance(0.5)
+    controller._handle_packet(telemetry_packet(uptime_ms=100), clock())
+    assert controller.list_runs()[0]["status"] == "fault"
+    assert "before the sequence could finish" in controller.local_fault
+    assert controller.stop_pending
+
+
+def test_controller_reset_is_faulted_instead_of_recorded_as_completed(app):
+    controller, clock = app
+    controller.start_run()
+    controller.tick()
+    controller.tick()
+    clock.advance(1)
+    controller.tick()
+    assert controller.last_controller_uptime == 1000
+    controller._handle_packet(telemetry_packet(uptime_ms=1), clock())
+    assert controller.driver is None
+    assert controller.snapshot["state"] == "fault"
+    assert "restarted" in controller.local_fault
+    assert controller.list_runs()[0]["status"] == "fault"
+
+
+def test_normal_uint32_uptime_rollover_does_not_disconnect(app):
+    controller, clock = app
+    controller.last_controller_uptime = 0xfffffff0
+    controller.last_telemetry = clock()
+    clock.advance(0.05)
+    controller._handle_packet(telemetry_packet(uptime_ms=34), clock())
+    assert controller.last_controller_uptime == 34
+    assert controller.driver is not None
+    assert controller.local_fault is None
+
+
+@pytest.mark.parametrize("uptime", [None, True, -1, 0x100000000])
+def test_invalid_uptime_does_not_refresh_telemetry(app, uptime):
+    controller, clock = app
+    old = controller.last_telemetry
+    clock.advance(0.5)
+    controller._handle_packet(telemetry_packet(uptime_ms=uptime), clock())
+    assert controller.last_telemetry == old
+
+
+def test_runtime_hardware_verification_loss_immediately_disconnects(app):
+    controller, clock = app
+    controller.device.update(simulation=False, hardware_verified=True)
+    controller.snapshot.update(simulation=False, hardware_verified=True, state="manual")
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=False), clock())
+    assert controller.driver is None
+    assert not controller.snapshot["hardware_verified"]
+    assert "verification changed" in controller.local_fault
+
+
+def test_fault_without_description_has_an_actionable_message(app):
+    controller, clock = app
+    controller._handle_packet(telemetry_packet(state="fault", fault=None), clock())
+    assert controller.local_fault == "Controller reported a fault without a description"
+    assert controller.snapshot["fault"]

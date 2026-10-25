@@ -26,6 +26,58 @@ The ESP32 platform and ArduinoJson
 dependency are pinned in `platformio.ini`; the PlatformIO platform supplies its
 Arduino framework and cross compiler.
 
+## First USB bench test with a Freenove WROVER-E
+
+This is a communication test with the separate Freenove development board. It
+does not verify the Srliya relay PCB or any rig wiring. The current `esp32dev`
+dry-run build targets the classic ESP32 and needs neither camera nor SD/PSRAM
+initialization. A board labelled ESP32-S3 needs its own build target instead.
+
+1. Connect the Freenove board with a **data-capable** USB cable. A lit power LED
+   proves power only. Check Windows Device Manager under **Ports (COM & LPT)**,
+   then unplug/replug the board to identify its port. Freenove's official
+   [FNK0060 resources](https://github.com/Freenove/Freenove_ESP32_WROVER_Board)
+   include CH340 drivers. Use the driver matching the device actually detected;
+   the separately purchased CP2102 relay-board adapter uses a different driver.
+2. From the repository root, list ports without opening them:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m serial.tools.list_ports -v
+   ```
+
+   If no port appears, stop here and check the cable, USB socket and driver.
+   Selecting a different firmware target cannot fix a USB bridge that Windows
+   has not detected. No COM port means uploading and the real serial test remain
+   unverified.
+3. Leave all rig loads and added interfaces disconnected. The dry-run firmware
+   leaves camera and SD interfaces unused. If an inserted SD card prevents
+   entering download mode, disconnect USB power, remove the card and reconnect.
+   Freenove's SD slot uses GPIO2, which affects classic ESP32 download boot mode.
+4. After identifying the correct port, build and upload **only the dry-run**
+   environment. Replace `COM7` with the port identified above:
+
+   ```powershell
+   $env:PLATFORMIO_CORE_DIR = Join-Path (Get-Location) 'work/platformio'
+   .\.venv\Scripts\python.exe -m platformio run -d firmware -e esp32-dry-run -t upload --upload-port COM7
+   ```
+
+   Uploading replaces the board's existing sketch. If automatic reset cannot
+   connect, hold **BOOT/IO0**, press and release **EN/RESET**, then release BOOT
+   once the uploader connects. Do not choose the physical environment for this
+   test.
+5. Close serial monitors before opening the desktop app; only one program can
+   own the port. In **Connections and settings**, turn **Simulation mode** off
+   to select the real USB port. The connected firmware must still report
+   **Connected (dry run)** and simulated pressure/flow/output statuses. The
+   balance can use a separate real USB port while the ESP32 stays in dry run.
+
+Camera/SD wiring on the Freenove board differs from the final relay board.
+In particular, Freenove's camera uses GPIO21/22; the proposed relay-board I2C
+allocation must not be transplanted onto an attached camera interface.
+References: [Freenove camera pins](https://github.com/Freenove/Freenove_ESP32_WROVER_Board/blob/main/C/Sketches/Sketch_06.1_CameraWebServer/camera_pins.h),
+[Freenove SD pins](https://github.com/Freenove/Freenove_ESP32_WROVER_Board/blob/main/C/Sketches/Sketch_03.1_SDMMC_Test/Sketch_03.1_SDMMC_Test.ino),
+[Espressif boot-mode instructions](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html).
+
 ## Commissioning gates
 
 All GPIO assignments, shift-register valve bits and ADC channels start at `-1`.
@@ -51,6 +103,11 @@ states are process-specific; all-false defaults are placeholders behind a closed
 commissioning gate. The pump always commands zero and opens its configured RUN
 contact on stop. Confirm that this contact sense actually stops the installed
 pump in its selected mode before enabling physical operation.
+The current driver controls the pump contact through a separate configured GPIO;
+using spare onboard relay 8 for it still requires a driver change and verified
+channel mapping. The driver does not control 74HC595 SRCLR: confirm that the
+actual board holds it inactive, or add a verified clear-pin interface before
+approving a profile. A seller's four-pin sample does not settle that question.
 
 A physical recipe also needs `hardware_approved: true`. Manual control requires
 the same verified compiled profile and fresh pressure protection. Neither a
@@ -89,7 +146,10 @@ Register sources:
 
 See `../protocol/v1.md` for the shared wire contract. UART is 115200 8N1. Frames
 are newline-delimited JSON, at most 8192 bytes excluding LF. CRLF is accepted.
-Nested/oversized/malformed objects and trailing data are rejected. Parser errors
+Nested/oversized/malformed objects and trailing data are rejected. Strings must
+have valid UTF-8 or properly paired Unicode escapes; embedded NUL is rejected.
+Unquoted keys, single-quoted strings and non-JSON number spellings are rejected.
+Parser errors
 whose ID cannot be trusted use response `id: 0`; they do not change outputs.
 Serial input work is bounded per loop so a bad stream cannot starve the watchdog.
 

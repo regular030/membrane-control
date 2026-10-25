@@ -89,3 +89,36 @@ def test_loading_recipe_is_an_immutable_snapshot():
     recipe.steps[0].pump_percent = 99
     engine.start(0)
     assert engine.pump_percent == 10
+
+
+@pytest.mark.parametrize("name", ["A\0B", "A\nB", "\ud800", "界" * 30])
+def test_recipe_names_reject_controls_invalid_unicode_and_controller_byte_overflow(name):
+    recipe = Recipe(name=name)
+    with pytest.raises(ValueError):
+        recipe.validate()
+
+
+def test_unicode_recipe_round_trip_and_overlarge_number_are_handled(tmp_path):
+    recipe = Recipe(name="Échantillon", description="Membrane à tester")
+    write_recipe(tmp_path / "unicode.json", recipe)
+    assert "Échantillon" in (tmp_path / "unicode.json").read_text(encoding="utf-8")
+    assert read_recipe(tmp_path / "unicode.json").name == recipe.name
+    with pytest.raises(ValueError):
+        Step(duration_s=10**500).validate()
+
+
+def test_zero_manual_remains_manual_and_cannot_load_or_clear_until_stopped():
+    engine = SequenceEngine()
+    engine.manual([False]*7, 0)
+    assert engine.state == "manual"
+    with pytest.raises(ValueError):
+        engine.load(example())
+    with pytest.raises(ValueError):
+        engine.clear_fault()
+    engine.stop()
+    engine.load(example())
+    engine.fail("Test fault")
+    with pytest.raises(ValueError):
+        engine.load(example())
+    engine.clear_fault()
+    engine.load(example())

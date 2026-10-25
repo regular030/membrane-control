@@ -13,7 +13,10 @@ MAX_RUN_SECONDS = 604800
 def number(value: Any, name: str, low: float, high: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a number")
-    result = float(value)
+    try:
+        result = float(value)
+    except (OverflowError, ValueError) as error:
+        raise ValueError(f"{name} must be between {low:g} and {high:g}") from error
     if not math.isfinite(result) or not low <= result <= high:
         raise ValueError(f"{name} must be between {low:g} and {high:g}")
     return result
@@ -28,7 +31,19 @@ def integer(value: Any, name: str, low: int, high: int) -> int:
 def text(value: Any, name: str, limit: int = 64) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > limit:
         raise ValueError(f"{name} must contain 1-{limit} characters")
-    return value.strip()
+    value = value.strip()
+    if any(ord(char) < 32 for char in value):
+        raise ValueError(f"{name} must not contain control characters")
+    if utf8_length(value, name) > 80:
+        raise ValueError(f"{name} is too long; use a shorter name")
+    return value
+
+
+def utf8_length(value: str, name: str) -> int:
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeError as error:
+        raise ValueError(f"{name} contains invalid text") from error
 
 
 def valve_states(value: Any) -> tuple[bool, ...]:
@@ -81,6 +96,8 @@ class Recipe:
         self.name = text(self.name, "Recipe name")
         if not isinstance(self.description, str) or len(self.description) > 512:
             raise ValueError("Description must be at most 512 characters")
+        if "\0" in self.description or utf8_length(self.description, "Description") > 1000:
+            raise ValueError("Description contains invalid text or is too long; shorten the notes")
         if type(self.hardware_approved) is not bool or type(self.require_balance) is not bool:
             raise ValueError("Approval and balance requirement must be booleans")
         integer(self.repeat, "Repeat count", 1, 100)

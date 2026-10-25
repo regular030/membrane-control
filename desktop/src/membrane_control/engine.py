@@ -17,8 +17,8 @@ class SequenceEngine:
         self.pump_percent = 0.0
 
     def load(self, recipe: Recipe):
-        if self.state in ("running", "manual"):
-            raise ValueError("Stop before changing the sequence")
+        if self.state != "idle":
+            raise ValueError("Stop and clear any fault before changing the sequence")
         recipe.validate()
         self.recipe = copy.deepcopy(recipe)
 
@@ -56,7 +56,8 @@ class SequenceEngine:
         checked_valves = valve_states(valves)
         checked_pump = number(pump_percent, "Pump setting", 0, 100)
         self.valves, self.pump_percent = checked_valves, checked_pump
-        self.state = "manual" if any(self.valves) or self.pump_percent else "idle"
+        self.state = "manual"
+        self.step_index, self.cycle, self.remaining_s = -1, 0, 0.0
 
     def stop(self):
         self.valves = (False,) * 7
@@ -73,6 +74,8 @@ class SequenceEngine:
         self.fault = message
 
     def clear_fault(self):
+        if self.state in ("running", "manual"):
+            raise ValueError("Stop before clearing a fault")
         self.stop()
         self.fault = None
         self.state = "idle"

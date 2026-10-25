@@ -1,95 +1,66 @@
-# Install Basu Membrane Control
+# Install and open the app
 
-Version 0.1.2 is a lab prototype. Demo mode can be used without instruments.
-Physical wiring, pump control, calibration and operating recipes have not yet
-been commissioned on the rig.
+Use a Windows 11 x64 computer. You do not need Python, Arduino IDE or LabVIEW
+for the ready-to-run app.
 
-## Download and open
+## Download
 
-Use Windows 11 x64. The operator does not need Python, pip, Arduino IDE or
-LabVIEW to run the packaged desktop application.
+1. Open [Releases](https://github.com/regular030/basu-membrane-control/releases)
+   and sign in if needed. This project is private.
+2. Open the release given to you by the maintainer. Under **Assets**, download
+   `BasuMembraneControl-0.1.3-windows-x64.exe` or the matching portable app ZIP.
+   **Source code (zip)** is for developers and does not contain the EXE.
+3. If you chose the portable ZIP, right-click it and choose **Extract All**.
+4. Open the EXE. Leave **Simulation mode** checked and follow
+   [Start here](START-HERE.md).
 
-1. Sign in to GitHub with an account that can access the private repository.
-2. Open the repository's **Releases** page and select the release provided by
-   the project maintainer. A draft release is visible only to collaborators
-   with sufficient repository access.
-3. Download `BasuMembraneControl-0.1.2-windows-x64.exe` directly, or download
-   the matching `.zip` and extract it to a local folder. Choose the release
-   asset, rather than GitHub's automatically generated source-code ZIP.
-4. Double-click the executable. Leave **Simulation mode** checked (Demo).
-   Simulated readings
-   should appear without USB hardware.
+First startup can take a little longer. The app includes its own libraries and
+can run the demo without internet or USB equipment. It does not install device
+drivers. Ordinary use does not require administrator access. If university
+software protection blocks the file, ask the maintainer or IT to review it.
 
-The EXE includes Python, PySide6, plotting and serial libraries. First startup
-may take longer while the one-file bundle extracts to a temporary folder.
-It does not download packages, run an installer, or change device drivers.
-Administrator access is not required for the application itself.
+## Connect USB equipment later
 
-This prototype may be unsigned. Windows or university endpoint protection may
-ask an administrator to review it. Check the source and release checksum with
-the maintainer; follow the university's software policy rather than disabling
-endpoint protection.
+Do this after the person setting up the rig has approved its hardware. Installing
+this Windows app does not install firmware on the ESP32 or verify the wiring.
+The separate [ESP32 setup guide](https://github.com/regular030/basu-membrane-control/blob/main/firmware/README.md) covers that work.
 
-To compare a download with `SHA256SUMS.txt`, open PowerShell in the download
-folder and run:
+1. Power the equipment and connect its USB **data** cable.
+2. Open Windows **Device Manager > Ports (COM & LPT)**. Note the COM number
+   belonging to each device, such as `COM4`.
+3. In the app, stop any run, uncheck **Simulation mode**, and open
+   **Connections and settings**.
+4. Click **Refresh serial ports**, select the known ESP32 port and click its
+   **Connect** button. Select the scale's own port and connect it separately.
+5. Read the status messages. A responding board may still be in **dry run**.
 
-```powershell
-Get-FileHash .\BasuMembraneControl-0.1.2-windows-x64.exe -Algorithm SHA256
-```
+After restarting the PC, the app opens in Simulation mode again. Connect the
+instruments explicitly; do not assume their COM numbers stayed the same.
+If no port appears, stop at USB detection: try a known data cable, another USB
+socket and the correct driver. A firmware upload cannot work before Windows
+recognizes the board. Do not choose a port belonging to another lab instrument.
+Close Arduino Serial Monitor or any other program already using the same port.
 
-A matching hash confirms the file matches that release asset. It is not a
-replacement for verifying the repository and publisher.
+Use the driver for the chip on the actual device:
 
-## First hardware connection
+| Device | Official help |
+| --- | --- |
+| CP2102 / CP210x USB adapter | [Silicon Labs driver](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers) |
+| Freenove board with CH340 | [Freenove instructions and CH340 folder](https://github.com/Freenove/Freenove_Ultimate_Starter_Kit_for_ESP32) or [WCH driver](https://www.wch-ic.com/downloads/CH341SER_EXE.html) |
+| Adam Nimbus scale | [Adam Equipment downloads](https://adamequipment.com/support/software-downloads.html) for the exact model |
 
-Start with the controller's low-voltage section and disconnected test loads.
-The supplied firmware's factory configuration uses dry-run outputs. It does
-not establish that the actual relay board is ready to operate valves.
+Driver installation may need IT or administrator access. The app does not
+silently download or run driver installers. Use the scale's USB-B **I/O** port
+for the PC connection; its USB-A display socket serves a different purpose.
 
-| Device | Connection | First-time check |
-| --- | --- | --- |
-| ESP32 controller | Laptop USB to CP2102 adapter; adapter's 3.3 V TTL UART to the controller | Confirm a COM port, then a firmware identity and heartbeat response |
-| Adam Nimbus balance | USB-A to the balance's USB-B **I/O** port | Verify the instrument's USB mode, driver, serial settings and output format |
-| Controller power | Separate external supply to the board's documented voltage-compatible input | Check voltage, polarity and current capacity; the UART adapter is not the relay power supply |
+## Updates and saved data
 
-If Windows does not recognize the CP2102, obtain the appropriate driver from
-[Silicon Labs](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers).
-Use [Adam Equipment support](https://adamequipment.com/support) for the exact
-balance model's manual and USB driver, if one is required. Driver installation
-may need university IT or administrator access. The application does not
-silently download or execute either vendor's installer.
+Stop the run and close the app before replacing its EXE. Your recorded runs
+stay in `%LOCALAPPDATA%\BasuMembraneControl`. Paste that address into File
+Explorer to find the folder. Back it up and keep important CSV exports.
+Reopening the app or restoring USB does not resume an experiment.
 
-Open **Device Manager > Ports (COM & LPT)** and note each device's COM number.
-A USB adapter detected by Windows is not proof of communication with ESP32
-firmware. Close Arduino Serial Monitor and other software holding the same
-port before connecting from the app.
-
-The application starts in Demo mode and never opens instrument ports
-automatically. In **Connections and settings**, select each known instrument's port before
-clicking **Connect**. Refreshing the list enumerates available ports; it does
-not send identification commands to unrelated serial devices. Do not select a
-port belonging to another lab instrument. A previously used COM number may be
-assigned to a different device after reconnection, so check Device Manager.
-
-Before any physical run, complete the commissioning checks in the hardware
-documentation. Confirm all required instruments, calibration and a reviewed
-hardware profile. The application is not an independent emergency stop.
-
-## Files, updates and troubleshooting
-
-Operator data belongs under `%LOCALAPPDATA%\BasuMembraneControl`, separate
-from the executable. Back up this folder and export important runs to CSV.
-Do not save experiment data inside a temporary extraction folder.
-
-For an update, stop the run, close the app and replace the executable with a
-verified release. Preserve the data folder. Reconnection or app restart is
-never an instruction to resume an interrupted experiment.
-
-If the window does not open, look for
-`%LOCALAPPDATA%\BasuMembraneControl\logs\launcher-error.log` and send the
-error text plus application version to the maintainer. If a device is missing,
-check its power, data cable, Device Manager entry and port ownership. A USB-A
-to USB-A cable must not be used to connect the laptop to the balance's USB
-host/digital-I/O socket.
-
-Packaging background: [PyInstaller's operating model](https://pyinstaller.org/en/stable/operating-mode.html).
+If the app will not open, send the maintainer the version and this file, if it
+exists: `%LOCALAPPDATA%\BasuMembraneControl\logs\launcher-error.log`.
+For ordinary operation, continue with the [operator guide](operator-guide.md).
+Developers should use the online [development guide](https://github.com/regular030/basu-membrane-control/blob/main/docs/development.md) for source installation.

@@ -30,7 +30,7 @@ Windows app
 
 ## Code map
 
-- `desktop/src/membrane_control/ui.py`: four tabs and bounded chart buffers.
+- `desktop/src/membrane_control/ui.py`: five tabs, first-use help and bounded chart buffers.
 - `controller.py`: device identity, command transactions, freshness, run recording and fault gates.
 - `transport.py`: background serial workers and the desktop simulator.
 - `models.py` and `engine.py`: validated recipes and deterministic simulated sequencing.
@@ -54,7 +54,7 @@ The controller's compile-time profile and the recipe's approval are separate.
 Checking a box in the editor cannot supply missing physical pin assignments.
 The default firmware is a dry run and does not operate the outputs.
 
-## Scope of version 0.1.2
+## Current scope
 
 Pump control is a percentage of the configured analog command range. It is not a
 closed-loop flow controller. Pump voltage feedback, actual flow-meter readings

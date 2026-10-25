@@ -1,22 +1,24 @@
-Basu Membrane Control 0.1.2
-Lab prototype for Windows 11 x64
+Basu Membrane Control 0.1.3
+Windows 11 x64 app
 
-1. Extract this ZIP to a local folder.
-2. Double-click BasuMembraneControl-0.1.2-windows-x64.exe.
-3. Leave Simulation mode checked (Demo). All demo measurements are simulated.
+Try the demo
 
-The executable includes Python and the application libraries. Python, pip and
-LabVIEW are not required on the operator's computer. Internet is not required
-for Demo mode. Device drivers, if needed, are installed separately from their
-manufacturers' official sites. The application does not download or install
-drivers automatically.
+1. Extract this ZIP, then double-click the file ending in windows-x64.exe.
+2. Leave Simulation mode checked. No USB equipment is needed.
+3. Choose a Preset on Dashboard and click Start run.
+4. Click Stop run, then Export CSV to save the practice results.
+5. Open Run history to find earlier runs and Export selected run.
 
-This release has not been commissioned on the physical membrane rig. Pump
-pin assignments, valve states, sensor calibration and operating limits need
-bench verification. Sample CIP, CWF and Fouling recipes are demonstrations,
-not recovered or approved operating procedures.
+The Start here button in the app opens Help. Read START-HERE.md for the short
+guide, installation.md for download/USB help, and operator-guide.md for use.
 
-Data is stored separately in %LOCALAPPDATA%\BasuMembraneControl.
-Deleting this application folder does not delete recorded data.
+You do not need to install Python or LabVIEW. The app includes its libraries.
+Device drivers, when needed, come separately from the device manufacturer.
 
-Read installation.md and operator-guide.md before connecting hardware.
+Simulation means practice data. An ESP32 connected in dry run also simulates
+its readings and outputs. USB connection or a checked recipe-review box does
+not make the physical rig ready. The lab must verify the hardware first.
+
+Recorded runs stay in %LOCALAPPDATA%\BasuMembraneControl. Back up that folder
+and keep important CSV files when updating the app. Runs never resume just
+because the app or computer restarts.

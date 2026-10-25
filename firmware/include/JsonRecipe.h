@@ -1,6 +1,7 @@
 #pragma once
 #include <ArduinoJson.h>
 #include "ControlCore.h"
+#include "StrictJson.h"
 
 namespace basu {
 
@@ -23,6 +24,7 @@ class FrameReader {
 inline const char* decodeObject(const char* bytes, std::size_t count, JsonDocument& document) {
   if (count > kMaxLineBytes) return "line exceeds 8192 bytes";
   for (std::size_t i = 0; i < count; ++i) if (bytes[i] == '\0') return "NUL byte in JSON frame";
+  if (!StrictJson(bytes, count).objectFrame()) return "invalid JSON object or Unicode string";
   FrameReader reader(bytes, count);
   if (deserializeJson(document, reader, DeserializationOption::NestingLimit(8)) ||
       !document.is<JsonObject>()) return "invalid JSON object";

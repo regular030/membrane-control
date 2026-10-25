@@ -1,5 +1,37 @@
 # Software validation
 
+## Desktop and firmware version 0.1.3
+
+Local review on Windows 11 x64, 25 October 2026:
+
+| Check | Result |
+| --- | --- |
+| Desktop controller, transport, storage, model and Qt tests | 116 passed |
+| Firmware native tests | 18 passed |
+| ESP32 dry-run build | Passed, 322897 bytes flash / 32800 bytes RAM |
+| ESP32 commissioning-gated physical build | Passed, 331141 bytes flash / 32800 bytes RAM |
+| All five UI tabs at 1360 x 940 and 1080 x 760 | Visually reviewed, with scrolling checked |
+| Actual packaged Windows EXE launch | Passed, 1360 x 940 PNG and clean exit |
+| Relative documentation links | Resolve in repository; portable guides use online links for source-only documents |
+
+The review fixed pending-manual-command races, incorrect early/completed run
+statuses, invalid acknowledgement handling, stale manual control and incomplete
+CSV exports. Tests include delayed acknowledgement of a very short run,
+unexpected early idle, detectable controller resets, uptime rollover and changed
+hardware-verification flags. Uptime alone is not a unique boot-session identifier.
+The simulator checks watchdog deadlines before accepting a newly arrived command.
+Firmware rejects malformed JSON and invalid Unicode before decoding commands.
+
+The first-use review added Help, Start here, explicit blocked-start reasons,
+matching preset names and clearer manual pump commands. CSV export is disabled
+while operating so a synchronous export cannot block control heartbeats.
+The portable ZIP includes the short guide and operator instructions.
+
+These were local software checks. No board was flashed, no real serial connection
+was exercised and no physical wiring or loads were tested. GitHub-hosted Actions
+remain unavailable for this account. Clean-machine Windows installation and
+extended operation remain unverified. See the bench checklist below.
+
 ## Desktop version 0.1.2
 
 Local checks on Windows 11 x64, 25 October 2026: **73 desktop tests passed**.
