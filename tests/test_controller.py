@@ -84,6 +84,14 @@ def test_invalid_telemetry_does_not_refresh_freshness(app):
     assert controller.last_telemetry == old
 
 
+def test_controller_disconnect_clears_previous_analog_readings(app):
+    controller, _ = app
+    controller.snapshot.update(pressure_psi=12, flow_ml_min=30, pump_feedback_v=2.5)
+    controller.disconnect_controller()
+    assert not controller.snapshot["controller_connected"]
+    assert all(controller.snapshot[key] is None for key in ("pressure_psi", "flow_ml_min", "pump_feedback_v"))
+
+
 def test_settings_and_custom_recipe_persist(app, tmp_path):
     controller, _ = app
     controller.update_settings({"membrane_area_m2": 0.02})
@@ -266,6 +274,7 @@ def test_storage_failure_withdraws_heartbeat_and_closes_driver(app, monkeypatch)
         assert not controller.snapshot["controller_connected"]
         assert controller.snapshot["state"] == "fault"
         assert "Test disk full" in controller.local_fault
+        assert controller.snapshot["pump_feedback_v"] is None
         assert driver.engine.pump_percent == 0 and not any(driver.engine.valves)
 
 

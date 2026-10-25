@@ -4,14 +4,14 @@ A Windows desktop application and ESP32 firmware for the ceramic membrane
 experiment rig. The prototype combines valve and pump sequences, pressure and
 flow measurements, balance readings, live graphs and recorded runs.
 
-**Version 0.1.1 is a software prototype.** It opens in Simulation mode and
+**Version 0.1.2 is a software prototype.** It opens in Simulation mode and
 does not connect hardware automatically. The firmware's default build also
 uses simulated measurements and dry-run outputs. The physical rig, board pin
 mapping, pump interface and calibrations have not been commissioned.
 
 ## Open the Windows app
 
-Download `BasuMembraneControl-0.1.1-windows-x64.exe` from
+Download `BasuMembraneControl-0.1.2-windows-x64.exe` from
 [Releases](https://github.com/regular030/basu-membrane-control/releases), or
 extract the matching portable ZIP. A private repository requires GitHub access.
 If an executable release is not listed yet, use the source instructions below.
@@ -96,7 +96,7 @@ controller or energize hardware.
 ## Documentation and validation
 
 - [Architecture and design choices](docs/architecture.md): how the software fits together and why.
-- [Version 0.1.1 validation](docs/validation.md): completed software checks and remaining bench work.
+- [Version 0.1.2 validation](docs/validation.md): completed software checks and remaining bench work.
 - [Hardware baseline](hardware/README.md): confirmed instruments and unresolved interfaces.
 - [Procurement](hardware/procurement.md): selected board, adapter and power candidates.
 - [Wire protocol](protocol/v1.md): desktop/firmware contract.

@@ -1,8 +1,8 @@
 # Software validation
 
-## Desktop version 0.1.1
+## Desktop version 0.1.2
 
-Local checks on Windows 11 x64, 25 October 2026: **72 desktop tests passed**.
+Local checks on Windows 11 x64, 25 October 2026: **73 desktop tests passed**.
 The device-status tests cover desktop simulation, disconnected hardware, stale
 values, valid zero readings, invalid values, a real scale alongside dry-run
 firmware, and unavailable physical output feedback. Qt tests also check the

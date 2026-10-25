@@ -1,6 +1,6 @@
 # Install Basu Membrane Control
 
-Version 0.1.1 is a lab prototype. Demo mode can be used without instruments.
+Version 0.1.2 is a lab prototype. Demo mode can be used without instruments.
 Physical wiring, pump control, calibration and operating recipes have not yet
 been commissioned on the rig.
 
@@ -13,7 +13,7 @@ LabVIEW to run the packaged desktop application.
 2. Open the repository's **Releases** page and select the release provided by
    the project maintainer. A draft release is visible only to collaborators
    with sufficient repository access.
-3. Download `BasuMembraneControl-0.1.1-windows-x64.exe` directly, or download
+3. Download `BasuMembraneControl-0.1.2-windows-x64.exe` directly, or download
    the matching `.zip` and extract it to a local folder. Choose the release
    asset, rather than GitHub's automatically generated source-code ZIP.
 4. Double-click the executable. Leave **Simulation mode** checked (Demo).
@@ -34,7 +34,7 @@ To compare a download with `SHA256SUMS.txt`, open PowerShell in the download
 folder and run:
 
 ```powershell
-Get-FileHash .\BasuMembraneControl-0.1.1-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\BasuMembraneControl-0.1.2-windows-x64.exe -Algorithm SHA256
 ```
 
 A matching hash confirms the file matches that release asset. It is not a

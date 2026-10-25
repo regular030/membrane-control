@@ -54,7 +54,7 @@ The controller's compile-time profile and the recipe's approval are separate.
 Checking a box in the editor cannot supply missing physical pin assignments.
 The default firmware is a dry run and does not operate the outputs.
 
-## Scope of version 0.1.1
+## Scope of version 0.1.2
 
 Pump control is a percentage of the configured analog command range. It is not a
 closed-loop flow controller. Pump voltage feedback, actual flow-meter readings

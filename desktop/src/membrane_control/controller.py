@@ -58,7 +58,7 @@ class AppController:
         self.snapshot = {"state": "idle", "simulation": True, "controller_connected": False,
             "controller_status": "Not connected", "balance_connected": False,
             "balance_status": "Not connected", "hardware_verified": False,
-            "pressure_psi": None, "flow_ml_min": None, "flux_lmh": None, "mass_g": None,
+            "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
             "elapsed_s": 0.0, "run_id": None, "log": [], "recipe_name": self.recipe.name,
@@ -188,7 +188,7 @@ class AppController:
         if hasattr(self, "snapshot"):
             self.snapshot.update(controller_connected=False, controller_status="Disconnected",
                 state="idle", start_pending=False, stop_pending=False, valves=[False]*7, pump_percent=0,
-                pressure_psi=None, flow_ml_min=None, flux_lmh=None, hardware_verified=False)
+                pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None, hardware_verified=False)
 
     def connect_balance(self, port, baud=9600):
         if self.simulation:
@@ -458,7 +458,7 @@ class AppController:
             self.local_fault = "Application stopped: " + str(error)
             self.snapshot.update(state="fault", fault=self.local_fault, controller_connected=False,
                 controller_status="Stopped after application error", start_pending=False, stop_pending=False,
-                pressure_psi=None, flow_ml_min=None, flux_lmh=None)
+                pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None)
             self._log(self.local_fault)
 
     def _tick(self):
