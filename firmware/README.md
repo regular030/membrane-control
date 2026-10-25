@@ -29,9 +29,11 @@ Arduino framework and cross compiler.
 ## Commissioning gates
 
 All GPIO assignments, shift-register valve bits and ADC channels start at `-1`.
-The candidate Srliya 16-channel board is represented by a 16-bit 74HC595 driver;
-**no pin mapping from a visually similar board has been assumed**. `BoardConfig`
-also supports a seven-output direct-GPIO board.
+The candidate Srliya 16-channel board is represented by a 16-bit 74HC595 driver.
+The seller's sample now identifies data GPIO14, clock GPIO13, latch GPIO12 and
+enable GPIO5; these are recorded in the [proposed pin plan](../hardware/relay-board-pin-plan.md).
+They do not establish relay bit order, reset wiring or a verified physical profile.
+`BoardConfig` also supports a seven-output direct-GPIO board.
 
 To create a reviewed physical profile, provide a header implementing
 `basu::compiledBoardConfig()` and select it using the compile definition

@@ -2,6 +2,10 @@
 
 Planning baseline dated 24 October 2026. No pin-level wiring is approved yet.
 
+See the [25 October relay-board pin plan](relay-board-pin-plan.md) for the
+seller's shift-register GPIO assignments, proposed UART/I2C/analog connections
+and the unresolved board-input voltage discrepancy.
+
 ## Existing equipment
 
 | Equipment | Interface or role |
