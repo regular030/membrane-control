@@ -91,6 +91,7 @@ controller or energize hardware.
 ## Documentation and validation
 
 - [Architecture and design choices](docs/architecture.md): how the software fits together and why.
+- [Version 0.1.0 validation](docs/validation.md): completed software checks and remaining bench work.
 - [Hardware baseline](hardware/README.md): confirmed instruments and unresolved interfaces.
 - [Procurement](hardware/procurement.md): selected board, adapter and power candidates.
 - [Wire protocol](protocol/v1.md): desktop/firmware contract.
