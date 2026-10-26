@@ -14,13 +14,14 @@ Windows app
   |                                             |-- GP8403 DAC --> pump command
   |                                             |-- dry contact --> pump start
   |                                             `-- protected ADC <-- sensors
-  |-- Balance serial worker <-- USB-to-RS232 <-- Adam Nimbus DB9
+  |-- Balance serial worker <-- USB data cable <-- Adam Nimbus USB-B I/O
   |-- SQLite run database --> CSV and metadata export
   `-- Qt dashboard, charts, sequence editor and connection settings
 ```
 
-The existing balance connection uses its USB-to-RS232 adapter. The balance's
-USB-B I/O connection is an alternative, using the same serial-worker interface.
+The user now uses the balance's USB-B I/O connection. Its Windows virtual COM
+port uses the same serial-worker interface as the previous USB-to-RS232 path;
+changing cables does not require a new ESP32 program.
 See [balance setup](../hardware/balance-usb-setup.md).
 
 ## Why these choices

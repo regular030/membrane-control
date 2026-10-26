@@ -59,14 +59,14 @@ Use the driver for the chip on the actual device:
 | --- | --- |
 | CP2102 / CP210x USB adapter | [Silicon Labs driver](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers) |
 | Freenove board with CH340 | [Freenove instructions and CH340 folder](https://github.com/Freenove/Freenove_Ultimate_Starter_Kit_for_ESP32) or [WCH driver](https://www.wch-ic.com/downloads/CH341SER_EXE.html) |
-| Scale through the existing green USB-to-RS232 adapter | Use the driver for the adapter's actual chipset, if Windows needs one |
-| Adam Nimbus through its alternative USB-B I/O connection | [Adam Equipment downloads](https://adamequipment.com/support/software-downloads.html) for the exact model |
+| Adam Nimbus through its current USB-B I/O connection | [Adam Equipment downloads](https://adamequipment.com/support/software-downloads.html) for the exact model |
+| Previous green USB-to-RS232 adapter, if reused | Use the driver for that adapter's actual chipset, if Windows needs one |
 
 Driver installation may need IT or administrator access. The app does not
-silently download or run driver installers. The photographed scale connection is
-its DB9 **RS-232** port through a USB-to-RS232 adapter. Reuse that path first.
-The scale's USB-B **I/O** port is an alternative PC connection; its USB-A display
-socket serves a different purpose. Select the balance's own COM port, with serial
+silently download or run driver installers. The current scale connection uses
+its USB-B **I/O** port directly to the computer. The older DB9/green adapter path
+is no longer selected. Its USB-A display socket serves a different purpose.
+Select the balance's own COM port, with serial
 settings matching the scale. See the [balance setup guide](https://github.com/regular030/membrane-control/blob/main/hardware/balance-usb-setup.md).
 
 ## Updates and saved data

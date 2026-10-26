@@ -1,5 +1,11 @@
 # Software validation
 
+Latest hardware update, 26 October 2026: the user now identifies the balance as
+an **Adam Nimbus NBL 8201e**, uses its USB-B I/O connection, and confirms a second
+Windows COM port appears. Actual weight receipt is still to be confirmed. Older
+release records below describe the green RS232 adapter used at that time. The
+Cole-Parmer pump drive's model and actual signal ranges remain unconfirmed.
+
 ## Live runtime table, version 0.1.11
 
 Checked locally on Windows 11 x64, 26 October 2026:

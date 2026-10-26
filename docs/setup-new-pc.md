@@ -40,12 +40,13 @@ the separate `%LOCALAPPDATA%\BasuMembraneControl` data folder.
    program with its default profile locked. The installed `firmware-release`
    folder also contains the versioned source/binary bundle. See
    [full firmware](full-firmware.md) before choosing that target.
-5. Connect the scale separately. Its existing green **USB-to-RS232 adapter**
-   uses the balance's DB9 port. Its chipset cannot be identified from its color;
-   identify its hardware/driver with IT if Windows does not recognize it. Do
-   not assume the CP210x driver is appropriate. The alternative scale USB-B
-   **I/O** path uses the [Adam driver](https://adamequipment.com/support/software-downloads.html)
-   if required. See [balance setup](../hardware/balance-usb-setup.md).
+5. Connect the scale separately through its square USB-B **I/O** port and a
+   USB data cable. This is the user's current connection. Use the
+   [Adam Nimbus driver](https://adamequipment.com/support/software-downloads.html)
+   if required, and identify its new COM port in Device Manager. Do not assume
+   the ESP32's CP210x driver is appropriate. The previous green RS232 adapter
+   is an alternative path, not the current setup. See
+   [balance setup](../hardware/balance-usb-setup.md).
 6. In **Connections and settings**, choose the controller and scale's different
    COM ports. Match the scale to **9600 baud, NONE / 8N1** and continuous
    single-line grams output. Those settings must be verified on the scale, not

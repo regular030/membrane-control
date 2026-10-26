@@ -1,18 +1,19 @@
-# Connect the Adam Nimbus balance
+# Connect the Adam Nimbus NBL 8201e balance
 
-The latest photos show the existing **USB-to-RS232 adapter connected to the
-balance's DB9 RS-232 port**. The lab PC currently exposes only the ESP32 port
-while that adapter is connected. Use the balance's USB-B I/O connection with
-the matching Nimbus driver as the next diagnostic path, or identify the green
-adapter's own chipset/driver. Either path is independent of the ESP32's
-USB-to-UART connection; select a different COM port for each device.
+Current connection, confirmed by the user on 26 October 2026:
+**balance USB-B I/O -> USB data cable -> computer USB**. Use the Nimbus native-USB
+driver if required. The user now confirms that Windows exposes a second COM
+port on this USB-B connection. Its COM number and receipt of weight lines have
+not yet been reported. The model reported is **Adam Nimbus NBL 8201e**.
+The scale connects independently of the ESP32's USB-to-UART adapter, with a
+different COM port for each device.
 
 ## Choose one connection path
 
 | Path | Cable and driver |
 | --- | --- |
-| Existing adapter, once detected | Balance DB9 RS-232 → existing green USB-to-RS232 adapter → computer USB. Use the driver for the adapter's actual chipset if Windows needs one. Its chipset cannot be identified from the photos alone. The Nimbus native-USB driver does not establish this adapter's driver. |
-| Next diagnostic path | Balance USB-B **I/O** → USB data cable → computer USB. Use [Adam's Nimbus driver](https://adamequipment.com/support/software-downloads.html) if required. |
+| Current | Balance USB-B **I/O** → USB data cable → computer USB. Use [Adam's Nimbus driver](https://adamequipment.com/support/software-downloads.html) if required. |
+| Previous, alternative only | Balance DB9 RS-232 → green USB-to-RS232 adapter → computer USB. This adapter was not detected on the lab PC. Its chipset/driver remains unidentified; do not select it as the current connection. |
 
 Use one path at a time. The balance's USB-A **Display** socket is for the remote
 display, not the computer. The balance retains its own power supply. The
@@ -43,11 +44,12 @@ listed as **USB Serial Port** or by its adapter chipset name rather than Adam
 or Nimbus. Refreshing does not connect either device automatically.
 
 If Device Manager shows only the ESP32's COM port, the scale's connection is not
-yet available to the app. Check the green USB-to-RS232 adapter's USB connection
-and whether it appears under **Other devices** with a warning. Open its
+yet available to the app. With the current USB-B path, check the balance is
+powered, the data cable is in the square **I/O** socket, and the Nimbus driver
+has been installed. Look under **Other devices** for a warning. Open its
 **Properties > Details > Hardware Ids** and record the `USB\VID_...&PID_...`
-identifier to select the correct adapter driver. Try another computer USB port
-and compare Device Manager before and after unplugging this adapter.
+identifier to identify the device/driver. Try another USB data cable or computer
+USB port, and compare Device Manager before and after unplugging the scale.
 
 Do not install a guessed CP210x driver merely because that is the ESP32's
 adapter. The app cannot create a COM port for hardware Windows has not exposed.

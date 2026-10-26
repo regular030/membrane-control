@@ -10,7 +10,7 @@ Updated 25 October 2026. Listings, prices and sellers can change. Quantities bel
 | 1 | Srliya 16-channel ESP32-WROOM relay board | [Amazon Canada](https://www.amazon.ca/dp/B0DKC2L2NH) | Selected candidate; verify exact revision, 74HC595 pin/bit mapping, OE defaults, supply input and valve-load suitability before physical use |
 | 1 | DAOKAI CP2102 USB-to-UART adapter | [Amazon Canada](https://www.amazon.ca/dp/B0BCKBHQ8Y) | Use verified 3.3 V TTL TX/RX; leave adapter power pins disconnected when board externally powered |
 | 1 only if verified compatible | SANSUN 12 V 2 A DC supply | [Amazon Canada](https://www.amazon.ca/dp/B01AZLA9XQ) | Do not apply 12 V until the actual board input rating and polarity are verified; seller documents conflict. Check supply label, connector and board/interface demand; reuse an existing suitable supply; current price unverified |
-| Optional alternative only | USB-A to USB-B data cable for balance | [Amazon Canada](https://www.amazon.ca/dp/B00NH13DV2) | Existing green USB-to-RS232 adapter is already available and should be tried first; this cable is needed only if choosing the scale's alternative USB-B I/O path |
+| Reuse the current cable | USB-A to USB-B data cable for balance | [Amazon Canada](https://www.amazon.ca/dp/B00NH13DV2) | The user now uses the scale's USB-B I/O connection. Reuse the working data cable; the green RS232 adapter is no longer the selected path |
 
 The controller needs an external supply matching the actual PCB input rating.
 The seller's DC 5-12 V listing conflicts with its 5 V input diagram; the 5 V relay
@@ -22,14 +22,20 @@ appropriate supplies and switching protection.
 
 Confirm the SANSUN adapter's exact output plug and polarity on the ordered unit, then use a matching female jack/pigtail with strain relief to the controller input. If it is the advertised 5.5 x 2.1 mm centre-positive connector, use that mating size; do not assume 5.5 x 2.5 mm is equivalent. The pictured 16-channel board advertises a DC 5-12 V input range, but its exact revision and terminal polarity must still be verified. Never apply 12 V to a terminal documented only for 5 V. A supply's 2 A maximum rating is provisional until the complete board and interface demand is checked.
 
-The selected board has more channels than the seven valve outputs required. Unused channels must remain in their reviewed inactive states. Its presence does not make the pump an ordinary relay-driven motor: pump speed uses a separate 0-10 V interface and remote start/stop. The firmware represents this candidate as a 16-bit shift-register board with unassigned hardware mappings; the product photograph does not establish a usable pin map or mains-load rating.
+The selected board has more channels than the seven valve outputs required.
+Unused channels must remain in their reviewed inactive states. Pump speed and
+remote start/stop use separate control interfaces. The cable tags say 0-10 V,
+but the installed drive's actual input/output ranges remain unverified; do not
+buy a DAC solely from that assumption. The firmware represents this candidate
+as a 16-bit shift-register board with unassigned hardware mappings; the product
+photograph does not establish a usable pin map or mains-load rating.
 
 ## Parts requiring final interface selection
 
 | Item | Candidate or specification | Remaining check |
 | --- | --- | --- |
-| Pump command DAC | [DFRobot DFR0971](https://www.dfrobot.com/product-2613.html), [DigiKey Canada](https://www.digikey.ca/en/products/detail/dfrobot/DFR0971/18069239) | Exact module not found on Amazon.ca; confirm model-specific pump input/returns and output startup |
-| Sensor ADC and conditioning | ADS1115-based acquisition or equivalent protected interface | Define 0-5 V and 0-10 V scaling, protection, grounding and calibration |
+| Pump command interface, not yet selected | GP8403/DFR0971 is a candidate only if its output matches the confirmed drive input | Verify the installed drive model, selected voltage/PWM mode, original conditioning and returns before purchase |
+| Sensor ADC and conditioning | ADS1115-based acquisition or equivalent protected interface | Define sensor scaling and the separately verified pump-feedback range, protection, grounding and calibration |
 | Pump start/stop contact | Separate isolated signal contact/interface | Verify pump input and contact suitability |
 | DB15 harness | Two-row 15-pin connector matching installed pump | Verify gender and pinout; do not substitute a three-row VGA connector |
 | DC barrel adapter | Female 5.5 x 2.1 mm to secured pigtail or terminal | Check connector dimensions and mounting |

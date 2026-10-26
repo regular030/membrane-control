@@ -17,6 +17,23 @@ evidence, but it still needs checking against the installed drive's manual and
 selected voltage/current control mode. It does not mean the pump's output needs
 a DAC. A DAC generates the command; an ADC reads feedback.
 
+**The installed pump's actual operating range is not confirmed as 0-10 V.**
+That number came from the photographed tags, not a measurement or an identified
+drive manual. The fact that the old Arduino controlled it is useful evidence
+about the old interface, but does not determine the pump's selectable/full-scale
+range.
+
+The recorded Arduino was a Mega 2560, whose GPIOs operate at 5 V. Its D3
+`analogWrite()` output is PWM, not a generated 10 V analog voltage. Possible
+explanations include a 0-5 V/PWM-compatible configuration, intermediate
+conditioning, or using only part of a wider command range. These are hypotheses,
+not a recovered circuit. A raw 10 V feedback connection to an ordinary Mega
+analog input would also be outside its normal input range. Trace the original
+wire and identify the drive before selecting a DAC or feedback divider.
+
+See Arduino's [Mega 2560 specifications](https://store.arduino.cc/products/arduino-mega-2560-rev3)
+and [PWM documentation](https://support.arduino.cc/hc/en-us/articles/9350537961500-Use-PWM-output-with-Arduino).
+
 | Notebook wire | Recorded old Arduino connection | New interface role |
 | --- | --- | --- |
 | Orange, pump VIN | Digital 3 | Speed command into pump, using the verified input range and a suitable voltage-output stage |

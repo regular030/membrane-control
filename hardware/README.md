@@ -15,7 +15,7 @@ and the unresolved board-input voltage discrepancy.
 | Masterflex L/S pump | Later DB25 profile; exact drive model needed |
 | Omega PX309-100G5V | 0-100 psi gauge, 0-5 V analog output |
 | McMillan 101-3T-CM-A2 | Flow measurement; 12-15 V supply, 0-5 V and pulse options |
-| Adam Nimbus balance | Existing USB-to-RS232 adapter from DB9 to computer; USB-B I/O is an alternative; retains its own power supply |
+| Adam Nimbus NBL 8201e balance | Current: USB-B I/O directly to computer; a second Windows COM port now appears; weight receipt remains to be checked |
 | Existing external DC supply | Believed 12 V; label, current rating and condition need checking |
 
 The previously listed Omega USB pressure sensor is not required for the initial application. Do not remove its driver abstraction option if later scope changes.
@@ -28,17 +28,31 @@ either signal's range. The exact installed drive model remains unconfirmed.
 
 Cable tags show a 0-10 V speed command into the pump, a separate 0-10 V speed output and remote start/stop. The tagged DB15-to-DB25 mappings are evidence to reconcile with the exact manufacturer manual, not complete instructions for connecting the ESP32.
 
-Use a 3.3 V-compatible DAC with a 0-10 V output stage, an isolated contact/suitable isolated interface for remote start/stop and a protected/scaled analog input for readback. Do not use a raw ESP32 output or raw PWM as a 0-10 V analog command.
+Treat 0-10 V as a cable-label claim, not a verified setting of the installed
+drive. If its exact manual confirms a 0-10 V command, a compatible DAC/output
+stage is one option. If the old system instead used a 0-5 V or PWM interface,
+identify that configuration and any conditioning before choosing the replacement.
+The current firmware's GP8403 driver is a candidate interface, not proof that
+the installed pump needs 10 V. Remote start/stop and analog readback also need
+their model-specific interfaces verified.
 
 A related [Masterflex family manual](https://documents.thermofisher.com/TFS-Assets/MBD/manuals/Thermo-Scientific-Dry-Bags-Peristaltic-Pump-Complex-Drive-DB3000A-Operating-Manual-GLOBAL-EN-low-res.pdf), printed page 3-23, has separate analog-input return, analog-output reference and digital-control reference pins. This is why a generic ground tag cannot establish all return connections. It is not verification of the installed models.
 
 ## Analog acquisition
 
-The 0-5 V sensors and 0-10 V pump output require input scaling, filtering, protection and calibration. If an ADS1115 is selected, its programmable full-scale range does not permit input pins above their supply-referenced electrical limits. Read the [TI datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf) before defining the interface.
+The 0-5 V sensors require input scaling, filtering, protection and calibration.
+Establish the pump feedback's actual range separately; its tag says 0-10 V.
+If an ADS1115 is selected, its programmable full-scale range does not permit
+input pins above their supply-referenced electrical limits. Read the
+[TI datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf) before defining the interface.
 
 ## Balance
 
-The latest photos show the balance's DB9 RS-232 port connected through an existing green USB-to-RS232 adapter. Reuse that path first, with the driver for the adapter's actual chipset if required. Its chipset, COM number and serial settings are not established by the photo. The balance's USB-B **I/O** port and a USB data cable provide an alternative PC connection, using [Adam's driver](https://adamequipment.com/support/software-downloads.html) if needed. USB-A **Display** is for the remote display. Use one PC connection path at a time and retain the balance's own power supply.
+The user now uses the balance's USB-B **I/O** port directly to the computer
+through a USB data cable, using [Adam's Nimbus driver](https://adamequipment.com/support/software-downloads.html)
+if required. The previous green USB-to-RS232 adapter is no longer the selected
+path. USB-A **Display** is for the remote display. Use one PC connection path
+at a time and retain the balance's own power supply.
 
 Select the balance's COM port separately from the ESP32's port. The current app expects **9600 baud, NONE parity / 8N1** by default; the scale and app must match. Enable continuous single-line mass output with units and CRLF line endings. Follow the [Adam manual](https://adamequipment.com.cn/media/docs/manuals/NBLe_i_UM_EN.pdf), including restarting after serial-setting changes. See [balance USB setup](balance-usb-setup.md) for both connection paths. The app listens for weights without sending print/poll commands and marks readings stale after more than 3 seconds without a valid reading.
 

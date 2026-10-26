@@ -36,7 +36,7 @@ Solder the supplied headers into the labelled I/O breakout pads beside the ESP32
 | ADC and pump DAC SDA | IO21 / GPIO21 | Shared I2C data |
 | ADC and pump DAC SCL | IO22 / GPIO22 | Shared I2C clock |
 | ADS1115 and DFR0971/GP8403 module power | 3V3 and GND | Applies to these specified 3.3 V-capable modules; pull-ups must be to 3.3 V |
-| Adam Nimbus balance | Computer USB via existing DB9 USB-to-RS232 adapter; USB-B I/O is an alternative | No ESP32 pins; separate COM port from the controller; see [balance USB setup](balance-usb-setup.md) |
+| Adam Nimbus balance | Current: balance USB-B I/O directly to computer USB | No ESP32 pins; separate COM port from the controller; see [balance USB setup](balance-usb-setup.md) |
 
 With the relay board externally powered, leave the USB-UART adapter's 3.3 V and 5 V power outputs disconnected. The seller's four-wire table describes a power arrangement; it is not a reason to tie two powered regulator outputs together. Check the adapter's actual TX logic level, not only its VCC selector label.
 
@@ -53,7 +53,7 @@ This is the preferred external-ADC plan already supported by the firmware:
 | --- | --- |
 | Pressure sensor 0-5 V output | Scaling/protection interface, then ADS1115 A0 |
 | Flow sensor 0-5 V analog output | Scaling/protection interface, then ADS1115 A1 |
-| Pump 0-10 V speed feedback | Scaling/protection interface, then ADS1115 A2 |
+| Pump speed feedback; actual range unverified, tag says 0-10 V | Range-matched scaling/protection interface, then ADS1115 A2 |
 | Pump speed command | GP8403 VOUT0 to the verified pump speed-input terminal |
 
 Use the flow sensor's analog output for this plan. Its pulse output is a different interface. For a 3.3 V-powered ADS1115, keep normal analog pin voltage within 0-3.3 V; selecting a larger ADC gain range does not make it 5 V or 10 V tolerant. Connect each pump signal's specified return according to the exact drive manual. Do not assume every cable tag called GROUND is the right analog return.

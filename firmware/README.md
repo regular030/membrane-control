@@ -83,7 +83,7 @@ USB/UART communication only; it does not commission the relays or rig.
    or wiring. A flashing TX LED alone does not establish an ESP32 response.
 3. Close Membrane Control and all serial monitors so they release the port.
    Identify the controller adapter in Device Manager by unplugging/replugging
-   that adapter only. The balance's USB-to-RS-232 cable is a separate device and
+   that adapter only. The balance's current USB-B I/O cable is a separate device and
    has a different COM port. A detected USB adapter does not prove the ESP32 is
    powered or responding.
 4. After setup above and confirmed power/wiring, build and upload. Replace `COM3`
