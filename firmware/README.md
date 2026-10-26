@@ -221,7 +221,7 @@ To create a reviewed physical profile, provide a header implementing
 `basu::compiledBoardConfig()` and select it using the compile definition
 `BASU_VERIFIED_PROFILE_HEADER`. The factory `BoardProfile.h` remains unverified.
 The profile must explicitly attest `verifiedBoardConfig`, safe valve states and
-pressure limit, DAC interface and conditioned sensor calibration. Validation
+pressure limit, selected pump-command interface and conditioned sensor calibration. Validation
 rejects missing/conflicting pins, UART0/flash pins, duplicated relay bits and
 invalid ADC channels. Boot-strapping pins, exposed module pins, OE pull-ups and
 power-up relay behavior still require electrical review and bench measurement.
@@ -245,6 +245,37 @@ recipe flag nor a desktop checkbox can enable an unverified profile.
 
 ## Drivers
 
+- **PWM-to-0-10 V converter (optional):** `PumpCommandSource::PwmConverter`
+  selects a separately powered converter, not a direct PWM wire into the pump.
+  The selected EC Buying module is a non-isolated, common-ground interface;
+  follow the [converter commissioning guide](../docs/pwm-converter-setup.md).
+  `Gp8403` remains the configuration default and its driver is retained.
+  [PwmConverterProfile.example.h](examples/PwmConverterProfile.example.h) is an
+  explicitly UNVERIFIED profile template. Candidate GPIO25 PWM and GPIO26 STOP
+  contact are independent signals; GPIO4 remains reserved in PWM profiles.
+  Before approval, verify the seven valve mappings/safe levels, protected pressure
+  input, returns/isolation, command voltage calibration and safe startup/reset/
+  lost-PWM behavior. The physical pressure gate remains mandatory.
+  The profile must set `pwmConverterInterfaceVerified`, `pumpPwmPin`, a dedicated
+  `pumpPwmChannel` (0-15), `pumpPwmFrequencyHz` (22-20000),
+  `pumpPwmResolutionBits` (8-16), and measured `pwmSettleMs` (10-5000).
+  Candidate timer settings are channel0, 1000Hz, 12bits. The settling-time default
+  is zero and is rejected; no measured response time is supplied by the listing.
+  Actual usable frequency/resolution combinations also have to pass LEDC setup.
+  Arduino-ESP32 2.0.17 configures the timer, with checked ESP-IDF channel/duty
+  operations. The initial attached duty is explicitly zero; 12-bit commands use
+  0, 2048 and 4096 counter counts for 0%, 50% and constant-HIGH 100%.
+  After every changed valve/speed command, the contact stays STOP during the
+  reviewed settling interval. Activation is nonblocking and only occurs after
+  a fresh core safety tick; new commands, Stop and faults cancel a pending start.
+  Stop opens the contact before attempting PWM zero and safe valve levels.
+  If a PWM driver operation fails, the independent contact still receives STOP.
+  Software cannot guarantee analog zero if the converter or wiring fails.
+  This source neither initializes nor probes GP8403. I2C is used only if an
+  ADS1115 input is configured; native ADC inputs can operate without I2C.
+  There is no electronic converter-presence or analog-output confirmation from
+  a successful PWM register write. Telemetry pump percentage is a command, not
+  measured speed, settled voltage or flow. No existing production gate is waived.
 - **GP8403/DFR0971:** checked I2C writes use the manufacturer's range/output
   register layout. Both DAC channels are zeroed at initialization; no EEPROM
   output storage is used. The separate pump contact stays stopped while valve

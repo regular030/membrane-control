@@ -20,7 +20,11 @@ Acceptance: known values and units match expected tolerances; stale values are m
 
 ## Stage 4 Outputs and pump
 
-Verify every output with low-voltage test loads. Measure DAC zero/full-scale and startup behavior with the pump disconnected. Verify the stop contact defaults. Then validate one pump and one valve under supervision before expanding the wiring.
+Verify every output with suitable disconnected bench tests. The selected EC Buying
+module converts ESP32 PWM to 0-10 V. Measure zero/full-scale, settling, loss of PWM
+and startup/reset behavior with the pump disconnected. Verify that the separate
+stop contact remains stopped while command voltage settles and on any fault.
+Then validate one pump and one valve under supervision before expanding wiring.
 
 Acceptance: correct channel/polarity, no unintended startup pulses, process-safe reset/timeout behavior and no raw sensor overvoltage at logic inputs.
 

@@ -11,6 +11,41 @@ manufacturer-authored manual and DB15 diagram confirm 0-10 V command 1(+)/3(-),
 continuity, conditioning and calibration remain unverified. No physical outputs
 were operated to establish these documentation findings.
 
+## PWM converter support, version 0.1.13
+
+Checked locally on Windows x64, 26 October 2026:
+
+- All **421 desktop/packaging tests** passed with native exit 0. After adding
+  the converter source/example and handoff to the required release payload,
+  all **25 focused firmware/setup packaging tests** passed again.
+- All **67 native firmware tests** passed, including 18 new PWM cases. Checks
+  cover invalid/unreviewed configuration, pin conflicts, full-scale duty,
+  driver failures, zero initialization, independent contact ordering, measured
+  settling, stop/fault cancellation, and source-specific I2C behavior.
+- All four main ESP32 targets compiled. The new source-only converter bench
+  example also compiled separately with the pinned ESP32 toolchain. It was
+  reviewed for bounded input parsing, five-second limits, one test per explicit
+  confirmation, and GPIO25-only output without relay or pump-contact control.
+- The production PWM driver and its delayed RUN activation received a separate
+  code review. RUN is considered only after a current controller safety tick;
+  a serial acknowledgement cannot release the contact. Factory profiles retain
+  their unverified state. The measured settling interval has no usable default.
+- Both GitHub workflows pass local actionlint. The repository remains public;
+  local commissioned profiles and operator data are excluded from release files.
+- The final Windows EXE launched in isolated demo mode, produced a 1360 x 940
+  screenshot and exited cleanly. The Setup EXE verified its embedded payload
+  using its read-only plan without installation, downloads or USB access. The
+  firmware ZIP contains four merged images plus complete sources, including
+  the separate converter bench project and profile template. SHA256 manifests
+  cover the release assets. Hosted Actions remain blocked by the existing
+  account billing lock, so these release files were built and checked locally.
+
+No hardware or serial port was operated. The selected EC Buying converter has
+not arrived, so its output voltage, settling, supply behavior and response to
+lost PWM have not been measured. The pump harness returns, isolated stop
+interface, protected/calibrated analog inputs and complete rig acceptance remain
+outstanding. Balance USB-B serial settings and receipt of mass remain unresolved.
+
 ## Sensor-free valve test, version 0.1.12
 
 Checked locally on Windows x64, 26 October 2026:

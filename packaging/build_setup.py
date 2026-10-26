@@ -20,6 +20,11 @@ def payload_sources(root: Path, executable: Path, firmware_archive: Path | None 
         "docs/START-HERE.md", "docs/operator-guide.md", "hardware/balance-usb-setup.md",
         "docs/relay-board-test.md", "protocol/relay-bench.md",
         "docs/valve-test.md", "protocol/valve-test.md",
+        "docs/pwm-converter-setup.md", "hardware/procurement.md",
+        "firmware/examples/PwmConverterProfile.example.h",
+        "firmware/examples/pwm-converter-bench/README.md",
+        "firmware/examples/pwm-converter-bench/platformio.ini",
+        "firmware/examples/pwm-converter-bench/src/main.cpp",
         "hardware/pump-interface.md",
         "docs/full-firmware.md",
     ):

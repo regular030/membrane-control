@@ -74,7 +74,8 @@ See [automatic GitHub builds](docs/development.md#automatic-github-builds).
 - [Full firmware release](docs/full-firmware.md): controller source, compiled images and the four upload choices.
 - [Real relay board test](docs/relay-board-test.md): test the unloaded relay board and record its channel mapping.
 - [Valve test without sensors](docs/valve-test.md): seven short solenoid tests, isolated pump, and a separate reviewed valve-only profile.
-- [Pump DAC wiring handoff](hardware/pump-interface.md#handoff-connecting-the-dfr0971-when-it-arrives): exact module and connection steps for the lab maintainer.
+- [Pump PWM wiring handoff](hardware/pump-interface.md#connecting-the-ec-buying-converter-when-it-arrives): selected Amazon module and connection steps for the lab maintainer.
+- [PWM converter setup](docs/pwm-converter-setup.md): what to order, firmware setup and disconnected-pump checks.
 - [Architecture](docs/architecture.md) and [protocol](protocol/v1.md): how the code fits together.
 - [Hardware](hardware/README.md), [parts](hardware/procurement.md) and [pin plan](hardware/relay-board-pin-plan.md).
 - [Validation](docs/validation.md): software checks and physical tests still needed.

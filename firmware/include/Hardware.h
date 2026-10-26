@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <driver/ledc.h>
 #include "BoardConfig.h"
 
 namespace basu {
@@ -33,23 +34,27 @@ class Hardware {
       }
     }
     writeValves(safeOutputs());
+    if (config_.pumpCommandSource == PumpCommandSource::PwmConverter && !beginPumpPwm())
+      return fail("pwm_initialization_failed");
     for (const AnalogConfig* input : inputs()) {
       if (input->source == AnalogSource::NativeAdc1) {
         pinMode(input->pin, INPUT);
         analogSetPinAttenuation(input->pin, ADC_11db);
       }
     }
-    if (!Wire.begin(config_.i2cSdaPin, config_.i2cSclPin, 100000)) return fail("i2c_initialization_failed");
-    Wire.setTimeOut(20);
-    i2cInitialized_ = true;
-    // Manufacturer GP8403 register mapping: range register 0x01 (0x11=10 V),
-    // channel registers 0x02/0x04, left-aligned 12-bit little-endian output.
-    // Zero BOTH channels before range change; never call EEPROM store().
-    const uint8_t zeroBoth[] = {0, 0, 0, 0};
-    const uint8_t range10V[] = {0x11};
-    if (!writeRegister(config_.gp8403Address, 0x02, zeroBoth, sizeof(zeroBoth)) ||
-        !writeRegister(config_.gp8403Address, 0x01, range10V, sizeof(range10V)) ||
-        !writePumpVoltage(0)) return fail("gp8403_initialization_failed");
+    if (boardUsesI2c(config_)) {
+      if (!Wire.begin(config_.i2cSdaPin, config_.i2cSclPin, 100000)) return fail("i2c_initialization_failed");
+      Wire.setTimeOut(20);
+      i2cInitialized_ = true;
+    }
+    if (config_.pumpCommandSource == PumpCommandSource::Gp8403) {
+      // GP8403: zero BOTH channels before range change; never store to EEPROM.
+      const uint8_t zeroBoth[] = {0, 0, 0, 0};
+      const uint8_t range10V[] = {0x11};
+      if (!writeRegister(config_.gp8403Address, 0x02, zeroBoth, sizeof(zeroBoth)) ||
+          !writeRegister(config_.gp8403Address, 0x01, range10V, sizeof(range10V)) ||
+          !writePumpCommand(0)) return fail("gp8403_initialization_failed");
+    }
     for (const AnalogConfig* input : inputs()) {
       if (input->source == AnalogSource::Ads1115 && !probe(config_.ads1115Address))
         return fail("ads1115_not_responding");
@@ -61,37 +66,60 @@ class Hardware {
     return true;
   }
 
-  bool apply(const Outputs& requested) {
+  bool apply(const Outputs& requested, uint32_t now = 0, bool allowPumpRun = false) {
     if (simulation_) return true;
     if (!ready_) return false;
-    if (requested == applied_) return true;
+    if (!validOutputs(requested)) return fail("invalid_outputs");
+    if (requested == applied_) {
+      // Only the main loop passes allowPumpRun, after the current safety tick.
+      // Sensor acquisition and serial ACK paths never release this contact.
+      if (pumpRunPending_ && allowPumpRun &&
+          static_cast<uint32_t>(now - pumpCommandChangedMs_) >= config_.pwmSettleMs) {
+        pumpRunPending_ = false;
+        digitalWrite(config_.pumpContactPin, config_.pumpContactActiveHigh);
+      }
+      return true;
+    }
     // Disable pump while changing valves/speed; recipe must still include any
     // required hydraulic settling delays as explicit steps.
     digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
+    pumpRunPending_ = false;
     safeStopIssued_ = false;
     writeValves(requested);
-    if (!writePumpVoltage(requested.pumpPercent)) return fail("gp8403_write_failed");
-    if (requested.pumpPercent > 0) digitalWrite(config_.pumpContactPin, config_.pumpContactActiveHigh);
+    if (!writePumpCommand(requested.pumpPercent))
+      return fail(config_.pumpCommandSource == PumpCommandSource::Gp8403 ? "gp8403_write_failed" : "pwm_write_failed");
+    if (requested.pumpPercent > 0) {
+      if (config_.pumpCommandSource == PumpCommandSource::PwmConverter) {
+        pumpCommandChangedMs_ = now;
+        pumpRunPending_ = true;
+      } else digitalWrite(config_.pumpContactPin, config_.pumpContactActiveHigh);
+    }
     applied_ = requested;
     safeStopIssued_ = requested == safeOutputs();
     return true;
   }
 
-  // Best-effort physical stop: contact STOP precedes I2C, so a stuck bus cannot
+  // Contact STOP precedes PWM zero, valve changes or I2C, so a stuck bus cannot
   // prevent the software issuing STOP. Hardware must independently fail safe.
   void safeStop() {
+    pumpRunPending_ = false;
     if (simulation_ || !ioInitialized_) return;
     digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
+    if (pwmInitialized_ && !writePumpPwmDuty(0) && ready_) {
+      ready_ = false;
+      error_ = "pwm_stop_failed";
+    }
     if (safeStopIssued_) return;
     safeStopIssued_ = true;
     writeValves(safeOutputs());
-    if (i2cInitialized_) writePumpVoltage(0);
+    if (config_.pumpCommandSource == PumpCommandSource::Gp8403 && i2cInitialized_) writePumpCommand(0);
     applied_ = safeOutputs();
   }
 
   void sample(uint32_t now) {
     if (simulation_ || !ready_) return;
-    if (static_cast<uint32_t>(now - lastHealthMs_) >= 1000) {
+    if (config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
+        static_cast<uint32_t>(now - lastHealthMs_) >= 1000) {
       lastHealthMs_ = now;
       if (!probe(config_.gp8403Address)) { fail("gp8403_disconnected"); return; }
     }
@@ -162,8 +190,49 @@ class Hardware {
     value = static_cast<uint16_t>((Wire.read() << 8) | Wire.read());
     return true;
   }
-  bool writePumpVoltage(double percent) {
-    if (!i2cInitialized_ || !validOutputs(Outputs{{}, percent})) return false;
+  bool beginPumpPwm() {
+    // Hold LOW as GPIO before attaching the peripheral. Preload zero duty on
+    // the dedicated channel, which may have retained a previous timer value.
+    digitalWrite(config_.pumpPwmPin, LOW);
+    pinMode(config_.pumpPwmPin, OUTPUT);
+    const double actualHz = ledcSetup(config_.pumpPwmChannel, config_.pumpPwmFrequencyHz,
+                                      config_.pumpPwmResolutionBits);
+    if (!std::isfinite(actualHz) || actualHz < 22 || actualHz > 20000) return false;
+    // Arduino's ledcAttachPin/ledcWrite are void and discard driver errors.
+    // Use its documented channel/timer mapping with checked ESP-IDF calls.
+    ledc_channel_config_t channel{};
+    channel.gpio_num = config_.pumpPwmPin;
+    channel.speed_mode = pwmMode();
+    channel.channel = pwmChannel();
+    channel.intr_type = LEDC_INTR_DISABLE;
+    channel.timer_sel = static_cast<ledc_timer_t>((config_.pumpPwmChannel / 2) % 4);
+    channel.duty = 0;  // Explicit zero, never attach a stale global duty value.
+    channel.hpoint = 0;
+    if (ledc_channel_config(&channel) != ESP_OK) {
+      ledc_stop(pwmMode(), pwmChannel(), 0);
+      return false;
+    }
+    pwmInitialized_ = true;
+    return true;
+  }
+  ledc_mode_t pwmMode() const { return static_cast<ledc_mode_t>(config_.pumpPwmChannel / 8); }
+  ledc_channel_t pwmChannel() const { return static_cast<ledc_channel_t>(config_.pumpPwmChannel % 8); }
+  bool writePumpPwmDuty(uint32_t duty) {
+    if (ledc_set_duty(pwmMode(), pwmChannel(), duty) != ESP_OK ||
+        ledc_update_duty(pwmMode(), pwmChannel()) != ESP_OK) {
+      ledc_stop(pwmMode(), pwmChannel(), 0);  // Best effort; STOP contact stays independent.
+      return false;
+    }
+    return true;
+  }
+  bool writePumpCommand(double percent) {
+    if (!validOutputs(Outputs{{}, percent})) return false;
+    if (config_.pumpCommandSource == PumpCommandSource::PwmConverter) {
+      uint32_t duty = 0;
+      if (!pwmInitialized_ || !encodePumpPwmDuty(percent, config_.pumpPwmResolutionBits, duty)) return false;
+      return writePumpPwmDuty(duty);  // Register success is not measured converter feedback.
+    }
+    if (!i2cInitialized_) return false;
     const uint32_t millivolts = static_cast<uint32_t>(std::lround(percent * 100.0));
     const uint16_t code = static_cast<uint16_t>((millivolts * 4095U / 10000U) << 4);
     const uint8_t bytes[] = {static_cast<uint8_t>(code), static_cast<uint8_t>(code >> 8)};
@@ -217,6 +286,9 @@ class Hardware {
   bool simulation_;
   bool ioInitialized_ = false;
   bool i2cInitialized_ = false;
+  bool pwmInitialized_ = false;
+  bool pumpRunPending_ = false;
+  uint32_t pumpCommandChangedMs_ = 0;
   bool ready_ = false;
   bool safeStopIssued_ = false;
   const char* error_ = "hardware_not_initialized";

@@ -1,25 +1,29 @@
-Membrane Control 0.1.12 adds a separate valve test that does not need sensors.
+Membrane Control 0.1.13 adds pump-command support for the selected Amazon PWM-to-0-10 V converter.
 
 Developed for membrane research in **Dr. Onita Basu's lab at Carleton University**.
 
 ## Download
 
-Close the old app and download **MembraneControl-0.1.12-windows-x64.exe** for an app-only update, or **MembraneControl-Setup-0.1.12-windows-x64.exe** for installed shortcuts and new-PC setup. Python is bundled with the app; Setup also prepares the firmware tools. Valve testing needs the matching dedicated firmware and a reviewed valve-only profile.
+Close the old app and download **MembraneControl-Setup-0.1.13-windows-x64.exe** to update the app, firmware sources, setup guides and installed tools. **MembraneControl-0.1.13-windows-x64.exe** is an app-only update. Python is bundled with the desktop app. Pump PWM support requires the new full-controller firmware and a reviewed installation profile; updating only the desktop EXE does not change the board program.
 
-## Valve tests without sensors
+## Selected PWM converter and wiring
 
-Under **Connections and settings**, **1. Bare relay board test** identifies the unloaded board's polarity and channel mapping. **2. Valve test (no sensors)** is a separate window with seven V1-V7 **Energize 500 ms** buttons, a visible Stop and session checks. It requires no pressure sensor, flow sensor, scale or pump DAC. The pump must be physically isolated.
+The selected part is the [EC Buying PWM converter, B0CPJGFCGR](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR). Its listing specifies a 3.3-12 V module supply, 3.3 V-compatible PWM, and selectable 0-5/0-10 V output. Do not order an I2C DAC as well for the same command path. The module is not isolated; its signal and output reference must be checked against the pump and USB ground arrangement. No delivery date or price is promised here.
 
-The factory valve-test image is **locked** until a maintainer compiles the measured relay mapping, rest word and reviewed reset/OE and load behavior into its separate profile. All LOW off / All HIGH on is now recorded as the user's observed polarity; individual valve mapping and load-wiring checks remain outstanding. No screenshot, checkbox or upload establishes safe physical operation. See the [valve test handoff](https://github.com/regular030/membrane-control/blob/v0.1.12/docs/valve-test.md).
+The new [setup handoff](https://github.com/regular030/membrane-control/blob/v0.1.13/docs/pwm-converter-setup.md) covers the order list, candidate GPIO25/PWM connection, converter OUT to pump DB15 1/3, separate isolated start/stop contact 10/12, and protected feedback 9/5. It also corrects the old notebook interpretation: Mega D3 generated 5 V PWM and A8/A10/A12 were analog inputs. No hidden external DAC is assumed.
 
-The firmware allows one bounded pulse at a time and ends the session after heartbeat loss. Wrong firmware, mismatched/stale replies, reset, Stop, disconnect or app close cannot automatically rearm. The original bare-board and production controller gates remain separate. Status describes commands, not measured valve position. The live runtime table, presets and desired-flow comparison remain available in the normal application.
+The PWM backend uses reviewed pin/timer settings and a measured settling interval. It commands zero duty at initialization, holds the independent pump STOP contact during changes, and only permits RUN after the nonblocking delay and a current controller safety tick. Stop/fault cancels pending activation. Checked LEDC operations report initialization/write errors. PWM cannot detect an unplugged converter or prove its analog voltage. GP8403 operation remains supported for older reviewed profiles; the PWM path does not require or probe that DAC.
 
-## Firmware and scale connection
+## Firmware bundle and existing tools
 
-**MembraneControl-Firmware-0.1.12-esp32.zip** includes complete sources and four compiled targets: dry-run, bare relay bench, valve test and physical controller, with offsets and checksums. The portable ZIP and Setup include it. Setup adds **Flash valve test (setup required)**. Custom reviewed local profiles are excluded from public source bundles, and the factory-image packager rejects builds containing commissioned profile macros. Both physical profiles remain locked by default.
+**MembraneControl-Firmware-0.1.13-esp32.zip** includes complete source and four compiled targets: dry-run, bare relay bench, sensor-free valve test and physical controller, with offsets/checksums. The portable ZIP and Setup include it. The new setup guide and parts list are bundled for the lab maintainer. A PWM profile example is included with all approvals false and missing measured mapping/calibration values. Custom reviewed local profiles are excluded, and the factory-image packager rejects commissioned builds labelled as factory images.
 
-The pump handoff covers DFR0971/GP8403 wiring, DB15 command 1/3, feedback 9/5 and separate start/stop contact 10/12. It explicitly distinguishes signal returns and the module's non-isolated ground. A verified manufacturer purchase link is supplied; an exact compatible Amazon listing could not be confirmed. The scale is now connected by USB-B I/O and has a second COM port, but weight receipt remains unresolved; the user will check its serial settings later. See the [balance guide](https://github.com/regular030/membrane-control/blob/v0.1.12/hardware/balance-usb-setup.md).
+The separate **Valve test (no sensors)** remains available with its own reviewed valve-only profile and isolated pump. Normal production still requires a checked board profile, protected/calibrated pressure and independent stop hardware. Missing readings are not generated. The scale uses USB-B I/O and has a second COM port, but balance-side serial setup and weight receipt remain unresolved. Desired flow remains a comparison target, not automatic flow regulation.
+
+A source-only converter bench project is also included for voltage checks with the pump and all valve contact loads disconnected. It provides explicit serial confirmation, fixed percentage commands and a five-second cap rather than bypassing pressure checks in the production controller. It is built separately; no fifth factory image or automatic hardware test is installed.
 
 ## Validation
 
-All **421 desktop/packaging tests** and **49 native firmware tests** passed. All four ESP32 targets build. Further results are recorded in the [validation record](https://github.com/regular030/membrane-control/blob/v0.1.12/docs/validation.md). No physical rig was operated for this release. A separate clean-PC installation and rig commissioning remain outstanding. Hosted GitHub Actions remain blocked by the account billing lock; these binaries are built and checked locally.
+All **421 desktop/packaging tests**, **67 native firmware tests**, four main ESP32 builds and the separate converter bench build passed. The Windows app launched in isolated demo mode and exited cleanly; Setup verified its bundled payload without installing or opening USB. Both workflows pass actionlint. Results are recorded in the [validation record](https://github.com/regular030/membrane-control/blob/v0.1.13/docs/validation.md).
+
+No physical rig was operated for this release. Converter output, settling, loss of PWM, power sequencing, harness references and complete rig commissioning must still be checked after the hardware arrives. Hosted GitHub Actions remain blocked by the account billing lock; release binaries were built and checked locally.

@@ -38,7 +38,8 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false) {
   if (error) document["error"] = error;
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.3";
+    document["firmware_version"] = "0.1.13";
+    document["pump_command_source"] = basu::pumpCommandSourceName(board.pumpCommandSource);
     document["protocol_version"] = 1;
     document["valve_count"] = basu::kValveCount;
     document["hardware_verified"] = controller.hardwareVerified();
@@ -72,7 +73,9 @@ void handleLine(uint32_t now) {
     if (!error) error = controller.manual(candidate, now);
   } else error = "unknown command";
   // Apply before acknowledging an actuator command. Failure is a latched fault.
-  if (!error && (command == "start" || command == "manual") && !hardware.apply(controller.outputs())) {
+  // A serial batch can take time: do not backdate a newly written PWM command's
+  // settling interval to the loop timestamp captured before reading the batch.
+  if (!error && (command == "start" || command == "manual") && !hardware.apply(controller.outputs(), millis(), false)) {
     controller.latchFault(hardware.error());
     hardware.safeStop();
     error = hardware.error();
@@ -162,7 +165,7 @@ void loop() {
   readSerial(now);
   now = millis();
   controller.tick(now);
-  if (!hardware.apply(controller.outputs()) && controller.active()) {
+  if (!hardware.apply(controller.outputs(), now, true) && controller.active()) {
     controller.setHardwareReady(false);
     controller.latchFault(hardware.error());
     hardware.safeStop();

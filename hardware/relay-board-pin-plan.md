@@ -13,7 +13,7 @@ The seller's `ESP32_X16_TEST.ino` screenshot defines:
 | `HC595_RCK_PIN` | 12 | Storage-register latch clock |
 | `HC595_G_PIN` | 5 | Output-enable control |
 
-These traces already exist. Do not connect sensors or new jumper wires to these GPIOs. The repository's shift-register driver supports these four functions, but the factory profile remains unassigned. Relay bit order, channel polarity and safe states must be measured before making a verified profile. Do not assume physical relay 1 equals bit 0 or physical relay 8 equals bit 7.
+These traces already exist. Do not connect sensors or new jumper wires to these GPIOs. The repository's shift-register driver supports these four functions, but the factory profile remains unassigned. The user has observed LOW = relay off and HIGH = relay on; record that result without treating it as proof of bit order, reset/OE defaults or safe valve states. Do not assume physical relay 1 equals bit 0 or physical relay 8 equals bit 7.
 
 The separate [real relay board test](../docs/relay-board-test.md) firmware now uses
 these candidate pins to pulse unloaded outputs and establish their mapping.
@@ -33,9 +33,13 @@ Solder the supplied headers into the labelled I/O breakout pads beside the ESP32
 | USB-UART TX | RX / RXD0 / GPIO3 | Adapter must use 3.3 V TTL logic |
 | USB-UART RX | TX / TXD0 / GPIO1 | Cross TX and RX |
 | USB-UART GND | GND | Common UART reference |
-| ADC and pump DAC SDA | IO21 / GPIO21 | Shared I2C data |
-| ADC and pump DAC SCL | IO22 / GPIO22 | Shared I2C clock |
-| ADS1115 and DFR0971/GP8403 module power | 3V3 and GND | Applies to these specified 3.3 V-capable modules; pull-ups must be to 3.3 V |
+| Selected EC Buying converter PWM | IO25 / GPIO25, proposed | 3.3 V PWM, proposed 1 kHz; confirm exposed pad and reviewed profile |
+| Selected converter VIN | Verified regulated supply within its stated 3.3-12 V range | Existing nominal 12 V is at its maximum; verify actual tolerance/startup |
+| Selected converter GND | Reviewed common low-voltage reference | Nonisolated power/PWM/output reference; resolve pump and ESP32/USB grounding first |
+| Pump contact-interface control | IO26 / GPIO26, proposed | To a verified 3.3 V-compatible isolated contact interface, never directly to pump pins |
+| Optional external ADC SDA | IO21 / GPIO21 | I2C only if ADS1115 acquisition is selected; the PWM converter does not use it |
+| Optional external ADC SCL | IO22 / GPIO22 | Same acquisition choice |
+| ADS1115 power, if selected | 3V3 and GND | Verify module and pull-ups support 3.3 V; condition all analog inputs |
 | Adam Nimbus balance | Current: balance USB-B I/O directly to computer USB | No ESP32 pins; separate COM port from the controller; see [balance USB setup](balance-usb-setup.md) |
 
 With the relay board externally powered, leave the USB-UART adapter's 3.3 V and 5 V power outputs disconnected. The seller's four-wire table describes a power arrangement; it is not a reason to tie two powered regulator outputs together. Check the adapter's actual TX logic level, not only its VCC selector label.
@@ -43,20 +47,27 @@ With the relay board externally powered, leave the USB-UART adapter's 3.3 V and 
 ### Analog measurements and pump command
 
 The pump's VOUT is feedback **from** the pump. It belongs on a protected ADC
-input. The DAC output drives the opposite direction, into the pump's VIN/speed
-command input. The identified 75211-30 manual documents a 0-10 V command at
+input. The selected PWM converter's OUT drives the opposite direction, into
+the pump's VIN/speed-command input. The identified 75211-30 manual documents a 0-10 V command at
 DB15 1(+)/3(-) and feedback at 9(+)/5(-). The actual harness and references must
 still be checked. See
 [pump interface](pump-interface.md).
 
-This is the preferred external-ADC plan already supported by the firmware:
+The [selected EC Buying module](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR)
+converts ESP32 PWM to a DC analog command. Its output is not isolated; do not
+join the pump's signal returns by assumption. See the
+[pump wiring handoff](pump-interface.md#connecting-the-ec-buying-converter-when-it-arrives)
+for the terminal table and unloaded output/stop/reset tests. No extra GP8403
+DAC is required for this selected path.
+
+This is one external-ADC acquisition plan supported by the firmware:
 
 | Signal | Destination |
 | --- | --- |
 | Pressure sensor 0-5 V output | Scaling/protection interface, then ADS1115 A0 |
 | Flow sensor 0-5 V analog output | Scaling/protection interface, then ADS1115 A1 |
 | Pump speed feedback, documented 0-10 V on DB15 9(+)/5(-) | Range-matched scaling/protection interface, then ADS1115 A2; use the specified return |
-| Pump speed command | Suitable GP8403/output interface to DB15 1(+)/3(-), after reference/ground verification |
+| Pump speed command | EC Buying converter OUT to DB15 1(+), reviewed output reference to 3(-); first test with pump disconnected |
 
 Use the flow sensor's analog output for this plan. Its pulse output is a different interface. For a 3.3 V-powered ADS1115, keep normal analog pin voltage within 0-3.3 V; selecting a larger ADC gain range does not make it 5 V or 10 V tolerant. Connect each pump signal's specified return according to the exact drive manual. Do not assume every cable tag called GROUND is the right analog return.
 
@@ -64,9 +75,26 @@ If using the ESP32's native ADC instead, reserve GPIO34 for conditioned pressure
 
 ### Pump remote start/stop
 
-Prefer a spare onboard relay, provisionally physical channel 8, as the pump's remote dry contact, if its contact characteristics suit the pump's remote input. The 75211-30 manual shows remote start/stop across **DB15 pins 10 and 12**. Its COM and NO contacts connect only across the verified pair. Do not apply the board's supply voltage to it. Keep this signal-contact circuit separated from mains valve contacts.
+Use a separately reviewed isolated dry-contact interface, provisionally driven
+by **GPIO26**, matching the current `pumpContactPin` driver. Its control input
+must support 3.3 V ESP32 logic. Its isolated contact side connects only across
+the pump's **DB15 pins 10 and 12**, with no external voltage applied. This
+signal-contact circuit must remain separate from the 110-120 VAC valve COM bus.
+Never copy the old Arduino VIN connection to the pump's start/stop wire.
 
-**Version 0.1.0 limitation:** the physical driver currently expects a separate `pumpContactPin`, such as a reviewed GPIO26-driven isolated contact stage. It does not yet pack pump RUN into a spare 74HC595 relay bit. Using onboard relay 8 requires a driver change, validation of the physical relay-to-bit mapping and tests of STOP-before-DAC/valve changes. It is not enabled by this document. Avoid adding a separate contact stage merely to finalize wiring before that choice is settled.
+The driver does not pack pump RUN into a spare 74HC595 relay bit. An onboard
+relay is not a substitute without a reviewed driver/mapping and an electrical
+separation design. Verify STOP, reset and interface power loss with the pump
+disconnected before connecting its harness.
+
+### Recorded old analog channels
+
+The user-confirmed Mega wiring was pump feedback **A8**, pressure **A10** and
+flow **A12**, with pump command on PWM-capable **D3**. Those three A-numbered
+channels are analog inputs, not I2C. The new acquisition may use ADS1115 inputs
+or conditioned ESP32 ADC1 pins; it does not copy Mega channel numbers onto the
+ESP32. Every 0-5 V sensor and the separate 0-10 V feedback path still needs
+scaling, protection, reference verification and calibration.
 
 ## Programming
 
@@ -83,4 +111,5 @@ The listing text says DC 5-12 V, but its annotated photo calls the input "5V Pow
 - [Espressif boot mode selection](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html)
 - [TI SN74HC595 OE behavior](https://www.ti.com/product/SN74HC595)
 - [TI ADS1115 input limits](https://www.ti.com/lit/ds/symlink/ads1115.pdf)
-- [DFRobot DFR0971 supply and output specification](https://wiki.dfrobot.com/dfr0971)
+- [Selected EC Buying PWM converter specification](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR)
+- [Arduino Mega 2560 resources and pinout](https://docs.arduino.cc/hardware/mega-2560/)

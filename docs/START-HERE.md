@@ -36,6 +36,10 @@ board, or **2. Valve test (no sensors)** after the maintainer has completed the
 separate reviewed valve profile. The factory valve-test image stays locked.
 See [the valve test guide](valve-test.md). The pump is not operated by either tool.
 
+For the selected pump PWM converter, give the maintainer the
+[order, wiring and first-test guide](pwm-converter-setup.md). Install the latest
+**Setup** EXE to receive its firmware sources and tools as well as the app.
+
 - **No EXE:** use the release's **Assets**, not GitHub's green **Code** button.
 - **Windows blocks it:** ask the maintainer or IT. Python is not required.
 - **Start unavailable:** read the reason and next step shown on Dashboard.

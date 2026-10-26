@@ -29,6 +29,10 @@ REQUIRED_SOURCES = (
     "firmware/include/BoardProfile.h", "firmware/include/BoardConfig.h",
     "firmware/src/valve_test_main.cpp", "firmware/include/ValveTestCore.h",
     "firmware/include/ValveTestProfile.h", "firmware/include/ValveTestConfig.h",
+    "firmware/examples/PwmConverterProfile.example.h",
+    "firmware/examples/pwm-converter-bench/platformio.ini",
+    "firmware/examples/pwm-converter-bench/src/main.cpp",
+    "firmware/examples/pwm-converter-bench/README.md",
 )
 SOURCE_SUFFIXES = {".h", ".hpp", ".cpp", ".c", ".py", ".ini", ".md", ".txt"}
 
@@ -70,6 +74,7 @@ def source_files(root: Path) -> dict[str, bytes]:
             raise ValueError(f"Required firmware source is missing: {name}")
     for name in ("protocol/v1.md", "protocol/relay-bench.md", "docs/relay-board-test.md",
                  "protocol/valve-test.md", "docs/valve-test.md",
+                 "docs/pwm-converter-setup.md", "hardware/procurement.md",
                  "docs/full-firmware.md", "hardware/README.md", "hardware/relay-board-pin-plan.md",
                  "hardware/pump-interface.md", "packaging/build_firmware.py", "LICENSE"):
         path = root / name
@@ -182,6 +187,11 @@ The bundle version follows the desktop release; individual firmware versions may
 remain unchanged. See manifest.json and each target's manifest.json for hashes
 and the exact addresses exported by PlatformIO. No device was opened or flashed
 while creating this bundle.
+
+The source-only firmware/examples/pwm-converter-bench project provides a separate
+converter signal test with the pump and valve contact loads disconnected. It is
+not a fifth factory image. Its README explains explicit confirmation, serial
+commands and bounded tests; do not use it to operate the pump or valves.
 
 Choose one target:
 

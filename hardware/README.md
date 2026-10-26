@@ -1,9 +1,10 @@
 # Hardware baseline
 
-Planning baseline dated 24 October 2026. No pin-level wiring is approved yet.
+Planning baseline updated 26 October 2026. No complete physical wiring profile
+is commissioned yet.
 
 See the [25 October relay-board pin plan](relay-board-pin-plan.md) for the
-seller's shift-register GPIO assignments, proposed UART/I2C/analog connections
+seller's shift-register GPIO assignments, proposed UART/PWM/analog connections
 and the unresolved board-input voltage discrepancy.
 
 ## Existing equipment
@@ -23,7 +24,7 @@ The previously listed Omega USB pressure sensor is not required for the initial 
 ## Pump signals
 
 See [pump input/output clarification](pump-interface.md): **pump VOUT goes to
-an ADC; a DAC drives the pump VIN/speed input**. DB15 alone does not establish
+a protected ADC; the selected PWM-to-voltage converter drives pump VIN**. DB15 alone does not establish
 either signal's range. The user has now identified **75211-30**; the matching
 manufacturer manual confirms the model's 0-10 V voltage-control interface.
 
@@ -37,8 +38,22 @@ The 75211-30 manual documents command **DB15 1(+)/3(-)**, speed feedback
 **9(+)/5(-)** and remote contact **10/12**. This replaces the earlier inference
 from labels alone. Check the drive's selected mode, harness continuity and
 conditioning before connecting a replacement controller. Pin 12 is not shown
-as the common return for both analog signals. The GP8403 is a candidate command
-source, subject to verification of its interface and references.
+as the common return for both analog signals.
+
+The selected purchase is **one EC Buying B0CPJGFCGR PWM-to-0-10 V converter**
+from [Amazon Canada](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR).
+Use proposed GPIO25 for PWM and the separate GPIO26-driven isolated pump stop
+interface, subject to review of the exposed header and compiled profile. The
+converter is nonisolated and its stated supply maximum is 12 V; verify the
+existing regulated supply and reference arrangement. It does not require an
+extra DAC or Arduino. Price and delivery to the lab remain unverified.
+
+Follow the [order list](procurement.md#order-for-the-selected-pump-interface)
+and [unloaded wiring/bench handoff](pump-interface.md#connecting-the-ec-buying-converter-when-it-arrives).
+OUT goes toward pump command 1/3; feedback 9/5 and the isolated stop contact
+10/12 are separate paths. The firmware backend is selected in a reviewed
+production profile; it does not unlock a shipped unverified board or remove
+the required pressure/safety checks.
 
 A related [Masterflex family manual](https://documents.thermofisher.com/TFS-Assets/MBD/manuals/Thermo-Scientific-Dry-Bags-Peristaltic-Pump-Complex-Drive-DB3000A-Operating-Manual-GLOBAL-EN-low-res.pdf), printed page 3-23, has separate analog-input return, analog-output reference and digital-control reference pins. This is why a generic ground tag cannot establish all return connections. It is not verification of the installed models.
 
@@ -47,6 +62,8 @@ A related [Masterflex family manual](https://documents.thermofisher.com/TFS-Asse
 The 0-5 V sensors require input scaling, filtering, protection and calibration.
 The identified pump's documented feedback range is 0-10 V; verify actual wiring
 and scaling separately.
+The old Mega channels were pump feedback A8, pressure A10 and flow A12. These
+are analog inputs, not I2C; only a selected external ADC would add an I2C link.
 If an ADS1115 is selected, its programmable full-scale range does not permit
 input pins above their supply-referenced electrical limits. Read the
 [TI datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf) before defining the interface.

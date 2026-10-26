@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.12 includes the complete controller source and compiled ESP32 images,
+Version 0.1.13 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.12-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.13-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -13,7 +13,7 @@ The portable application ZIP also contains it. Setup installs it in
 | `esp32-dry-run` | Full recipe/communications logic with generated readings and no relay or pump output. Use for connection and app checks. |
 | `esp32-relay-bench` | Real unloaded relay pulses through the board's candidate shift-register interface. Separate test window; no sensors, pump or experiments. |
 | `esp32-valve-test` | Sensor-free, one-at-a-time solenoid pulses using a separate reviewed valve profile. No pump or sensor protection; the supplied factory profile stays locked. |
-| `esp32-physical` | Full controller, with recipe timing, relay outputs, sensor/ADC acquisition, pump DAC support, telemetry, pressure protection and communication watchdog. The shipped hardware profile is unverified, so physical operation remains locked. |
+| `esp32-physical` | Full controller with recipe timing, relay outputs, protected/calibrated input acquisition, PWM-converter or GP8403 pump command, telemetry, pressure protection and watchdog. The shipped hardware profile is unverified, so physical operation remains locked. |
 
 All targets are for the ESP32-WROOM/classic ESP32 profile used by this project.
 The full controller source is `firmware/src/main.cpp`; its I/O implementation is
@@ -43,6 +43,19 @@ images, offsets and checksums for tools that can flash raw ESP32 binaries; follo
 its README and manifest rather than treating `firmware.bin` as a complete image.
 
 ## Finish the physical hardware profile
+
+The selected Amazon EC Buying module uses a **PWM signal**, not I2C. Version
+0.1.13 adds this pump-command option alongside the existing GP8403 driver.
+Select the converter in the reviewed compiled profile; do not use a GP8403
+profile or assume that an upload completes the wiring. The guide and example
+profile explain the PWM pin, independent STOP contact and analog settling checks:
+[PWM converter setup](pwm-converter-setup.md).
+
+The firmware sources also include a standalone
+[`pwm-converter-bench` example](../firmware/examples/pwm-converter-bench/README.md)
+for converter-only measurements before sensors are ready. It requires the pump
+and all relay contact loads disconnected and is built separately from source;
+the four main factory image choices above are unchanged.
 
 For valve-only checks before sensors/DAC arrive, follow [Valve test](valve-test.md).
 Its separate `BASU_VALVE_PROFILE_HEADER` establishes only the seven solenoid

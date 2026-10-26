@@ -22,6 +22,11 @@ def fake_source(tmp_path):
         "firmware/examples/ValveTestProfile.example.h",
         "docs/relay-board-test.md", "protocol/relay-bench.md",
         "docs/valve-test.md", "protocol/valve-test.md",
+        "docs/pwm-converter-setup.md", "hardware/procurement.md",
+        "firmware/examples/PwmConverterProfile.example.h",
+        "firmware/examples/pwm-converter-bench/README.md",
+        "firmware/examples/pwm-converter-bench/platformio.ini",
+        "firmware/examples/pwm-converter-bench/src/main.cpp",
         "hardware/pump-interface.md",
         "docs/full-firmware.md",
     ]
@@ -52,7 +57,13 @@ def test_payload_hashes_actual_bytes_and_excludes_local_files(tmp_path):
         assert manifest["version"] == "1.2.3"
         assert archive.read(manifest["app"]) == executable.read_bytes()
         for name in ("docs/valve-test.md", "protocol/valve-test.md", "firmware/src/valve_test_main.cpp",
-                     "firmware/include/ValveTestProfile.h", "firmware/examples/ValveTestProfile.example.h"):
+                     "firmware/include/ValveTestProfile.h", "firmware/examples/ValveTestProfile.example.h",
+                     "docs/pwm-converter-setup.md", "hardware/procurement.md"):
+            assert archive.read(name) == (tmp_path / name).read_bytes()
+        for name in ("firmware/examples/PwmConverterProfile.example.h",
+                     "firmware/examples/pwm-converter-bench/README.md",
+                     "firmware/examples/pwm-converter-bench/platformio.ini",
+                     "firmware/examples/pwm-converter-bench/src/main.cpp"):
             assert archive.read(name) == (tmp_path / name).read_bytes()
         assert b"[env:esp32-valve-test]" in archive.read("firmware/platformio.ini")
         assert not any("secret" in name or "__pycache__" in name or "sqlite" in name for name in archive.namelist())
