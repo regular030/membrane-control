@@ -15,6 +15,11 @@ The seller's `ESP32_X16_TEST.ino` screenshot defines:
 
 These traces already exist. Do not connect sensors or new jumper wires to these GPIOs. The repository's shift-register driver supports these four functions, but the factory profile remains unassigned. Relay bit order, channel polarity and safe states must be measured before making a verified profile. Do not assume physical relay 1 equals bit 0 or physical relay 8 equals bit 7.
 
+The separate [real relay board test](../docs/relay-board-test.md) firmware now uses
+these candidate pins to pulse unloaded outputs and establish their mapping.
+Its identity and commands are separate from the experiment controller, and it
+never marks the production hardware profile verified.
+
 TI specifies OE HIGH as high impedance, not a guaranteed relay-OFF state. The relay driver circuit and its default bias determine what happens during reset. GPIO12 and GPIO5 also have ESP32 boot-strapping roles. Leave their onboard bias circuits intact.
 
 Reserve GPIO4 until the board's shift-register clear/reset wiring has been traced; a clear connection on a similar board is not proof for this revision.

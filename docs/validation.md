@@ -1,5 +1,36 @@
 # Software validation
 
+## Real unloaded relay-board test, version 0.1.8
+
+Checked locally on Windows 11 x64, 26 October 2026:
+
+- All 221 desktop tests passed, including the existing UI/zoom checks, 38 new
+  relay-bench session/UI cases, the separate-identity rejection case and updated
+  PowerShell upload/setup checks.
+- All 33 native firmware tests passed: 18 experiment-controller tests and 15 new
+  relay-bench cases covering both baseline polarities, all 16 bits, GPIO ordering,
+  strict JSON fields, bounded timing, late heartbeats, ready-state lease expiry,
+  probe IDs, reset/STOP and clock rollover.
+- ESP32 builds passed for dry run, commissioning-gated physical operation and
+  relay bench. The new bench target uses 294945 bytes flash and 29744 bytes RAM;
+  it selects only its own main source and has no Wire dependency.
+- The bench dialog was visually reviewed at 850 x 720 and 700 x 650 using a fake
+  serial-protocol device. All 16 bit controls, rest-pattern observations and Stop
+  remain reachable. Its real transport was not opened during these checks.
+- The app EXE launched, produced a 1360 x 940 screenshot and exited cleanly.
+  The actual setup EXE verified its bundled payload and read-only plan without
+  creating an install target, downloading tools or opening USB.
+- Both workflow files pass actionlint with optional ShellCheck/Pyflakes disabled.
+- Before making the repository public at the user's request, reachable Git
+  history was checked for credential patterns, private attachments and operator
+  data. No blocker was found. Local untracked data remains excluded from Git.
+
+The user reported successful dry-run flashing and app communication on the lab
+board before this update. That establishes the UART path, not relay mapping or
+safe physical operation. No new firmware was uploaded or relay operated by these
+release checks. The production profile remains unverified and cannot be unlocked
+through the bench tool. Full physical rig commissioning is still outstanding.
+
 ## Fresh-PC setup, version 0.1.7
 
 Checked locally on Windows 11 x64, 26 October 2026:

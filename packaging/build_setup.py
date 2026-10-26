@@ -18,6 +18,7 @@ def payload_sources(root: Path, executable: Path) -> dict[str, Path]:
         "packaging/install_cp210x.ps1", "packaging/driver-config.json",
         "packaging/python-runtime.json", "docs/setup-new-pc.md",
         "docs/START-HERE.md", "docs/operator-guide.md", "hardware/balance-usb-setup.md",
+        "docs/relay-board-test.md", "protocol/relay-bench.md",
     ):
         sources[relative] = root / relative
     for source in sorted((root / "firmware").rglob("*")):

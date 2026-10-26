@@ -195,27 +195,42 @@ function ConvertTo-ShortcutArgument {
     return '"' + $Value.TrimEnd('\') + '"'
 }
 
+function Get-SetupShortcutSpecs {
+    param([string]$Destination)
+    $powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    foreach ($item in @(@{Name='Membrane Control'; Script=$null; Firmware=$null},
+        @{Name='Flash ESP32 dry run'; Script='flash_dry_run.ps1'; Firmware='esp32-dry-run'},
+        @{Name='Flash relay board test'; Script='flash_dry_run.ps1'; Firmware='esp32-relay-bench'},
+        @{Name='USB driver help'; Script='install_cp210x.ps1'; Firmware=$null})) {
+        $scriptPath = if ($item.Script) { Join-Path $Destination ('packaging/' + $item.Script) } else { $null }
+        $arguments = ''
+        $target = Join-Path $Destination 'MembraneControl.exe'
+        if ($scriptPath) {
+            $target = $powershell
+            $rootParameter = if ($item.Script -eq 'install_cp210x.ps1') { '-Root' } else { '-InstallRoot' }
+            $arguments = '-NoProfile -ExecutionPolicy Bypass -File ' + (ConvertTo-ShortcutArgument $scriptPath) + ' ' + $rootParameter + ' ' + (ConvertTo-ShortcutArgument $Destination)
+            if ($item.Firmware) { $arguments += ' -Firmware ' + $item.Firmware }
+        }
+        [PSCustomObject]@{Name=$item.Name;Target=$target;Arguments=$arguments;ScriptPath=$scriptPath}
+    }
+}
+
 function New-SetupShortcuts {
     param([string]$Destination)
     $shell = New-Object -ComObject WScript.Shell
-    $powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    $specs = @(Get-SetupShortcutSpecs -Destination $Destination)
     $menu = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs/Membrane Control'
     $locations = @($menu, [Environment]::GetFolderPath('DesktopDirectory')) | Select-Object -Unique
     foreach ($location in $locations) {
         if ([string]::IsNullOrWhiteSpace($location)) { throw 'Windows shortcut directory is unavailable' }
         New-Item -ItemType Directory -Path $location -Force | Out-Null
-        foreach ($item in @(@{Name='Membrane Control'; Script=$null}, @{Name='Flash ESP32 dry run'; Script='flash_dry_run.ps1'},
-            @{Name='USB driver help'; Script='install_cp210x.ps1'})) {
-            $scriptPath = if ($item.Script) { Join-Path $Destination ('packaging/' + $item.Script) } else { $null }
-            if ($scriptPath -and -not (Test-Path -LiteralPath $scriptPath)) { continue }
+        foreach ($item in $specs) {
+            if ($item.ScriptPath -and -not (Test-Path -LiteralPath $item.ScriptPath)) { continue }
             $shortcut = $shell.CreateShortcut((Join-Path $location ($item.Name + '.lnk')))
             $shortcut.WorkingDirectory = $Destination
             $shortcut.IconLocation = Join-Path $Destination 'MembraneControl.exe'
-            if ($scriptPath) {
-                $shortcut.TargetPath = $powershell
-                $rootParameter = if ($item.Script -eq 'install_cp210x.ps1') { '-Root' } else { '-InstallRoot' }
-                $shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -File ' + (ConvertTo-ShortcutArgument $scriptPath) + ' ' + $rootParameter + ' ' + (ConvertTo-ShortcutArgument $Destination)
-            } else { $shortcut.TargetPath = Join-Path $Destination 'MembraneControl.exe' }
+            $shortcut.TargetPath = $item.Target
+            $shortcut.Arguments = $item.Arguments
             $shortcut.Save()
         }
     }
@@ -230,8 +245,9 @@ function Invoke-MembraneSetup {
             app=(Join-Path $checked.InstallRoot 'MembraneControl.exe'); python=$checked.Manifest.python;
             pythonVersion=$checked.Manifest.python.version;
             files=$checked.Files.Count; flashes_board=$false; installs_drivers=$false;
+            firmware_targets=@('esp32-dry-run', 'esp32-relay-bench');
             steps=@('Verify payload hashes', 'Copy application and firmware', 'Prepare dedicated Python and virtual environment',
-                'Install PlatformIO 6.2.0 and pyserial 3.5', 'Build dry-run firmware without uploading', 'Create shortcuts') } | ConvertTo-Json -Depth 5
+                'Install PlatformIO 6.2.0 and pyserial 3.5', 'Build dry-run and relay-board test firmware without uploading', 'Create shortcuts') } | ConvertTo-Json -Depth 5
         return
     }
     New-Item -ItemType Directory -Path $checked.InstallRoot -Force | Out-Null
@@ -260,10 +276,10 @@ function Invoke-MembraneSetup {
             'install', '--index-url', 'https://pypi.org/simple', '--no-input', 'platformio==6.2.0', 'pyserial==3.5')
         $env:PLATFORMIO_CORE_DIR = Join-Path $checked.InstallRoot 'tools/platformio'
         Invoke-SetupCommand -FilePath $venvPython -ArgumentList @('-I', '-m', 'platformio', 'run', '-d',
-            (Join-Path $checked.InstallRoot 'firmware'), '-e', 'esp32-dry-run')
+            (Join-Path $checked.InstallRoot 'firmware'), '-e', 'esp32-dry-run', '-e', 'esp32-relay-bench')
         New-SetupShortcuts -Destination $checked.InstallRoot
         Copy-Item -LiteralPath (Join-Path $checked.SourceRoot 'setup-manifest.json') -Destination (Join-Path $checked.InstallRoot 'setup-manifest.json') -Force
-        Write-SetupLog 'Setup complete. Open Membrane Control to use the app. Use Flash ESP32 dry run separately when the bench board and COM port are ready.'
+        Write-SetupLog 'Setup complete. Open Membrane Control to use the app. Flash ESP32 dry run is the no-output test; Flash relay board test operates only unloaded relays. Upload separately when the board and COM port are ready.'
         Write-SetupLog 'If Windows shows no controller COM port, use the optional USB driver help shortcut for the official driver instructions.'
     } catch {
         Write-SetupLog ("SETUP FAILED: " + $_.Exception.Message)

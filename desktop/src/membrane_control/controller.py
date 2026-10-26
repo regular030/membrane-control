@@ -396,6 +396,11 @@ class AppController:
                     self._abort(str(packet.get("error", "Command rejected")))
                 return
             if command == "hello":
+                if packet.get("device") == "membrane-relay-bench":
+                    self.disconnect_controller(request_stop=False)
+                    self.snapshot["controller_status"] = "Relay test firmware found; open Relay board test"
+                    self._log("Relay test firmware uses the separate Relay board test window")
+                    return
                 if (kind != "hello" or packet.get("device") != "basu-membrane-control"
                     or type(packet.get("protocol_version")) is not int or packet["protocol_version"] != 1
                     or type(packet.get("valve_count")) is not int or packet["valve_count"] != 7

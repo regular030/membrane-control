@@ -27,6 +27,7 @@ import pyqtgraph as pg
 from .models import MAX_STEPS, Recipe
 from .device_status import device_statuses
 from .zoom import NativeZoom
+from .relay_bench import RelayBenchDialog
 
 
 STYLE = """
@@ -200,7 +201,8 @@ class MainWindow(QMainWindow):
         title = QVBoxLayout()
         title.setSpacing(2)
         title.addWidget(_label("Membrane Control", "appTitle", True))
-        title.addWidget(_label("Experiment controls, live measurements and recorded runs", "subtitle", True))
+        self.lab_credit = _label("Dr. Onita Basu's lab · Carleton University", "subtitle", True)
+        title.addWidget(self.lab_credit)
         row.addLayout(title, 1)
         self.state_chip = _label("IDLE", "stateChip")
         row.addWidget(self.state_chip)
@@ -470,6 +472,9 @@ class MainWindow(QMainWindow):
         cform.addRow(crow)
         self.controller_detail = _label("No controller connected", "muted", True)
         cform.addRow(self.controller_detail)
+        self.relay_bench_button = _button("Relay board test", self._open_relay_bench)
+        self.relay_bench_button.setToolTip("Turn Simulation mode off first. Separate tool for REAL relays on a bare board with every contact load disconnected.")
+        cform.addRow(self.relay_bench_button)
         devices.addWidget(controller_box)
         balance_box = QGroupBox("Balance")
         bform = QFormLayout(balance_box)
@@ -907,6 +912,29 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Select a balance serial port first", 6000)
 
+    def _open_relay_bench(self):
+        if self.controller.simulation:
+            self.statusBar().showMessage("Turn Simulation mode off before opening the real relay board test.", 10000)
+            return
+        if self.controller._active():
+            self.statusBar().showMessage("Stop the current operation before opening the relay board test.", 10000)
+            return
+        port = self.controller_port.currentData()
+        balance = self.controller.balance
+        excluded = {balance.port} if balance is not None else set()
+        if port in excluded:
+            self.statusBar().showMessage("Select the ESP32 port, not the connected scale's port.", 10000)
+            return
+        try:
+            self.controller.disconnect_controller()
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not release the controller port: {exc}", 10000)
+            return
+        dialog = RelayBenchDialog(self, selected_port=port, port_lister=self.controller.list_ports,
+                                  excluded_ports=excluded)
+        dialog.exec()
+        self._update_view(dict(self.controller.snapshot))
+
     def _load_settings(self):
         settings = self.controller.settings
         self.area_spin.setValue(float(settings.get("membrane_area_m2", 0.1)))
@@ -1135,6 +1163,7 @@ class MainWindow(QMainWindow):
                 hardware_text = "Equipment setup is unfinished. Ask the lab maintainer; this cannot be changed here."
             self.hardware_status.setText(hardware_text)
             self.controller_connect.setEnabled(not operating and not desktop_simulation)
+            self.relay_bench_button.setEnabled(not operating and not desktop_simulation)
             self.balance_connect.setEnabled(not operating and not desktop_simulation)
             self.controller_disconnect.setEnabled(not operating and connected and not desktop_simulation)
             self.balance_disconnect.setEnabled(not operating and balanced and not desktop_simulation)

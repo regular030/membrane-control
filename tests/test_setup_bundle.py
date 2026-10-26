@@ -18,6 +18,7 @@ def fake_source(tmp_path):
         "packaging/install_cp210x.ps1", "packaging/driver-config.json",
         "docs/setup-new-pc.md", "docs/START-HERE.md", "docs/operator-guide.md",
         "hardware/balance-usb-setup.md", "firmware/platformio.ini", "firmware/src/main.cpp",
+        "docs/relay-board-test.md", "protocol/relay-bench.md",
     ]
     for relative in required:
         path = tmp_path / relative

@@ -3,7 +3,7 @@
 Try the demo first. You do not need any USB equipment.
 
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
-   and sign in if asked. Under **Assets**, download the file ending in
+   and open **Assets**. Download the file ending in
    **windows-x64.exe**. Do not choose **Source code (zip)**.
 2. Double-click the EXE. Leave **Simulation mode** checked.
 3. On **Dashboard**, choose a **Preset** such as **CWF** and click **Start run**.

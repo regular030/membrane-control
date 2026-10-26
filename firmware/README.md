@@ -6,6 +6,13 @@ relay GPIO, sensor GPIO or I2C. Measurements are explicitly simulated and every
 hello/telemetry message reports `simulation: true` and `hardware_verified: false`.
 Nothing in this repository establishes that the physical rig is commissioned.
 
+For the connected but unloaded relay board, the separate **esp32-relay-bench**
+firmware operates real 74HC595 outputs in bounded test pulses. Use the app's
+**Relay board test** window, not the ordinary experiment connection. Follow the
+[relay test guide](../docs/relay-board-test.md) to establish the off pattern and
+record the physical channel mapping. No pump or sensor interface is needed for
+this unloaded test, and it cannot run experiments.
+
 ## One-time setup on each Windows computer
 
 For a new PC, the **MembraneControl-Setup** EXE in

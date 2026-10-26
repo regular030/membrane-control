@@ -45,7 +45,7 @@ def payload(tmp_path):
         "app/MembraneControl.exe": b"fake packaged executable for checksum tests",
         "packaging/setup_windows.ps1": SETUP.read_bytes(),
         "packaging/flash_dry_run.ps1": FLASH.read_bytes(),
-        "firmware/platformio.ini": b"[env:esp32-dry-run]\nplatform=espressif32\n",
+        "firmware/platformio.ini": b"[env:esp32-dry-run]\nplatform=espressif32\n[env:esp32-relay-bench]\nplatform=espressif32\n",
         "firmware/src/main.cpp": b"// fake source, never compiled\n",
         "firmware/include/BoardProfile.h": b"// unconfigured\n",
         "firmware/include/BoardConfig.h": b"// pins=-1\n",
@@ -76,6 +76,7 @@ def test_plan_validates_hashes_and_has_no_install_or_environment_side_effects(pa
     assert plan["version"] == "0.1.7" and Path(plan["installRoot"]) == target
     assert plan["pythonVersion"] == "3.14.10"
     assert plan["flashes_board"] is False and plan["installs_drivers"] is False
+    assert plan["firmware_targets"] == ["esp32-dry-run", "esp32-relay-bench"]
     assert not target.exists()
 
 
@@ -132,7 +133,7 @@ def result_json(output):
     return json.loads(output.strip().splitlines()[-1])
 
 
-def test_setup_installs_pinned_tools_and_builds_only_dry_run_with_mocked_commands(payload):
+def test_setup_installs_pinned_tools_and_builds_both_test_targets_without_upload(payload):
     source, _, target = payload
     result = result_json(run_ps(mocked_setup_script(payload)).stdout)
     assert not result["failed"] and result["shortcuts"]
@@ -140,7 +141,7 @@ def test_setup_installs_pinned_tools_and_builds_only_dry_run_with_mocked_command
     args = [call["args"] for call in result["calls"]]
     assert args[0][:3] == ["-I", "-m", "venv"]
     assert "--isolated" in args[1] and "platformio==6.2.0" in args[1] and "pyserial==3.5" in args[1]
-    assert args[2][-2:] == ["-e", "esp32-dry-run"]
+    assert args[2][-4:] == ["-e", "esp32-dry-run", "-e", "esp32-relay-bench"]
     assert "upload" not in sum(args, [])
     assert result["calls"][2]["core"] == str(target / "tools/platformio")
     assert (target / "MembraneControl.exe").read_bytes() == (source / "app/MembraneControl.exe").read_bytes()
@@ -206,18 +207,72 @@ def test_flash_rejects_command_like_port_names_without_opening_anything(payload,
     assert result.returncode != 0 and "Windows COM port" in result.stderr
 
 
-def test_flash_plan_is_dry_run_only_and_preserves_paths_as_arguments(payload):
-    _, _, target = payload
+def prepare_flash_target(target):
     python = target / "tools/.venv/Scripts/python.exe"
     python.parent.mkdir(parents=True)
     python.write_bytes(b"never executed")
     firmware = target / "firmware/platformio.ini"
     firmware.parent.mkdir()
-    firmware.write_text("[env:esp32-dry-run]", encoding="utf-8")
-    result = run_ps(definitions(FLASH) + f"Invoke-DryRunFlash -Root {ps_quote(target)} -ComPort ' com4 ' -PlanOnly")
+    firmware.write_text("[env:esp32-dry-run]\n[env:esp32-relay-bench]", encoding="utf-8")
+
+
+@pytest.mark.parametrize("selected", [None, "esp32-dry-run", "esp32-relay-bench", "ESP32-RELAY-BENCH"])
+def test_flash_plan_selects_only_allowed_target_and_preserves_paths_as_arguments(payload, selected):
+    _, _, target = payload
+    prepare_flash_target(target)
+    parameter = "" if selected is None else " -Firmware " + ps_quote(selected)
+    result = run_ps(definitions(FLASH) + f"Invoke-DryRunFlash -Root {ps_quote(target)} -ComPort ' com4 ' -PlanOnly" + parameter)
     plan = json.loads(result.stdout)
-    assert plan["port"] == "COM4" and plan["environment"] == "esp32-dry-run"
+    expected = (selected or "esp32-dry-run").lower()
+    assert plan["port"] == "COM4" and plan["environment"] == expected
+    assert plan["selected_firmware"] == expected
+    assert plan["arguments"][plan["arguments"].index("-e") + 1] == expected
     assert plan["arguments"][-3:] == ["upload", "--upload-port", "COM4"]
     assert str(target / "firmware") in plan["arguments"]
     assert "esp32-physical" not in plan["arguments"]
     assert not (target / "logs").exists()
+
+
+@pytest.mark.parametrize("target", ["esp32-physical", "esp32-relay-bench;whoami", "other"])
+def test_flash_rejects_unsupported_firmware_before_any_work(payload, target):
+    _, _, destination = payload
+    result = run_ps(definitions(FLASH) + f"Invoke-DryRunFlash -Root {ps_quote(destination)} -ComPort COM4 -PlanOnly -Firmware {ps_quote(target)}", check=False)
+    assert result.returncode != 0 and "ValidateSet" in result.stderr
+    assert not destination.exists()
+    # The external script entry point enforces the same allow-list.
+    result = run_ps(f"& {ps_quote(FLASH)} -InstallRoot {ps_quote(destination)} -Port COM4 -Plan -Firmware {ps_quote(target)}", check=False)
+    assert result.returncode != 0 and "ValidateSet" in result.stderr
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("selected", ["esp32-dry-run", "esp32-relay-bench"])
+def test_either_upload_can_be_cancelled_without_executing_the_fake_tool(payload, selected):
+    _, _, target = payload
+    prepare_flash_target(target)
+    result = run_ps(definitions(FLASH) + "function Read-Host { return 'CANCEL' }; " +
+        f"Invoke-DryRunFlash -Root {ps_quote(target)} -ComPort COM4 -Firmware {ps_quote(selected)}")
+    assert "Cancelled. No board was opened or flashed." in result.stdout
+    assert selected in result.stdout
+    assert not (target / "logs").exists()
+    if selected == "esp32-relay-bench":
+        assert "OPERATES REAL RELAYS" in result.stdout
+        assert "COM, NO and NC" in result.stdout
+
+
+def test_shortcuts_preserve_default_and_explicitly_select_relay_bench(payload):
+    _, _, destination = payload
+    result = run_ps(definitions() + f"@(Get-SetupShortcutSpecs -Destination {ps_quote(destination)}) | ConvertTo-Json -Depth 4")
+    shortcuts = {item["Name"]: item for item in json.loads(result.stdout)}
+    assert set(shortcuts) == {"Membrane Control", "Flash ESP32 dry run", "Flash relay board test", "USB driver help"}
+    assert shortcuts["Membrane Control"]["Target"] == str(destination / "MembraneControl.exe")
+    assert shortcuts["Membrane Control"]["Arguments"] == ""
+    for name, target in [("Flash ESP32 dry run", "esp32-dry-run"), ("Flash relay board test", "esp32-relay-bench")]:
+        spec = shortcuts[name]
+        assert spec["Target"].lower().endswith(r"\powershell.exe")
+        assert f'-File "{destination / "packaging/flash_dry_run.ps1"}"' in spec["Arguments"]
+        assert f'-InstallRoot "{destination}"' in spec["Arguments"]
+        assert spec["Arguments"].endswith("-Firmware " + target)
+        assert "esp32-physical" not in spec["Arguments"]
+    assert "-Firmware" not in shortcuts["USB driver help"]["Arguments"]
+    assert f'-Root "{destination}"' in shortcuts["USB driver help"]["Arguments"]
+    assert not destination.exists()  # Metadata inspection creates no actual shortcuts.

@@ -12,7 +12,6 @@ Open the [short Start here guide](docs/START-HERE.md).
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and download the Windows `.exe` under **Assets**. For a fresh PC including
    Python and ESP32 firmware tools, choose **MembraneControl-Setup**.
-   Sign in if GitHub asks.
    **Source code (zip)** contains the code, not the ready-to-run app.
 2. Double-click the EXE. If using Setup, wait for completion and open the new
    **Membrane Control** shortcut. Leave **Simulation mode** checked.
@@ -62,6 +61,7 @@ See [automatic GitHub builds](docs/development.md#automatic-github-builds).
 
 - [Development](docs/development.md): run the source, tests and Windows build.
 - [ESP32 setup](firmware/README.md): USB detection, firmware upload and hardware verification.
+- [Real relay board test](docs/relay-board-test.md): test the unloaded relay board and record its channel mapping.
 - [Architecture](docs/architecture.md) and [protocol](protocol/v1.md): how the code fits together.
 - [Hardware](hardware/README.md), [parts](hardware/procurement.md) and [pin plan](hardware/relay-board-pin-plan.md).
 - [Validation](docs/validation.md): software checks and physical tests still needed.
