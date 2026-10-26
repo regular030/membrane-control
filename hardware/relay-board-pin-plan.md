@@ -42,6 +42,11 @@ With the relay board externally powered, leave the USB-UART adapter's 3.3 V and 
 
 ### Analog measurements and pump command
 
+The pump's VOUT is feedback **from** the pump. It belongs on a protected ADC
+input. The DAC output drives the opposite direction, into the pump's VIN/speed
+command input, only after its model-specific range is confirmed. See
+[pump interface](pump-interface.md).
+
 This is the preferred external-ADC plan already supported by the firmware:
 
 | Signal | Destination |

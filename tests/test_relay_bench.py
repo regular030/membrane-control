@@ -18,6 +18,7 @@ class FakeTransport:
         self.sent = []
         self.events = []
         self.closed = False
+        self.close_count = 0
 
     def send(self, packet):
         assert not self.closed
@@ -29,6 +30,7 @@ class FakeTransport:
 
     def close(self):
         self.closed = True
+        self.close_count += 1
 
     def last(self, command):
         return next(packet for packet in reversed(self.sent) if packet['cmd'] == command)
@@ -269,9 +271,107 @@ def test_wrong_pulse_bit_or_reset_is_not_accepted(bench):
 def test_hello_and_status_timeouts_are_bounded(bench):
     session, transport, now = bench
     session.connect('FAKE-ONLY')
-    now[0] += 5.1
+    now[0] += 8.1
     session.tick()
-    assert session.transport is None and 'hello acknowledgement timed out' in session.error
+    assert session.transport is None and 'HELLO timed out after 8 s' in session.error
+    assert 'release IO0/BOOT' in session.error and 'EN/RESET' in session.error
+
+
+def test_prehello_stale_fault_and_active_frames_cannot_abort_or_authorize_new_session(bench):
+    session, transport, _ = bench
+    session.connect('FAKE-ONLY')
+    transport.events.extend([
+        status(state='fault', fault='heartbeat_timeout', uptime_ms=50000),
+        status(state='pulsing', outputs_enabled=True, pulse_bit=4, remaining_ms=100,
+               probe_id=99, probe_completed=True, baseline_confirmed=True),
+        {'type': 'parse_error', 'error': 'ROM text is not JSON'},
+        {'v': 1, 'type': 'error', 'ok': False, 'id': 0, 'error': 'invalid JSON'},
+        identity(transport.last('hello')['id']), status(uptime_ms=10),
+    ])
+    session.tick()
+    assert session.transport is transport and session.verified and not session.error
+    assert not session.can_probe and not session.can_pulse
+    assert {packet['cmd'] for packet in transport.sent} == {'hello', 'heartbeat'}
+    transport.events.append(ack(transport.last('heartbeat')['id']))
+    session.tick()
+    assert session.fresh and not session.loads_disconnected
+    transport.events.append(status(state='fault', fault='heartbeat_timeout', uptime_ms=11))
+    session.tick()
+    assert session.transport is None and session.error == 'heartbeat_timeout'
+
+
+def test_hello_retry_is_bounded_and_only_latest_response_identifies(bench):
+    session, transport, now = bench
+    session.connect('FAKE-ONLY')
+    first_id = transport.last('hello')['id']
+    now[0] += 1
+    session.tick()
+    latest_id = transport.last('hello')['id']
+    assert latest_id != first_id and len(session.pending) == 1
+    transport.events.append(identity(first_id))
+    session.tick()
+    assert not session.verified
+    assert not any(packet['cmd'] == 'heartbeat' for packet in transport.sent)
+    transport.events.extend([identity(latest_id), status()])
+    session.tick()
+    transport.events.append(ack(transport.last('heartbeat')['id']))
+    session.tick()
+    arm(session, transport)
+    heartbeat_ack = session.last_heartbeat_ack
+    transport.events.append(identity(first_id))  # A late known reply must not reset the lease.
+    session.tick()
+    assert session.can_pulse and session.last_heartbeat_ack == heartbeat_ack
+    now[0] += 0.5
+    session.tick()
+    assert len([packet for packet in transport.sent if packet['cmd'] == 'hello']) == 2
+    with pytest.raises(ValueError, match='HELLO would disarm'):
+        session._request('hello')
+
+
+def test_boot_wait_never_retries_forever_or_sends_output_commands(bench):
+    session, transport, now = bench
+    session.connect('FAKE-ONLY')
+    for _ in range(7):
+        now[0] += 1
+        transport.events.append({'type': 'parse_error'})
+        session.tick()
+        assert session.transport is transport and not session.verified
+        assert len(session.pending) == 1
+    now[0] += 1
+    session.tick()
+    assert session.transport is None
+    hello_ids = [packet['id'] for packet in transport.sent if packet['cmd'] == 'hello']
+    assert len(hello_ids) == len(set(hello_ids)) == 8
+    assert {packet['cmd'] for packet in transport.sent} == {'hello', 'stop'}
+    assert transport.close_count == 1
+
+
+def test_prehello_matching_error_is_not_hidden_by_boot_tolerance(bench):
+    session, transport, _ = bench
+    session.connect('FAKE-ONLY')
+    transport.events.append({'v': 1, 'type': 'error', 'ok': False,
+                            'id': transport.last('hello')['id'], 'error': 'unsupported firmware'})
+    session.tick()
+    assert session.transport is None and 'unsupported firmware' in session.error
+
+
+def test_retired_hello_still_cannot_claim_an_unexpected_firmware_mode(bench):
+    session, transport, now = bench
+    session.connect('FAKE-ONLY')
+    first_id = transport.last('hello')['id']
+    now[0] += 1
+    session.tick()
+    transport.events.append(identity(first_id, simulation=True))
+    session.tick()
+    assert session.transport is None and 'Not the 16-channel' in session.error
+
+
+def test_framing_error_is_not_tolerated_after_identification(bench):
+    session, transport, _ = bench
+    connect_verified(session, transport)
+    transport.events.append({'v': 1, 'type': 'error', 'ok': False, 'id': 0, 'error': 'invalid JSON'})
+    session.tick()
+    assert session.transport is None and session.error
 
 
 def test_stale_status_detaches_even_with_heartbeat_ack(bench):
@@ -379,6 +479,12 @@ def test_main_window_entry_requires_explicit_hardware_mode_and_idle(qt_app, tmp_
 
         def exec(self):
             assert controller.driver is None  # No production owner retains the COM port.
+
+        def shutdown(self):
+            pass
+
+        def deleteLater(self):
+            pass
 
     monkeypatch.setattr('membrane_control.ui.RelayBenchDialog', FakeDialog)
     try:

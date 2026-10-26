@@ -1,15 +1,16 @@
 """Explicit bare-board relay testing, isolated from production control and recipes."""
 from __future__ import annotations
 
+import logging
 import time
 
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel,
+    QApplication, QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
-from .transport import SerialTransport
+from .transport import SerialTransport, close_transport
 
 
 def _integer(value, low, high):
@@ -23,6 +24,8 @@ class RelayBenchSession:
     ACK_TIMEOUT = 1.5
     OPERATION_TIMEOUT = 2.5
     HEARTBEAT_INTERVAL = 0.5
+    HELLO_INTERVAL = 1.0
+    HELLO_TIMEOUT = 8.0
     PULSE_MS = 500
 
     def __init__(self, transport_factory=None, clock=time.monotonic):
@@ -43,6 +46,9 @@ class RelayBenchSession:
         self.last_status = None
         self.last_uptime = None
         self.hello_at = None
+        self.connect_started = None
+        self.last_hello_sent = -100.0
+        self.retired_hello_ids = set()
         self.last_heartbeat_sent = -100.0
         self.last_heartbeat_ack = None
         self.error = ''
@@ -88,10 +94,13 @@ class RelayBenchSession:
             raise ValueError('Connect the relay board first.')
         if not self.verified and command not in ('hello', 'heartbeat', 'stop'):
             raise ValueError('The relay test firmware has not been identified.')
+        if command == 'hello' and self.verified:
+            raise ValueError('Reconnect explicitly to identify the board again; HELLO would disarm it.')
         self.next_id = self.next_id % 0x7ffffffe + 1
         request_id = self.next_id
-        timeout = 5.0 if command == 'hello' else self.ACK_TIMEOUT
-        self.pending[request_id] = (command, self.clock() + timeout)
+        deadline = (self.connect_started + self.HELLO_TIMEOUT if command == 'hello'
+                    else self.clock() + self.ACK_TIMEOUT)
+        self.pending[request_id] = (command, deadline)
         try:
             self.transport.send({'v': 1, 'id': request_id, 'cmd': command, **values})
         except Exception:
@@ -99,6 +108,8 @@ class RelayBenchSession:
             raise
         if command == 'heartbeat':
             self.last_heartbeat_sent = self.clock()
+        elif command == 'hello':
+            self.last_hello_sent = self.clock()
         return request_id
 
     def connect(self, port):
@@ -110,13 +121,17 @@ class RelayBenchSession:
         self.error = ''
         self.status = None
         self.last_status = self.last_uptime = self.hello_at = None
+        self.connect_started = self.clock()
+        self.last_hello_sent = -100.0
+        self.retired_hello_ids.clear()
         self.last_heartbeat_ack = None
         self.last_heartbeat_sent = -100.0
         self.verified = False
         try:
             self.transport = self.transport_factory(port, 115200)
             self._request('hello')
-            self.message = 'Opening port; waiting for the separate relay test firmware.'
+            self.message = ('Waiting for relay test firmware (up to 8 s). If just flashed using the '
+                            'three-wire UART adapter, release IO0/BOOT and briefly press EN/RESET.')
         except Exception as exc:
             self.fail(f'Could not connect: {exc}')
 
@@ -133,18 +148,17 @@ class RelayBenchSession:
         self.verified = False
         self.status = None
         self.last_status = self.last_uptime = self.hello_at = None
+        self.connect_started = None
+        self.retired_hello_ids.clear()
         self.last_heartbeat_ack = None
         if transport is not None:
-            # SerialTransport prioritizes STOP and discards queued operations.
-            # Closing also withdraws heartbeats; firmware has its own 1 s limit.
+            # The real transport makes one bounded STOP write, then cancels I/O
+            # and closes its handle. Duck transports retain zero-argument close.
+            self.next_id = self.next_id % 0x7ffffffe + 1
             try:
-                self.next_id = self.next_id % 0x7ffffffe + 1
-                transport.send({'v': 1, 'id': self.next_id, 'cmd': 'stop'})
-            except Exception:
-                pass
-            try:
-                transport.close()
+                close_transport(transport, stop_message={'v': 1, 'id': self.next_id, 'cmd': 'stop'})
             except Exception as exc:
+                logging.exception('Could not close relay test serial connection')
                 if not self.error:
                     self.error = f'Could not close the serial connection: {exc}'[:500]
         self.message = self.error or message
@@ -260,10 +274,23 @@ class RelayBenchSession:
             return  # Boot text cannot authorize anything; HELLO still has a deadline.
         if kind == 'disconnected':
             raise ValueError(packet.get('error') or 'Relay board disconnected.')
+        if kind == 'bench_status' and not self.verified:
+            # Serial data from a previous session may precede our HELLO reply.
+            # Even a stale fault/active state cannot authorize this new session.
+            # Matching HELLO disarms the board; require new status afterwards.
+            return
         if type(packet.get('v')) is not int or packet['v'] != 1:
             raise ValueError('Invalid relay test protocol version.')
         if kind in ('hello', 'ack', 'error'):
             request_id = packet.get('id')
+            if (not self.verified and kind == 'error' and packet.get('ok') is False
+                and type(request_id) is int and request_id == 0
+                and isinstance(packet.get('error'), str)):
+                return  # Firmware can report a partial boot-time JSON frame with id 0.
+            retired_hello = _integer(request_id, 1, 0xffffffff) and request_id in self.retired_hello_ids
+            if retired_hello and kind == 'hello':
+                self._check_identity(packet)
+                return  # An older retry cannot identify/disarm the current UI session.
             if not _integer(request_id, 1, 0xffffffff) or request_id not in self.pending:
                 raise ValueError('Unexpected relay test acknowledgement; reconnect the board.')
             command, _ = self.pending[request_id]
@@ -273,11 +300,7 @@ class RelayBenchSession:
             if kind != expected or packet.get('ok') is not True:
                 raise ValueError('Malformed relay test acknowledgement.')
             if command == 'hello':
-                if (packet.get('device') != 'membrane-relay-bench'
-                    or type(packet.get('protocol_version')) is not int or packet['protocol_version'] != 1
-                    or type(packet.get('relay_count')) is not int or packet['relay_count'] != 16
-                    or packet.get('simulation') is not False or packet.get('hardware_verified') is not False):
-                    raise ValueError('Not the 16-channel real relay test firmware. Flash the separate relay board test target.')
+                self._check_identity(packet)
                 self.verified = True
                 self.hello_at = now
                 self.status = self.last_status = self.last_uptime = None
@@ -316,6 +339,14 @@ class RelayBenchSession:
         self.status, self.last_status, self.last_uptime = status, now, status['uptime_ms']
         self._finish_operation()
 
+    @staticmethod
+    def _check_identity(packet):
+        if (packet.get('ok') is not True or packet.get('device') != 'membrane-relay-bench'
+            or type(packet.get('protocol_version')) is not int or packet['protocol_version'] != 1
+            or type(packet.get('relay_count')) is not int or packet['relay_count'] != 16
+            or packet.get('simulation') is not False or packet.get('hardware_verified') is not False):
+            raise ValueError('Not the 16-channel real relay test firmware. Flash the separate relay board test target.')
+
     def tick(self):
         if self.transport is None:
             return
@@ -325,6 +356,17 @@ class RelayBenchSession:
                 self._handle_packet(packet, now)
                 if self.transport is None:
                     return
+            if not self.verified:
+                if now - self.connect_started >= self.HELLO_TIMEOUT:
+                    raise ValueError('Relay test HELLO timed out after 8 s. Check the COM port. '
+                        'With the three-wire UART adapter, release IO0/BOOT, briefly press EN/RESET, '
+                        'then reconnect. The app does not toggle those pins.')
+                if now - self.last_hello_sent >= self.HELLO_INTERVAL:
+                    for request_id, (command, _deadline) in list(self.pending.items()):
+                        if command == 'hello':
+                            self.retired_hello_ids.add(request_id)
+                            self.pending.pop(request_id)
+                    self._request('hello')
             for command, deadline in self.pending.values():
                 if now >= deadline:
                     raise ValueError(f'{command} acknowledgement timed out; disconnected and stopped sending heartbeats.')
@@ -347,6 +389,7 @@ class RelayBenchDialog(QDialog):
     def __init__(self, parent=None, *, selected_port=None, port_lister=None,
                  excluded_ports=(), transport_factory=None, clock=time.monotonic):
         super().__init__(parent)
+        self._shutdown_done = False
         self.setWindowTitle('Relay board test (real relays)')
         self.setModal(True)
         self.resize(640, 680)
@@ -439,6 +482,9 @@ class RelayBenchDialog(QDialog):
         self.timer.setInterval(100)
         self.timer.timeout.connect(self._tick)
         self.timer.start()
+        self._quit_application = QApplication.instance()
+        if self._quit_application is not None:
+            self._quit_application.aboutToQuit.connect(self.shutdown)
         self._render()
 
     @staticmethod
@@ -447,7 +493,7 @@ class RelayBenchDialog(QDialog):
         return [(port.device, port.description) for port in list_ports.comports()]
 
     def refresh_ports(self):
-        if self.session.transport is not None:
+        if self._shutdown_done or self.session.transport is not None:
             return
         previous = self.port_combo.currentData() or self._selected_port
         self.port_combo.clear()
@@ -465,6 +511,8 @@ class RelayBenchDialog(QDialog):
         self._render()
 
     def _act(self, action):
+        if self._shutdown_done:
+            return
         try:
             action()
         except Exception as exc:
@@ -508,27 +556,30 @@ class RelayBenchDialog(QDialog):
         self._act(lambda: self.session.pulse(bit))
 
     def _tick(self):
+        if self._shutdown_done:
+            return
         self.session.tick()
         self._render()
 
     def _render(self):
         session = self.session
         connected = session.transport is not None
-        self.connect_button.setEnabled(not connected and bool(self.port_combo.currentData()))
-        self.disconnect_button.setEnabled(connected)
-        self.stop_button.setEnabled(connected)
-        self.refresh_button.setEnabled(not connected)
-        self.port_combo.setEnabled(not connected)
-        self.loads_checkbox.setEnabled(session.fresh)
-        self.baseline_combo.setEnabled(session.fresh and not session.busy and not session.confirmed)
-        self.probe_button.setEnabled(session.can_probe)
-        self.observation_checkbox.setEnabled(session.can_confirm)
+        live = not self._shutdown_done
+        self.connect_button.setEnabled(live and not connected and bool(self.port_combo.currentData()))
+        self.disconnect_button.setEnabled(live and connected)
+        self.stop_button.setEnabled(live and connected)
+        self.refresh_button.setEnabled(live and not connected)
+        self.port_combo.setEnabled(live and not connected)
+        self.loads_checkbox.setEnabled(live and session.fresh)
+        self.baseline_combo.setEnabled(live and session.fresh and not session.busy and not session.confirmed)
+        self.probe_button.setEnabled(live and session.can_probe)
+        self.observation_checkbox.setEnabled(live and session.can_confirm)
         for checkbox, value in ((self.loads_checkbox, session.loads_disconnected),
                                 (self.observation_checkbox, session.observed)):
             with QSignalBlocker(checkbox):
                 checkbox.setChecked(value)
         for button in self.pulse_buttons:
-            button.setEnabled(session.can_pulse)
+            button.setEnabled(live and session.can_pulse)
         self.status_label.setText(session.error or session.message)
         if session.fresh:
             status = session.status
@@ -542,14 +593,31 @@ class RelayBenchDialog(QDialog):
         else:
             self.output_label.setText('Output status unavailable. Relay contacts are not monitored.')
 
-    def done(self, result):
-        self.timer.stop()
+    def shutdown(self):
+        """Release the session even when Qt exits without a dialog close event."""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+        try:
+            self.timer.stop()
+        except RuntimeError:
+            pass  # Python cleanup can outlive its Qt wrapper during final teardown.
         self.session.detach('Relay test closed; disconnected and stopped sending heartbeats.')
-        self._render()
+        try:
+            self._render()
+        except RuntimeError:
+            pass
+        if self._quit_application is not None:
+            try:
+                self._quit_application.aboutToQuit.disconnect(self.shutdown)
+            except (RuntimeError, TypeError):
+                pass
+            self._quit_application = None
+
+    def done(self, result):
+        self.shutdown()
         super().done(result)
 
     def closeEvent(self, event):
-        self.timer.stop()
-        self.session.detach('Relay test closed; disconnected and stopped sending heartbeats.')
-        self._render()
+        self.shutdown()
         super().closeEvent(event)

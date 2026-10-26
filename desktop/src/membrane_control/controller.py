@@ -12,7 +12,7 @@ from .balance import MassFlow, parse_mass
 from .models import Recipe, number, valve_states
 from .recipes import built_in_recipes, read_recipe, write_recipe
 from .storage import RunStore
-from .transport import SerialTransport, Simulator
+from .transport import SerialTransport, Simulator, close_transport
 
 DEFAULT_SETTINGS = {"membrane_area_m2": 0.01, "density_g_ml": 1.0,
                     "record_interval_s": 1.0, "require_balance": False,
@@ -175,28 +175,27 @@ class AppController:
         self._log(f"Opening controller {port}")
 
     def disconnect_controller(self, *, request_stop=True):
-        if self.driver is not None:
-            if request_stop:
-                try:
-                    self.driver.send({"v": 1, "id": 2147483647, "cmd": "stop"})
-                except Exception:
-                    pass
-            self.driver.close()
-        self.driver = None
-        self.pending.clear()
-        self.start_phase = None
-        self.manual_pending = False
-        self.manual_requested = None
-        self.stop_pending = False
-        self.device = {}
-        self.last_telemetry = None
-        self.last_controller_uptime = None
-        if self.run_id is not None:
-            self._finish_run("disconnected")
-        if hasattr(self, "snapshot"):
-            self.snapshot.update(controller_connected=False, controller_status="Disconnected",
-                state="idle", start_pending=False, manual_pending=False, stop_pending=False, valves=[False]*7, pump_percent=0,
-                pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None, hardware_verified=False)
+        driver, self.driver = self.driver, None
+        try:
+            stop = {"v": 1, "id": 2147483647, "cmd": "stop"} if request_stop else None
+            close_transport(driver, stop)
+        finally:
+            self.pending.clear()
+            self.start_phase = None
+            self.manual_pending = False
+            self.manual_requested = None
+            self.stop_pending = False
+            self.device = {}
+            self.last_telemetry = None
+            self.last_controller_uptime = None
+            try:
+                if self.run_id is not None:
+                    self._finish_run("disconnected")
+            finally:
+                if hasattr(self, "snapshot"):
+                    self.snapshot.update(controller_connected=False, controller_status="Disconnected",
+                        state="idle", start_pending=False, manual_pending=False, stop_pending=False, valves=[False]*7, pump_percent=0,
+                        pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None, hardware_verified=False)
 
     def connect_balance(self, port, baud=9600):
         if self.simulation:
@@ -211,13 +210,14 @@ class AppController:
         self._log(f"Opening balance {port} at {baud} baud, 8N1")
 
     def disconnect_balance(self):
-        if self.balance is not None:
-            self.balance.close()
-        self.balance = None
-        self.last_mass = None
-        self.mass_flow.reset()
-        if hasattr(self, "snapshot"):
-            self.snapshot.update(balance_connected=False, balance_status="Disconnected", mass_g=None, balance_flow_ml_min=None)
+        balance, self.balance = self.balance, None
+        try:
+            close_transport(balance)
+        finally:
+            self.last_mass = None
+            self.mass_flow.reset()
+            if hasattr(self, "snapshot"):
+                self.snapshot.update(balance_connected=False, balance_status="Disconnected", mass_g=None, balance_flow_ml_min=None)
 
     def start_run(self):
         if self._active():

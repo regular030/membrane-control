@@ -8,7 +8,7 @@ import pytest
 import serial
 
 from membrane_control.models import Recipe, Step
-from membrane_control.transport import MAX_LINE, SerialTransport, Simulator
+from membrane_control.transport import MAX_LINE, SerialTransport, Simulator, close_transport
 
 
 class Instrument:
@@ -37,6 +37,66 @@ class Instrument:
 
     def close(self):
         self.closed = True
+
+
+class BlockingInstrument(Instrument):
+    """Cooperative driver double; a real OS handle is never opened."""
+    def __init__(self, mode):
+        super().__init__()
+        self.mode = mode
+        self.read_entered = threading.Event()
+        self.write_entered = threading.Event()
+        self.open_entered = threading.Event()
+        self.release_read = threading.Event()
+        self.release_write = threading.Event()
+        self.release_open = threading.Event()
+        self.close_count = 0
+        self.cancel_read_count = 0
+        self.cancel_write_count = 0
+        self.is_open = False
+
+    def open(self):
+        self.open_entered.set()
+        if self.mode == "open":
+            self.release_open.wait(timeout=3)
+        super().open()
+        self.is_open = True
+
+    def read(self, count):
+        if self.mode == "read":
+            self.read_entered.set()
+            self.release_read.wait(timeout=3)
+            return b""
+        return super().read(count)
+
+    def write(self, data):
+        if self.closed:
+            raise OSError("write after handle close")
+        self.writes.append(data)
+        if self.mode == "write":
+            self.write_entered.set()
+            self.release_write.wait(timeout=3)
+        return len(data)
+
+    def cancel_read(self):
+        self.cancel_read_count += 1
+        self.release_read.set()
+
+    def cancel_write(self):
+        self.cancel_write_count += 1
+        self.release_write.set()
+
+    def close(self):
+        self.close_count += 1
+        self.closed = True
+        self.is_open = False
+        self.release_read.set()
+        self.release_write.set()
+
+    def release_all(self):
+        self.release_read.set()
+        self.release_write.set()
+        self.release_open.set()
 
 
 def wait_for(worker, predicate):
@@ -118,7 +178,9 @@ def queue_only_transport():
     worker.outgoing = queue.PriorityQueue(maxsize=64)
     worker._counter = 0
     worker._stop = threading.Event()
+    worker._closing = threading.Event()
     worker._terminated = threading.Event()
+    worker._state_lock = threading.RLock()
     worker._terminal_error = None
     worker._terminal_reported = False
     return worker
@@ -173,6 +235,255 @@ def test_new_transport_accepts_commands_while_port_is_still_opening(instrument):
         worker.close()
     with pytest.raises(RuntimeError, match="closed"):
         worker.send({"id": 2, "cmd": "heartbeat"})
+
+
+@pytest.mark.parametrize("mode", ["read", "write"])
+def test_close_cancels_blocked_io_releases_handle_and_discards_backlog(monkeypatch, mode):
+    device = BlockingInstrument(mode)
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: device)
+    worker = SerialTransport("BLOCKED-TEST-PORT")
+    try:
+        wait_for(worker, lambda items: any(p["type"] == "port_open" for p in items))
+        if mode == "write":
+            worker.send({"id": 1, "cmd": "manual"})
+            assert device.write_entered.wait(timeout=1)
+        else:
+            assert device.read_entered.wait(timeout=1)
+        for index in range(10):
+            worker.send({"id": index + 10, "cmd": "heartbeat"})
+        worker.close()
+        assert device.closed and device.close_count == 1
+        assert not worker._thread.is_alive()
+        assert worker.outgoing.empty()
+        assert device.cancel_read_count and device.cancel_write_count
+        writes_at_close = list(device.writes)
+        worker.close()
+        assert device.close_count == 1 and device.writes == writes_at_close
+        with pytest.raises(RuntimeError, match="closed"):
+            worker.send({"id": 100, "cmd": "heartbeat"})
+    finally:
+        device.release_all()
+        worker.close()
+
+
+@pytest.mark.parametrize("with_stop", [False, True])
+def test_close_during_pending_open_cannot_leak_or_send_late_traffic(monkeypatch, with_stop):
+    device = BlockingInstrument("open")
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: device)
+    worker = SerialTransport("LATE-OPEN-TEST")
+    try:
+        assert device.open_entered.wait(timeout=1)
+        worker.send({"id": 1, "cmd": "manual"})
+        started = time.monotonic()
+        with pytest.raises(RuntimeError, match="still shutting down"):
+            worker.close(stop_message={"v": 1, "id": 2, "cmd": "stop"} if with_stop else None, timeout=0.05)
+        assert time.monotonic() - started < 0.5
+        assert worker.outgoing.empty()
+        with pytest.raises(RuntimeError, match="closed"):
+            worker.send({"id": 2, "cmd": "heartbeat"})
+        device.release_open.set()
+        worker._thread.join(timeout=1)
+        assert not worker._thread.is_alive()
+        assert device.close_count == 1 and device.closed
+        assert device.writes == []
+        assert not any(p["type"] == "port_open" for p in worker.poll())
+        worker.close()
+        assert device.close_count == 1
+    finally:
+        device.release_all()
+        worker.close()
+
+
+def test_explicit_shutdown_stop_bypasses_backlog_and_is_written_before_handle_close(monkeypatch):
+    device = BlockingInstrument("read")
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: device)
+    worker = SerialTransport("GRACEFUL-STOP-TEST")
+    try:
+        assert device.read_entered.wait(timeout=1)
+        for index in range(10):
+            worker.send({"v": 1, "id": index + 1, "cmd": "manual"})
+        stop = {"v": 1, "id": 100, "cmd": "stop"}
+        close_transport(worker, stop_message=stop)
+        assert [json.loads(data) for data in device.writes] == [stop]
+        assert device.closed and device.close_count == 1
+        assert worker.outgoing.empty() and not worker._thread.is_alive()
+        close_transport(worker, stop_message=stop)
+        assert len(device.writes) == 1 and device.close_count == 1
+    finally:
+        device.release_all()
+        worker.close()
+
+
+def test_graceful_shutdown_force_cancels_a_stuck_write_within_deadline(monkeypatch):
+    device = BlockingInstrument("write")
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: device)
+    worker = SerialTransport("STUCK-WRITE-STOP-TEST")
+    try:
+        worker.send({"v": 1, "id": 1, "cmd": "manual"})
+        assert device.write_entered.wait(timeout=1)
+        started = time.monotonic()
+        worker.close(stop_message={"v": 1, "id": 2, "cmd": "stop"}, timeout=0.6)
+        assert time.monotonic() - started < 0.9
+        assert device.closed and device.close_count == 1
+        assert device.cancel_write_count > 0 and not worker._thread.is_alive()
+        assert not any(json.loads(data)["cmd"] == "heartbeat" for data in device.writes)
+    finally:
+        device.release_all()
+        worker.close()
+
+
+def test_closed_handle_can_be_reopened_immediately_without_waiting_for_old_worker(monkeypatch):
+    lease = set()
+    devices = []
+
+    class ExclusiveInstrument(BlockingInstrument):
+        def __init__(self):
+            super().__init__("read")
+        def open(self):
+            if self.port in lease:
+                raise PermissionError("test exclusive handle is still held")
+            lease.add(self.port)
+            super().open()
+        def close(self):
+            super().close()
+            lease.discard(self.port)
+
+    def factory(**kwargs):
+        device = ExclusiveInstrument()
+        devices.append(device)
+        return device
+
+    monkeypatch.setattr(serial, "Serial", factory)
+    first = SerialTransport("EXCLUSIVE-TEST")
+    second = None
+    try:
+        wait_for(first, lambda items: any(p["type"] == "port_open" for p in items))
+        first.close()
+        assert "EXCLUSIVE-TEST" not in lease
+        second = SerialTransport("EXCLUSIVE-TEST")
+        wait_for(second, lambda items: any(p["type"] == "port_open" for p in items))
+        assert "EXCLUSIVE-TEST" in lease
+    finally:
+        first.close()
+        if second is not None:
+            second.close()
+    assert not lease and all(device.close_count == 1 for device in devices)
+
+
+def test_simultaneous_send_and_close_leaves_no_queued_traffic(monkeypatch):
+    device = BlockingInstrument("read")
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: device)
+    worker = SerialTransport("CONCURRENT-TEST")
+    sending = threading.Event()
+    finished = threading.Event()
+
+    def sender():
+        sending.set()
+        for index in range(1000):
+            try:
+                worker.send({"v": 1, "id": index + 1, "cmd": "heartbeat"})
+            except RuntimeError:
+                break
+        finished.set()
+
+    thread = threading.Thread(target=sender)
+    try:
+        assert device.read_entered.wait(timeout=1)
+        thread.start()
+        assert sending.wait(timeout=1)
+        worker.close()
+        thread.join(timeout=1)
+        assert finished.is_set() and not thread.is_alive()
+        assert worker.outgoing.empty() and device.close_count == 1
+        assert device.writes == []
+    finally:
+        device.release_all()
+        worker.close()
+        thread.join(timeout=1)
+
+
+def test_original_read_error_survives_cleanup_error_and_handle_close_is_not_repeated(monkeypatch):
+    class FailingInstrument(Instrument):
+        def __init__(self):
+            super().__init__()
+            self.close_count = 0
+        def read(self, count):
+            raise OSError("original cable-read failure")
+        def close(self):
+            self.close_count += 1
+            self.closed = True
+            raise OSError("cleanup failure")
+
+    device = FailingInstrument()
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: device)
+    worker = SerialTransport("ERROR-CLOSE-TEST")
+    packets = wait_for(worker, lambda items: any(p["type"] == "disconnected" for p in items))
+    assert [p["error"] for p in packets if p["type"] == "disconnected"] == ["original cable-read failure"]
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="cleanup failure"):
+            worker.close()
+    assert device.close_count == 1 and worker.poll() == []
+
+
+def test_duck_type_close_helper_always_closes_even_if_stop_send_fails():
+    class Adapter:
+        def __init__(self):
+            self.close_count = 0
+        def send(self, packet):
+            raise OSError("test link is gone")
+        def close(self):
+            self.close_count += 1
+
+    adapter = Adapter()
+    close_transport(adapter, {"v": 1, "id": 1, "cmd": "stop"})
+    assert adapter.close_count == 1
+
+
+def test_missing_or_unsupported_cancellation_still_closes_the_handle(monkeypatch):
+    class UnsupportedCancellation(BlockingInstrument):
+        def cancel_read(self):
+            raise NotImplementedError("test driver cannot cancel reads")
+        def cancel_write(self):
+            raise OSError("test driver cannot cancel writes")
+
+    device = UnsupportedCancellation("read")
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: device)
+    worker = SerialTransport("NO-CANCEL-TEST")
+    try:
+        assert device.read_entered.wait(timeout=1)
+        worker.close()
+        assert device.closed and device.close_count == 1
+        assert not worker._thread.is_alive()
+    finally:
+        device.release_all()
+        worker.close()
+
+
+def test_simultaneous_closers_close_the_same_handle_exactly_once(monkeypatch):
+    device = BlockingInstrument("read")
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: device)
+    worker = SerialTransport("TWO-CLOSERS-TEST")
+    failures = []
+
+    def close():
+        try:
+            worker.close()
+        except Exception as error:
+            failures.append(error)
+
+    threads = [threading.Thread(target=close) for _ in range(2)]
+    try:
+        assert device.read_entered.wait(timeout=1)
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+        assert not failures and not any(thread.is_alive() for thread in threads)
+        assert device.close_count == 1 and device.closed
+        assert not worker._thread.is_alive()
+    finally:
+        device.release_all()
+        worker.close()
 
 
 def test_exact_line_limit_received_and_oversize_recovers(instrument):

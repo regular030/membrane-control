@@ -1,7 +1,7 @@
 # Set up a fresh Windows computer
 
 Use Windows 11 x64 and an internet connection for the first setup. Download
-`MembraneControl-Setup-0.1.8-windows-x64.exe` from this project's release
+`MembraneControl-Setup-0.1.9-windows-x64.exe` from this project's release
 assets and run it. Python, Arduino IDE and LabVIEW do not need to be installed
 beforehand.
 

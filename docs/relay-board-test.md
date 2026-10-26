@@ -14,6 +14,11 @@ Confirm the board's rated supply and polarity before powering it.
 3. At `Connecting...`, hold **IO0**, briefly press **EN**, and release IO0 when
    writing starts. After a successful upload, release IO0 and press EN again.
 
+An upload saying `SUCCESS` proves that the image was written and verified. With
+only TX/RX/GND connected, `Hard resetting via RTS` cannot physically reset the
+board. A hello/firmware timeout afterward needs the manual EN reset above, with
+IO0 released. Keep other serial monitors and older app copies closed.
+
 For a source checkout instead, update the source and run from its root:
 
 ```powershell
@@ -43,6 +48,10 @@ so the two windows do not fight over the same COM port.
 5. Use **Stop** to disable the shift-register outputs and clear the confirmation.
    Closing or disconnecting also withdraws the heartbeat. Confirm the relays'
    actual response rather than assuming an output-enable command proves it.
+
+Closing the app or test window releases its serial connection. COM4 can still
+appear in Device Manager while the USB adapter is plugged in; releasing the port
+means another program can open it, not that the USB device disappears.
 
 The app requests 500 ms pulses. Firmware caps any accepted pulse at two seconds
 and expires its heartbeat lease after one second. It does not keep outputs on

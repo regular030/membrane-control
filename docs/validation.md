@@ -1,5 +1,37 @@
 # Software validation
 
+## Serial shutdown and relay startup, version 0.1.9
+
+Checked locally on Windows 11 x64, 26 October 2026:
+
+- All 255 desktop tests passed. New regressions cover blocked reads and writes,
+  cancellation fallback, late serial opens, concurrent shutdown, discarded queued
+  traffic, bounded STOP attempts and immediate reopening of an exclusive fake
+  port. No real serial device was opened by these tests.
+- A reproducer confirmed that the previous Qt event-loop exit path could leave
+  the bench transport open and its timers active. Main-window, modal-dialog,
+  direct event-loop exit and exception cleanup paths now have regression checks.
+- Pre-HELLO stale status and framing errors no longer abort identification.
+  Tests cover bounded startup retries, delayed replies and strict checks after
+  identity is established. No relay authorization is granted by a retry.
+- The packaged app launched, produced a 1360 x 940 screenshot and exited cleanly.
+  The setup EXE authenticated its payload and read-only installation plan without
+  downloading dependencies, installing tools or opening USB.
+- Both workflows pass actionlint with optional ShellCheck/Pyflakes disabled.
+  GitHub's failed 0.1.8 tag/main check annotations report an account billing lock;
+  their jobs executed no steps. Version 0.1.9 release files were built locally.
+
+Firmware is unchanged from version 0.1.8. Its 33 native tests and all three
+ESP32 target builds passed as recorded below. The user supplied a successful
+relay-bench upload log, but no physical relay or complete rig was operated in
+these release checks. A separate clean-PC installation remains unverified.
+
+If a native driver blocks inside its open call beyond the shutdown deadline,
+the transport reports that limitation. Once the open returns, its worker closes
+the handle without sending commands. Software cannot promise to interrupt an
+unresponsive native driver. The fake blocked-read/write and open-race cases do
+verify prompt cleanup for their exercised paths.
+
 ## Real unloaded relay-board test, version 0.1.8
 
 Checked locally on Windows 11 x64, 26 October 2026:

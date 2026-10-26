@@ -1,25 +1,33 @@
-Membrane Control 0.1.8 adds real relay-board test firmware and a separate desktop test window for the unloaded 16-channel board.
+Membrane Control 0.1.9 fixes serial-port shutdown and relay-test connection startup.
 
 Developed for membrane research in **Dr. Onita Basu's lab at Carleton University**.
 
 ## Download
 
-Under **Assets**, download **MembraneControl-Setup-0.1.8-windows-x64.exe** and double-click it. Close the old app before updating. Setup installs the app, Python, PlatformIO and the ESP32 compiler/framework, and adds a **Flash relay board test** shortcut. No existing Python installation is needed; first-time dependency downloads require internet.
+For an app-only update, download **MembraneControl-0.1.9-windows-x64.exe** or the matching portable ZIP under **Assets**. Close the old app first. **MembraneControl-Setup-0.1.9-windows-x64.exe** also updates installed shortcuts and flashing scripts, and can set up a new PC without an existing Python installation. Initial tool downloads require internet. USB drivers remain separate.
 
-## Test the real relay board
+**These desktop fixes do not require reflashing the existing relay-test firmware.** After an upload through a TX/RX/GND-only adapter, release IO0/BOOT and briefly press EN/RESET before connecting. The uploader's "Hard resetting via RTS pin" message does not establish that such an adapter reset the board.
 
-With every contact terminal disconnected from loads, flash the new relay-board test target. Open the updated app, turn Simulation mode off and choose **Connections and settings > Relay board test**. The separate window checks the test firmware identity, lets you test an off/rest pattern and requires your observation before enabling one 500 ms raw-bit pulse at a time. Record which printed relay number changes for bits 0-15.
+## Fixes
 
-This target drives real outputs through the candidate GPIO14/13/12/5 shift-register interface. It does not touch GPIO4, I2C, the pump or sensors. A two-second firmware pulse limit and one-second heartbeat lease bound operation; Stop, a new connection and reset clear the baseline confirmation. Status describes commanded outputs, not contact feedback. The first rest-pattern test can energize multiple bare relays, so no valve or pump wiring may be attached.
+- Closing the main window, relay-test dialog or Qt event loop now stops connection timers and closes controller, balance and relay-test transports. Cleanup also runs after the event loop returns.
+- Serial shutdown cancels blocked I/O, discards queued traffic and closes the handle. Planned controller shutdown can attempt one bounded STOP write before closing; this is not an acknowledgement that hardware stopped. A connection that finishes opening late cannot send stale commands.
+- Relay-test startup ignores stale status and boot framing messages before a valid identity response. HELLO retries are bounded to eight seconds. Identity, mode, status and heartbeat checks stay strict after identification.
+- Connection timeouts now explain the IO0/EN reset procedure. Setup and flashing scripts disable ANSI formatting to avoid visible escape-code clutter.
 
-The main screen and bench window credit **Dr. Onita Basu's lab at Carleton University**. The repository is now public at the user's request. The regular **MembraneControl-0.1.8-windows-x64.exe** and matching portable ZIP remain available for app-only updates. USB drivers remain separate.
+COM4 can remain listed in Device Manager while the USB adapter is plugged in. Releasing the port means another program can open it, not that the adapter disappears.
 
-## Validation
+## Pump wiring clarification
 
-All **221 desktop tests** and **33 native firmware tests** passed. All three ESP32 targets compiled. The app EXE and setup EXE were checked locally; the bench window was visually reviewed with a simulated protocol double. See the [validation record](https://github.com/regular030/membrane-control/blob/v0.1.8/docs/validation.md). A full setup on a separate clean PC and the new firmware's physical relay behavior remain to be checked.
+The DB15 connector does not determine the signal range. Pump **VOUT is feedback from the pump**, to be read through a protected/scaled ADC input. A DAC would generate the command **into the pump's VIN/speed input**, if its exact model and selected mode confirm a 0-10 V input. The photographed tags describe 0-10 V, but the installed drive model still needs confirmation. See the [pump interface notes](https://github.com/regular030/membrane-control/blob/v0.1.9/hardware/pump-interface.md).
 
-No board was flashed or physical rig operated during these release checks. The dry-run target remains the default, and the experiment controller's existing physical safeguards remain required. The relay bench target cannot run recipes or replace the missing protected sensor and pump interfaces.
+## Validation and limits
 
-[Relay board test](https://github.com/regular030/membrane-control/blob/v0.1.8/docs/relay-board-test.md) |
-[New-PC setup](https://github.com/regular030/membrane-control/blob/v0.1.8/docs/setup-new-pc.md) |
-[Firmware setup](https://github.com/regular030/membrane-control/blob/v0.1.8/firmware/README.md)
+All **255 desktop tests** passed, including blocked-I/O, late-open, immediate fake-port reopening and application-exit regressions. The packaged app launched and exited cleanly, and the setup EXE passed its read-only payload/plan check. Both workflows pass local actionlint. See the [validation record](https://github.com/regular030/membrane-control/blob/v0.1.9/docs/validation.md).
+
+Firmware is unchanged from 0.1.8, whose 33 native tests and three ESP32 builds passed. No board was flashed or physical rig operated during these release checks. A clean-PC installation and physical commissioning remain outstanding. Hosted GitHub Actions are blocked before executing steps by the account's billing lock; these release files were built and checked locally.
+
+The repository remains public at the user's request. The main screen and relay-test window retain the credit to Dr. Onita Basu's lab. The relay-test tool cannot run experiments or replace the missing protected sensor and pump interfaces.
+
+[Relay board test](https://github.com/regular030/membrane-control/blob/v0.1.9/docs/relay-board-test.md) |
+[New-PC setup](https://github.com/regular030/membrane-control/blob/v0.1.9/docs/setup-new-pc.md)

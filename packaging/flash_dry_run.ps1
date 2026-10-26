@@ -26,7 +26,7 @@ function Get-DryRunFlashPlan {
         throw 'The installed firmware tools are missing. Run Membrane Control Setup again first.'
     }
     return [PSCustomObject]@{ python=$python; core=(Join-Path $destination 'tools/platformio'); port=$name;
-        arguments=@('-I', '-m', 'platformio', 'run', '-d', $firmwareRoot, '-e', $Firmware, '-t', 'upload', '--upload-port', $name);
+        arguments=@('-I', '-m', 'platformio', '--no-ansi', 'run', '-d', $firmwareRoot, '-e', $Firmware, '-t', 'upload', '--upload-port', $name);
         environment=$Firmware; selected_firmware=$Firmware; replaces_existing_firmware=$true }
 }
 

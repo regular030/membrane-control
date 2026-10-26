@@ -275,7 +275,7 @@ function Invoke-MembraneSetup {
         Invoke-SetupCommand -FilePath $venvPython -ArgumentList @('-I', '-m', 'pip', '--isolated', '--disable-pip-version-check',
             'install', '--index-url', 'https://pypi.org/simple', '--no-input', 'platformio==6.2.0', 'pyserial==3.5')
         $env:PLATFORMIO_CORE_DIR = Join-Path $checked.InstallRoot 'tools/platformio'
-        Invoke-SetupCommand -FilePath $venvPython -ArgumentList @('-I', '-m', 'platformio', 'run', '-d',
+        Invoke-SetupCommand -FilePath $venvPython -ArgumentList @('-I', '-m', 'platformio', '--no-ansi', 'run', '-d',
             (Join-Path $checked.InstallRoot 'firmware'), '-e', 'esp32-dry-run', '-e', 'esp32-relay-bench')
         New-SetupShortcuts -Destination $checked.InstallRoot
         Copy-Item -LiteralPath (Join-Path $checked.SourceRoot 'setup-manifest.json') -Destination (Join-Path $checked.InstallRoot 'setup-manifest.json') -Force

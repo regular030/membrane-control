@@ -22,6 +22,10 @@ The previously listed Omega USB pressure sensor is not required for the initial 
 
 ## Pump signals
 
+See [pump input/output clarification](pump-interface.md): **pump VOUT goes to
+an ADC; a DAC drives the pump VIN/speed input**. DB15 alone does not establish
+either signal's range. The exact installed drive model remains unconfirmed.
+
 Cable tags show a 0-10 V speed command into the pump, a separate 0-10 V speed output and remote start/stop. The tagged DB15-to-DB25 mappings are evidence to reconcile with the exact manufacturer manual, not complete instructions for connecting the ESP32.
 
 Use a 3.3 V-compatible DAC with a 0-10 V output stage, an isolated contact/suitable isolated interface for remote start/stop and a protected/scaled analog input for readback. Do not use a raw ESP32 output or raw PWM as a 0-10 V analog command.

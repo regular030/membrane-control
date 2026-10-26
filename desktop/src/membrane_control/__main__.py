@@ -7,6 +7,19 @@ from pathlib import Path
 import sys
 
 
+def _run_event_loop(app, window):
+    """Qt quit signals and exceptional loop exits share the same device owner."""
+    app.aboutToQuit.connect(window.shutdown)
+    try:
+        return app.exec()
+    finally:
+        window.shutdown()
+        try:
+            app.aboutToQuit.disconnect(window.shutdown)
+        except (RuntimeError, TypeError):
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Membrane Control")
     parser.add_argument("--demo", action="store_true", help="Use simulated devices (default)")
@@ -43,13 +56,13 @@ def main():
     window = MainWindow(controller)
     def exception_handler(kind, value, traceback):
         logging.critical("Application error", exc_info=(kind, value, traceback))
+        window.shutdown_relay_bench()
         try:
             controller.stop_run()
         except Exception:
             logging.exception("Could not send stop")
         QMessageBox.critical(window, "Application error", str(value) + "\nA stop was requested. Check the system before continuing.")
     sys.excepthook = exception_handler
-    app.aboutToQuit.connect(controller.close)
     window.show()
     if args.screenshot:
         def capture():
@@ -58,7 +71,7 @@ def main():
         QTimer.singleShot(750, capture)
     if args.quit_after is not None:
         QTimer.singleShot(max(1000, int(args.quit_after*1000)), app.quit)
-    return app.exec()
+    return _run_event_loop(app, window)
 
 
 if __name__ == "__main__":

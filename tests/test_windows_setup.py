@@ -230,6 +230,7 @@ def test_flash_plan_selects_only_allowed_target_and_preserves_paths_as_arguments
     assert plan["arguments"][-3:] == ["upload", "--upload-port", "COM4"]
     assert str(target / "firmware") in plan["arguments"]
     assert "esp32-physical" not in plan["arguments"]
+    assert "--no-ansi" in plan["arguments"]
     assert not (target / "logs").exists()
 
 

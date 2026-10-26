@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import deque
 import math
+import logging
 import os
 from pathlib import Path
 import time
@@ -125,6 +126,8 @@ class MainWindow(QMainWindow):
                 if path.is_file():
                     QFontDatabase.addApplicationFont(str(path))
         self.controller = controller
+        self._relay_bench_dialog = None
+        self._shutdown_started = False
         self._updating = False
         self._last_log = ""
         self._last_error = ""
@@ -913,6 +916,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Select a balance serial port first", 6000)
 
     def _open_relay_bench(self):
+        if self._shutdown_started:
+            return
+        if self._relay_bench_dialog is not None:
+            self.statusBar().showMessage("Close the existing relay board test before opening another.", 10000)
+            return
         if self.controller.simulation:
             self.statusBar().showMessage("Turn Simulation mode off before opening the real relay board test.", 10000)
             return
@@ -932,8 +940,31 @@ class MainWindow(QMainWindow):
             return
         dialog = RelayBenchDialog(self, selected_port=port, port_lister=self.controller.list_ports,
                                   excluded_ports=excluded)
-        dialog.exec()
-        self._update_view(dict(self.controller.snapshot))
+        self._relay_bench_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            # QApplication.exit can unwind modal exec() without done/closeEvent.
+            try:
+                dialog.shutdown()
+            finally:
+                self._relay_bench_dialog = None
+                dialog.deleteLater()
+        if not self._shutdown_started:
+            self._update_view(dict(self.controller.snapshot))
+
+    def shutdown_relay_bench(self):
+        dialog, self._relay_bench_dialog = self._relay_bench_dialog, None
+        if dialog is not None:
+            try:
+                dialog.shutdown()
+            except Exception:
+                logging.exception("Could not shut down relay test dialog")
+            finally:
+                try:
+                    dialog.reject()
+                except RuntimeError:
+                    pass
 
     def _load_settings(self):
         settings = self.controller.settings
@@ -1044,6 +1075,8 @@ class MainWindow(QMainWindow):
         self._plot_start = time.monotonic()
 
     def _on_tick(self):
+        if self._shutdown_started:
+            return
         try:
             self.controller.tick()
             self._update_view(dict(self.controller.snapshot))
@@ -1221,10 +1254,34 @@ class MainWindow(QMainWindow):
             for widget in (status, self._device_status_names[key], self._device_status_containers[key]):
                 widget.setToolTip(detail)
 
-    def closeEvent(self, event):
-        self.timer.stop()
+    def shutdown(self):
+        """One owner closes every device on window close, app quit or loop exit."""
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
         try:
-            self.controller.close()
+            self.timer.stop()
+        except RuntimeError:
+            logging.exception("Could not stop the application UI timer")
+        try:
+            for timer in self.findChildren(QTimer):
+                try:
+                    timer.stop()
+                except RuntimeError:
+                    logging.exception("Could not stop a destroyed UI timer")
+        except RuntimeError:
+            logging.exception("Could not enumerate timers during Qt teardown")
+        try:
+            self.shutdown_relay_bench()
+        finally:
+            try:
+                self.controller.close()
+            except Exception:
+                logging.exception("Could not finish application device cleanup")
+
+    def closeEvent(self, event):
+        try:
+            self.shutdown()
         except Exception:
-            pass
+            logging.exception("Window close cleanup failed")
         event.accept()

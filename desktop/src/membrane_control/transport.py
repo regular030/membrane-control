@@ -12,6 +12,21 @@ from . import __version__
 MAX_LINE = 8192
 
 
+def close_transport(transport, stop_message=None):
+    """Close real transports and simple simulator/test adapters consistently."""
+    if transport is None:
+        return
+    if stop_message is not None:
+        close_with_stop = getattr(transport, "close_with_stop", None)
+        if callable(close_with_stop):
+            return close_with_stop(stop_message)
+        try:
+            transport.send(stop_message)
+        except Exception:
+            pass  # Link failure must never prevent closing the local resource.
+    return transport.close()
+
+
 class SerialTransport:
     def __init__(self, port, baud=115200, raw=False):
         self.port, self.baud, self.raw = port, baud, raw
@@ -19,33 +34,69 @@ class SerialTransport:
         self.outgoing = queue.PriorityQueue(maxsize=64)
         self._counter = 0
         self._stop = threading.Event()
+        self._closing = threading.Event()
         self._terminated = threading.Event()
+        self._state_lock = threading.RLock()
+        self._connection_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._connection = None
+        self._opened = False
+        self._final_stop_payload = None
+        self._final_stop_done = threading.Event()
+        self._close_error = None
         self._terminal_error = None
         self._terminal_reported = False
         self._thread = threading.Thread(target=self._run, daemon=True, name=f"serial-{port}")
         self._thread.start()
 
     def send(self, message):
-        if self._stop.is_set() or self._terminated.is_set() or self._terminal_error is not None:
-            raise RuntimeError(self._terminal_error or "Serial connection is closed; reconnect the controller")
+        payload = self._encode(message)
+        overflow = False
+        with self._state_lock:
+            if self._closing.is_set() or self._stop.is_set() or self._terminated.is_set() or self._terminal_error is not None:
+                raise RuntimeError(self._terminal_error or "Serial connection is closed; reconnect the controller")
+            self._counter += 1
+            if message.get("cmd") == "stop":
+                self._discard_outgoing()
+            priority = 0 if message.get("cmd") == "stop" else 2 if message.get("cmd") == "heartbeat" else 1
+            try:
+                self.outgoing.put_nowait((priority, self._counter, payload))
+            except queue.Full:
+                overflow = True
+        if overflow:
+            try:
+                self.close()
+            finally:
+                raise RuntimeError("Serial command queue is full; reconnect after checking the controller")
+
+    @staticmethod
+    def _encode(message):
         body = json.dumps(message, separators=(",", ":"), allow_nan=False, ensure_ascii=False).encode("utf-8")
         if len(body) > MAX_LINE:
             raise ValueError("Command exceeds serial line limit")
-        payload = body + b"\n"
-        self._counter += 1
-        if message.get("cmd") == "stop":
-            # Do not execute an older queued start/manual command after a stop.
-            while True:
-                try:
-                    self.outgoing.get_nowait()
-                except queue.Empty:
-                    break
-        priority = 0 if message.get("cmd") == "stop" else 2 if message.get("cmd") == "heartbeat" else 1
-        try:
-            self.outgoing.put_nowait((priority, self._counter, payload))
-        except queue.Full:
-            self.close()
-            raise RuntimeError("Serial command queue is full; reconnect after checking the controller")
+        return body + b"\n"
+
+    def _discard_outgoing(self):
+        while True:
+            try:
+                self.outgoing.get_nowait()
+            except queue.Empty:
+                return
+
+    def _next_write(self):
+        with self._state_lock:
+            if self._stop.is_set():
+                return None
+            if self._closing.is_set():
+                payload, self._final_stop_payload = self._final_stop_payload, None
+                if payload is None:
+                    self._stop.set()
+                    return None
+                return payload, True
+            try:
+                return self.outgoing.get_nowait()[2], False
+            except queue.Empty:
+                return None
 
     def _emit(self, packet):
         try:
@@ -59,23 +110,43 @@ class SerialTransport:
             import serial
             # Configure control lines before opening to avoid intentional boot/reset toggles.
             connection = serial.Serial(port=None, baudrate=self.baud, timeout=0.05, write_timeout=0.25)
+            with self._connection_lock:
+                self._connection = connection
+            if self._closing.is_set():
+                return
             connection.dtr = False
             connection.rts = False
             connection.port = self.port
             connection.open()
+            with self._connection_lock:
+                self._opened = True
+            if self._closing.is_set():
+                return  # A close during open must not publish readiness or send traffic.
             self._emit({"type": "port_open"})
             buffer = bytearray()
             discarding = False
             while not self._stop.is_set():
                 for _ in range(4):
-                    try:
-                        _, _, payload = self.outgoing.get_nowait()
-                    except queue.Empty:
+                    item = self._next_write()
+                    if item is None:
                         break
+                    payload, final_stop = item
+                    if self._stop.is_set() or (self._closing.is_set() and not final_stop):
+                        continue
                     written = connection.write(payload)
                     if written != len(payload):
                         raise RuntimeError("Incomplete serial write")
+                    if final_stop:
+                        self._final_stop_done.set()
+                        self._stop.set()
+                        break
+                if self._stop.is_set():
+                    break
+                if self._closing.is_set():
+                    continue
                 chunk = connection.read(min(max(connection.in_waiting, 1), 1024))
+                if self._closing.is_set() or self._stop.is_set():
+                    continue
                 for byte in chunk:
                     if byte == 10:
                         if not discarding and buffer:
@@ -94,24 +165,49 @@ class SerialTransport:
                             buffer.clear()
                             discarding = True
                             self._emit({"type": "parse_error", "error": "Serial line too long"})
-            self._record_disconnect("Serial connection closed")
         except Exception as error:
-            self._record_disconnect(str(error))
-        finally:
-            try:
-                if connection is not None:
-                    connection.close()
-            except Exception as error:
+            if not self._closing.is_set():
                 self._record_disconnect(str(error))
-            finally:
-                self._terminated.set()
+        finally:
+            self._close_connection(force=True)
+            with self._state_lock:
+                self._stop.set()
+                self._discard_outgoing()
+            self._record_disconnect("Serial connection closed")
+            self._terminated.set()
+
+    @staticmethod
+    def _cancel_io(connection, *, cancel_write=True):
+        if connection is None:
+            return
+        for method in (("cancel_read", "cancel_write") if cancel_write else ("cancel_read",)):
+            try:
+                cancel = getattr(connection, method, None)
+                if cancel is not None:
+                    cancel()
+            except Exception:
+                pass  # Closing the handle below is the fallback for an unsupported cancellation.
+
+    def _close_connection(self, *, force=False):
+        with self._connection_lock:
+            if self._connection is None or (not self._opened and not force):
+                return
+            connection, self._connection = self._connection, None
+            self._opened = False
+        self._cancel_io(connection)
+        try:
+            connection.close()
+        except Exception as error:
+            self._close_error = str(error) or "Serial handle close failed"
+            self._record_disconnect(self._close_error)
 
     def _record_disconnect(self, error):
         # Keep the first failure even if close() also fails or the incoming
         # queue is full. A later poll must not replace it with a generic error.
-        if self._terminal_error is None:
-            self._terminal_error = error or "Serial connection closed"
-            self._emit({"type": "disconnected", "error": self._terminal_error})
+        with self._state_lock:
+            if self._terminal_error is None:
+                self._terminal_error = error or "Serial connection closed"
+                self._emit({"type": "disconnected", "error": self._terminal_error})
 
     def poll(self, now=None):
         result = []
@@ -130,10 +226,56 @@ class SerialTransport:
             result.append({"type": "disconnected", "error": self._terminal_error or "Serial worker stopped"})
         return result
 
-    def close(self):
-        self._stop.set()
-        if self._thread is not threading.current_thread():
-            self._thread.join(timeout=0.5)
+    def close(self, stop_message=None, *, timeout=1.0):
+        """Withdraw traffic and release the handle within a bounded wait.
+
+        An explicit STOP may be attempted by the worker before cancellation.
+        Successful writing is not an acknowledgement of physical execution.
+        Unfinished open() calls retain a cleanup obligation in the worker;
+        they can never reopen the session or send queued traffic afterwards.
+        """
+        final_payload = None
+        if stop_message is not None:
+            if (not isinstance(stop_message, dict) or stop_message.get("cmd") != "stop"
+                    or type(stop_message.get("v")) is not int or stop_message["v"] != 1
+                    or type(stop_message.get("id")) is not int or not 0 < stop_message["id"] <= 0xffffffff):
+                raise ValueError("Shutdown message must be a valid v1 STOP command")
+            final_payload = self._encode(stop_message)
+        deadline = time.monotonic() + max(0.0, min(float(timeout), 2.0))
+        with self._close_lock:
+            with self._connection_lock:
+                connection = self._connection
+                can_write_stop = self._opened
+            with self._state_lock:
+                first_close = not self._closing.is_set()
+                self._closing.set()
+                self._discard_outgoing()
+                graceful = (first_close and final_payload is not None and can_write_stop
+                            and not self._stop.is_set() and self._terminal_error is None)
+                if graceful:
+                    self._final_stop_payload = final_payload
+                else:
+                    self._stop.set()
+            # Wake a pending read for an explicit STOP. Give an already-running
+            # write its normal short timeout before force-cancelling all I/O.
+            self._cancel_io(connection, cancel_write=not graceful)
+            if graceful and self._thread is not threading.current_thread():
+                self._final_stop_done.wait(timeout=max(0.0, min(0.35, deadline - time.monotonic())))
+            with self._state_lock:
+                self._stop.set()
+                self._final_stop_payload = None
+                self._discard_outgoing()
+            self._cancel_io(connection)
+            self._close_connection()
+            if self._thread is not threading.current_thread():
+                self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
+                if self._thread.is_alive():
+                    raise RuntimeError("Serial worker is still shutting down; its pending open will be closed when it returns")
+            if self._close_error:
+                raise RuntimeError("Serial handle could not be closed: " + self._close_error)
+
+    def close_with_stop(self, message):
+        return self.close(stop_message=message)
 
 
 class Simulator:
