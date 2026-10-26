@@ -31,7 +31,7 @@ Solder the supplied headers into the labelled I/O breakout pads beside the ESP32
 | ADC and pump DAC SDA | IO21 / GPIO21 | Shared I2C data |
 | ADC and pump DAC SCL | IO22 / GPIO22 | Shared I2C clock |
 | ADS1115 and DFR0971/GP8403 module power | 3V3 and GND | Applies to these specified 3.3 V-capable modules; pull-ups must be to 3.3 V |
-| Adam Nimbus balance | Computer USB, using balance USB-B I/O | No ESP32 pins |
+| Adam Nimbus balance | Computer USB via existing DB9 USB-to-RS232 adapter; USB-B I/O is an alternative | No ESP32 pins; separate COM port from the controller; see [balance USB setup](balance-usb-setup.md) |
 
 With the relay board externally powered, leave the USB-UART adapter's 3.3 V and 5 V power outputs disconnected. The seller's four-wire table describes a power arrangement; it is not a reason to tie two powered regulator outputs together. Check the adapter's actual TX logic level, not only its VCC selector label.
 

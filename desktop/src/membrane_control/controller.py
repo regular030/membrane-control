@@ -174,12 +174,13 @@ class AppController:
         self.snapshot["controller_status"] = "Opening port; waiting for firmware"
         self._log(f"Opening controller {port}")
 
-    def disconnect_controller(self):
+    def disconnect_controller(self, *, request_stop=True):
         if self.driver is not None:
-            try:
-                self.driver.send({"v": 1, "id": 2147483647, "cmd": "stop"})
-            except Exception:
-                pass
+            if request_stop:
+                try:
+                    self.driver.send({"v": 1, "id": 2147483647, "cmd": "stop"})
+                except Exception:
+                    pass
             self.driver.close()
         self.driver = None
         self.pending.clear()
@@ -370,11 +371,7 @@ class AppController:
                 self._log(packet.get("error", "Invalid serial message"))
             return
         if kind == "disconnected":
-            self.snapshot.update(pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None)
-            if self._active():
-                self._abort("Controller disconnected")
-            self.snapshot["controller_connected"] = False
-            self.snapshot["controller_status"] = packet.get("error", "Disconnected")
+            self._controller_disconnected(packet.get("error") or "Controller disconnected")
             return
         if type(packet.get("v")) is not int or packet["v"] != 1:
             return
@@ -504,6 +501,17 @@ class AppController:
         if state in ("running", "manual") and values["pressure_psi"] is not None and values["pressure_psi"] > self.settings["max_pressure_psi"]:
             self._abort("Desktop pressure limit exceeded")
 
+    def _controller_disconnected(self, reason):
+        # A failed worker cannot execute or acknowledge a new STOP. Detach it
+        # now, withdrawing heartbeats and retaining its original port error.
+        reason = str(reason)
+        if self._active() or self.run_id is not None or self.local_fault:
+            self._disconnect_with_fault("Controller disconnected: " + reason, reason)
+        else:
+            self.disconnect_controller(request_stop=False)
+            self.snapshot["controller_status"] = reason
+            self._log("Controller disconnected: " + reason)
+
     def tick(self):
         try:
             self._tick()
@@ -538,10 +546,13 @@ class AppController:
                 try:
                     self._request("heartbeat")
                 except Exception as error:
-                    self._abort(str(error))
+                    self._controller_disconnected(str(error))
                 self.last_heartbeat = now
             if self.driver is not None and not self.device and self.connect_started is not None and now-self.connect_started < 8 and now-self.last_hello >= 1:
-                self._request("hello")
+                try:
+                    self._request("hello")
+                except Exception as error:
+                    self._controller_disconnected(str(error))
                 self.last_hello = now
             if self.driver is not None:
                 for packet in self.driver.poll(now):

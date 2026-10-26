@@ -8,7 +8,7 @@ for the ready-to-run app.
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and sign in if needed. This project is private.
 2. Open the release given to you by the maintainer. Under **Assets**, download
-   `MembraneControl-0.1.5-windows-x64.exe` or the matching portable app ZIP.
+   `MembraneControl-0.1.6-windows-x64.exe` or the matching portable app ZIP.
    **Source code (zip)** is for developers and does not contain the EXE.
 3. If you chose the portable ZIP, right-click it and choose **Extract All**.
 4. Open the EXE. Leave **Simulation mode** checked and follow
@@ -50,11 +50,15 @@ Use the driver for the chip on the actual device:
 | --- | --- |
 | CP2102 / CP210x USB adapter | [Silicon Labs driver](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers) |
 | Freenove board with CH340 | [Freenove instructions and CH340 folder](https://github.com/Freenove/Freenove_Ultimate_Starter_Kit_for_ESP32) or [WCH driver](https://www.wch-ic.com/downloads/CH341SER_EXE.html) |
-| Adam Nimbus scale | [Adam Equipment downloads](https://adamequipment.com/support/software-downloads.html) for the exact model |
+| Scale through the existing green USB-to-RS232 adapter | Use the driver for the adapter's actual chipset, if Windows needs one |
+| Adam Nimbus through its alternative USB-B I/O connection | [Adam Equipment downloads](https://adamequipment.com/support/software-downloads.html) for the exact model |
 
 Driver installation may need IT or administrator access. The app does not
-silently download or run driver installers. Use the scale's USB-B **I/O** port
-for the PC connection; its USB-A display socket serves a different purpose.
+silently download or run driver installers. The photographed scale connection is
+its DB9 **RS-232** port through a USB-to-RS232 adapter. Reuse that path first.
+The scale's USB-B **I/O** port is an alternative PC connection; its USB-A display
+socket serves a different purpose. Select the balance's own COM port, with serial
+settings matching the scale. See the [balance setup guide](https://github.com/regular030/membrane-control/blob/main/hardware/balance-usb-setup.md).
 
 ## Updates and saved data
 

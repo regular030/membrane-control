@@ -6,6 +6,29 @@ relay GPIO, sensor GPIO or I2C. Measurements are explicitly simulated and every
 hello/telemetry message reports `simulation: true` and `hardware_verified: false`.
 Nothing in this repository establishes that the physical rig is commissioned.
 
+## One-time setup on each Windows computer
+
+The downloaded EXE runs the desktop app. It does not include the firmware build
+tools or upload firmware. A fresh clone or source ZIP also has no `.venv` folder;
+that folder is created locally and must not be copied from another computer.
+
+Open PowerShell in the repository root, where `pyproject.toml` and `firmware/`
+are visible. With Python 3.12 installed, run:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install "platformio==6.2.0"
+```
+
+Python 3.12 is the version used for local project validation. If `py -3.12` is
+unavailable, install Python from [python.org](https://www.python.org/downloads/windows/)
+or check the installed versions with `py -0p` before choosing an interpreter.
+PlatformIO's general requirements are documented
+[here](https://docs.platformio.org/en/latest/core/installation/requirements.html).
+No virtual-environment activation or PowerShell execution-policy change is needed.
+If `.\.venv\Scripts\python.exe` is not recognized, the environment was not created
+successfully in the current project folder. Complete this setup before proceeding.
+
 ## Build without flashing
 
 From the repository root in PowerShell, with PlatformIO installed in the local
@@ -25,6 +48,50 @@ Windows LLVM installation, or `BASU_HOST_CXX`; it does not install a compiler.
 The ESP32 platform and ArduinoJson
 dependency are pinned in `platformio.ini`; the PlatformIO platform supplies its
 Arduino framework and cross compiler.
+
+## First communication test on the 16-relay ESP32 board
+
+This test replaces the board's existing sketch with dry-run firmware. It tests
+USB/UART communication only; it does not commission the relays or rig.
+
+1. Leave all pump and valve contact wiring disconnected. Confirm the actual PCB
+   input voltage and polarity before applying external power. The seller's
+   5-12 V listing and 5 V diagram conflict; 5 V relay-coil markings alone do not
+   settle the board's supply rating. Do not apply an unverified 12 V supply.
+2. With power off, check the adapter uses **3.3 V TTL** signal levels. Connect
+   adapter TX to board RXD0/GPIO3, RX to TXD0/GPIO1 and GND to GND. Do not use
+   RS-232 or RS-485 signals. With a separately powered board, leave the adapter's
+   3.3 V and 5 V supply outputs unconnected. Use the board header's actual labels,
+   not an assumed pin order from a product photo.
+3. Close Membrane Control and all serial monitors so they release the port.
+   Identify the controller adapter in Device Manager by unplugging/replugging
+   that adapter only. The balance's USB-to-RS-232 cable is a separate device and
+   has a different COM port. A detected USB adapter does not prove the ESP32 is
+   powered or responding.
+4. After setup above and confirmed power/wiring, build and upload. Replace `COM3`
+   if Device Manager identifies a different controller port:
+
+   ```powershell
+   $env:PLATFORMIO_CORE_DIR = Join-Path (Get-Location) 'work/platformio'
+   .\.venv\Scripts\python.exe -m platformio run -d firmware -e esp32-dry-run -t upload --upload-port COM3
+   ```
+
+   The first build downloads the pinned toolchain and libraries. An initial
+   `SUCCESS` for compilation alone is not proof of upload; the upload output must
+   show the ESP32 was detected, flash was written and data verified.
+5. If the uploader stays at `Connecting...`, hold **IO0/BOOT**, press and release
+   **EN/RST**, then release IO0 once the chip connects and writing starts. If it
+   times out, enter download mode again and retry the upload. After a successful
+   upload, release IO0 and press EN/RST to run the new sketch if it has not reset
+   automatically. A TX/RX/GND-only connection generally needs these manual buttons.
+6. Open the app, turn desktop Simulation mode off and select the controller COM
+   port. Expect **Connected (dry run)**, with simulated readings and outputs.
+   This firmware does not intentionally operate any relay GPIO. The scale can
+   be connected separately with its own serial settings; its connection is not
+   needed to flash the ESP32. The unverified physical build cannot operate the rig.
+
+References: [Espressif UART wiring](https://docs.espressif.com/projects/esptool/en/latest/esp32/esptool/serial-connection.html)
+and [manual bootloader instructions](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html).
 
 ## First USB bench test with a Freenove WROVER-E
 

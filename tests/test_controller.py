@@ -1,4 +1,5 @@
 import json
+import serial
 import pytest
 from membrane_control.controller import AppController
 from membrane_control.models import Recipe, Step
@@ -90,6 +91,73 @@ def test_controller_disconnect_clears_previous_analog_readings(app):
     controller.disconnect_controller()
     assert not controller.snapshot["controller_connected"]
     assert all(controller.snapshot[key] is None for key in ("pressure_psi", "flow_ml_min", "pump_feedback_v"))
+
+
+def test_idle_port_open_failure_detaches_and_preserves_original_error(app, monkeypatch):
+    controller, clock = app
+    reason = "Access denied: test COM port is already open in another program"
+
+    class LockedSerial:
+        def open(self):
+            raise PermissionError(reason)
+        def close(self):
+            pass
+
+    monkeypatch.setattr(serial, "Serial", lambda **kwargs: LockedSerial())
+    controller.set_simulation(False)
+    controller.connect_controller("LOCKED-TEST-PORT")
+    failed = controller.driver
+    failed._thread.join(timeout=1)
+    assert not failed._thread.is_alive()
+    for _ in range(100):
+        clock.advance(0.5)
+        controller.tick()
+    assert controller.driver is None
+    assert controller.pending == {} and controller.device == {}
+    assert not controller.stop_pending
+    assert controller.local_fault is None
+    assert controller.snapshot["controller_status"] == reason
+    assert not controller.snapshot["controller_connected"]
+    assert failed.outgoing.empty()  # No queued heartbeat or futile STOP after failure.
+    assert not any("queue is full" in line or "acknowledgement for stop" in line for line in controller.log)
+
+
+def test_active_unplug_detaches_immediately_without_stop_transaction(app):
+    controller, clock = app
+    controller.start_run()
+    controller.tick()
+    controller.tick()
+    assert controller.run_id is not None
+    controller.driver.close()
+    reason = "USB read failed: test cable removed"
+
+    class UnpluggedController:
+        def __init__(self):
+            self.sent = []
+            self.closed = False
+        def send(self, packet):
+            self.sent.append(packet)
+        def poll(self, now):
+            return [{"type": "disconnected", "error": reason}]
+        def close(self):
+            self.closed = True
+
+    failed = UnpluggedController()
+    controller.driver = failed
+    controller.tick()
+    assert controller.driver is None and failed.closed
+    assert not controller.stop_pending and controller.pending == {}
+    assert controller.snapshot["state"] == "fault"
+    assert controller.snapshot["controller_status"] == reason
+    assert reason in controller.local_fault
+    assert controller.list_runs()[0]["status"] == "fault"
+    sent_after_disconnect = list(failed.sent)
+    for _ in range(100):
+        clock.advance(0.5)
+        controller.tick()
+    assert failed.sent == sent_after_disconnect
+    assert not any(packet["cmd"] == "stop" for packet in failed.sent)
+    assert controller.snapshot["controller_status"] == reason
 
 
 def test_settings_and_custom_recipe_persist(app, tmp_path):

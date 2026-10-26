@@ -15,7 +15,7 @@ and the unresolved board-input voltage discrepancy.
 | Masterflex L/S pump | Later DB25 profile; exact drive model needed |
 | Omega PX309-100G5V | 0-100 psi gauge, 0-5 V analog output |
 | McMillan 101-3T-CM-A2 | Flow measurement; 12-15 V supply, 0-5 V and pulse options |
-| Adam Nimbus balance | USB-B I/O to computer; retains its own power supply |
+| Adam Nimbus balance | Existing USB-to-RS232 adapter from DB9 to computer; USB-B I/O is an alternative; retains its own power supply |
 | Existing external DC supply | Believed 12 V; label, current rating and condition need checking |
 
 The previously listed Omega USB pressure sensor is not required for the initial application. Do not remove its driver abstraction option if later scope changes.
@@ -34,9 +34,11 @@ The 0-5 V sensors and 0-10 V pump output require input scaling, filtering, prote
 
 ## Balance
 
-The photographed Nimbus has USB-B I/O for the PC and USB-A Display for a remote display. Use the [Adam manual](https://adamequipment.com.cn/media/docs/manuals/NBLe_i_UM_EN.pdf) and [official driver downloads](https://adamequipment.com/support/software-downloads.html). Verify the actual USB COM port, baud/parity settings, output units and streaming mode.
+The latest photos show the balance's DB9 RS-232 port connected through an existing green USB-to-RS232 adapter. Reuse that path first, with the driver for the adapter's actual chipset if required. Its chipset, COM number and serial settings are not established by the photo. The balance's USB-B **I/O** port and a USB data cable provide an alternative PC connection, using [Adam's driver](https://adamequipment.com/support/software-downloads.html) if needed. USB-A **Display** is for the remote display. Use one PC connection path at a time and retain the balance's own power supply.
 
-The documented single-line mass stream has weight and unit but no per-reading stability flag. Do not manufacture stability status. Stable-only output can withhold samples while collecting liquid; explicitly select and validate the intended acquisition mode.
+Select the balance's COM port separately from the ESP32's port. The current app expects **9600 baud, NONE parity / 8N1** by default; the scale and app must match. Enable continuous single-line mass output with units and CRLF line endings. Follow the [Adam manual](https://adamequipment.com.cn/media/docs/manuals/NBLe_i_UM_EN.pdf), including restarting after serial-setting changes. See [balance USB setup](balance-usb-setup.md) for both connection paths. The app listens for weights without sending print/poll commands and marks readings stale after more than 3 seconds without a valid reading.
+
+The documented single-line mass stream has weight and unit but no per-reading stability flag. Do not manufacture stability status. Stable-only output can withhold samples while collecting liquid and trigger stale-data status; use continuous output without stable-only filtering for the current acquisition setup.
 
 ## Items to resolve before energizing
 

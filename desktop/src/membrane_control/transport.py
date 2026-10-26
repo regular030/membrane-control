@@ -19,10 +19,15 @@ class SerialTransport:
         self.outgoing = queue.PriorityQueue(maxsize=64)
         self._counter = 0
         self._stop = threading.Event()
+        self._terminated = threading.Event()
+        self._terminal_error = None
+        self._terminal_reported = False
         self._thread = threading.Thread(target=self._run, daemon=True, name=f"serial-{port}")
         self._thread.start()
 
     def send(self, message):
+        if self._stop.is_set() or self._terminated.is_set() or self._terminal_error is not None:
+            raise RuntimeError(self._terminal_error or "Serial connection is closed; reconnect the controller")
         body = json.dumps(message, separators=(",", ":"), allow_nan=False, ensure_ascii=False).encode("utf-8")
         if len(body) > MAX_LINE:
             raise ValueError("Command exceeds serial line limit")
@@ -49,9 +54,9 @@ class SerialTransport:
             self._stop.set()
 
     def _run(self):
-        import serial
         connection = None
         try:
+            import serial
             # Configure control lines before opening to avoid intentional boot/reset toggles.
             connection = serial.Serial(port=None, baudrate=self.baud, timeout=0.05, write_timeout=0.25)
             connection.dtr = False
@@ -89,22 +94,40 @@ class SerialTransport:
                             buffer.clear()
                             discarding = True
                             self._emit({"type": "parse_error", "error": "Serial line too long"})
-            self._emit({"type": "disconnected", "error": "Serial connection closed"})
+            self._record_disconnect("Serial connection closed")
         except Exception as error:
-            self._emit({"type": "disconnected", "error": str(error)})
+            self._record_disconnect(str(error))
         finally:
-            if connection is not None:
-                connection.close()
+            try:
+                if connection is not None:
+                    connection.close()
+            except Exception as error:
+                self._record_disconnect(str(error))
+            finally:
+                self._terminated.set()
+
+    def _record_disconnect(self, error):
+        # Keep the first failure even if close() also fails or the incoming
+        # queue is full. A later poll must not replace it with a generic error.
+        if self._terminal_error is None:
+            self._terminal_error = error or "Serial connection closed"
+            self._emit({"type": "disconnected", "error": self._terminal_error})
 
     def poll(self, now=None):
         result = []
         for _ in range(512):
             try:
-                result.append(self.incoming.get_nowait())
+                packet = self.incoming.get_nowait()
             except queue.Empty:
                 break
-        if not self._thread.is_alive() and not any(p.get("type") == "disconnected" for p in result):
-            result.append({"type": "disconnected", "error": "Serial worker stopped"})
+            if packet.get("type") == "disconnected":
+                if self._terminal_reported:
+                    continue
+                self._terminal_reported = True
+            result.append(packet)
+        if self._terminated.is_set() and not self._terminal_reported:
+            self._terminal_reported = True
+            result.append({"type": "disconnected", "error": self._terminal_error or "Serial worker stopped"})
         return result
 
     def close(self):

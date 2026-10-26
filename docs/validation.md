@@ -1,5 +1,23 @@
 # Software validation
 
+## Desktop version 0.1.6
+
+Serial disconnect handling, checked locally on Windows 11 x64, 26 October 2026:
+
+- All 130 desktop tests passed, including the unchanged Qt UI coverage.
+- New regressions exercise a serial port that fails to open with access denied,
+  a running controller unplug, preserved original errors over 100 later ticks,
+  one-time terminal error reporting, rejected sends to closed workers and a slow
+  port opening that still accepts queued startup commands.
+- Failed transports detach immediately. Idle failures issue no futile STOP and
+  accumulate no heartbeat queue. Active failures fault and withdraw heartbeats.
+- The packaged Windows EXE opened, produced a 1360 x 940 screenshot and exited cleanly.
+- Firmware setup instructions now cover a fresh Windows clone without `.venv`
+  and an external USB-to-UART adapter on the 16-relay board.
+
+Serial tests use doubles; no real serial port was opened for these checks.
+Firmware is unchanged from 0.1.3. No board was flashed or physical rig operated.
+
 ## Automatic GitHub builds, 26 October 2026
 
 - Both workflow YAML files pass actionlint 1.7.12. Optional ShellCheck and

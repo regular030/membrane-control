@@ -1,6 +1,7 @@
 """Exercise the real serial worker with a byte-stream instrument double."""
 import json
 import queue
+import threading
 import time
 
 import pytest
@@ -89,9 +90,7 @@ def test_balance_raw_crlf_and_no_json_requirement(instrument):
 
 def test_stop_discards_queued_start_and_manual_commands():
     # Isolate the queue policy so a worker cannot consume a command mid-assertion.
-    worker = SerialTransport.__new__(SerialTransport)
-    worker.outgoing = queue.PriorityQueue(maxsize=64)
-    worker._counter = 0
+    worker = queue_only_transport()
     worker.send({"v": 1, "id": 1, "cmd": "start"})
     worker.send({"v": 1, "id": 2, "cmd": "manual"})
     worker.send({"v": 1, "id": 3, "cmd": "heartbeat"})
@@ -101,9 +100,7 @@ def test_stop_discards_queued_start_and_manual_commands():
 
 
 def test_exact_line_limit_is_accepted_when_sending():
-    worker = SerialTransport.__new__(SerialTransport)
-    worker.outgoing = queue.PriorityQueue(maxsize=64)
-    worker._counter = 0
+    worker = queue_only_transport()
     message = {"cmd": "hello", "pad": ""}
     overhead = len(json.dumps(message, separators=(",", ":")).encode())
     message["pad"] = "x" * (MAX_LINE - overhead)
@@ -114,6 +111,68 @@ def test_exact_line_limit_is_accepted_when_sending():
     message["pad"] += "x"
     with pytest.raises(ValueError, match="line limit"):
         worker.send(message)
+
+
+def queue_only_transport():
+    worker = SerialTransport.__new__(SerialTransport)
+    worker.outgoing = queue.PriorityQueue(maxsize=64)
+    worker._counter = 0
+    worker._stop = threading.Event()
+    worker._terminated = threading.Event()
+    worker._terminal_error = None
+    worker._terminal_reported = False
+    return worker
+
+
+def test_port_open_failure_is_reported_once_and_rejects_later_sends(instrument):
+    message = "Access denied: test port is already in use"
+
+    def locked_open():
+        raise PermissionError(message)
+
+    instrument.open = locked_open
+    worker = SerialTransport("LOCKED-TEST-PORT")
+    try:
+        packets = wait_for(worker, lambda items: any(p["type"] == "disconnected" for p in items))
+        assert [p for p in packets if p["type"] == "disconnected"] == [{"type": "disconnected", "error": message}]
+        worker._thread.join(timeout=1)
+        assert not worker._thread.is_alive()
+        for _ in range(100):
+            assert worker.poll() == []
+            with pytest.raises(RuntimeError, match="Access denied"):
+                worker.send({"id": 1, "cmd": "heartbeat"})
+        assert worker.outgoing.empty()
+    finally:
+        worker.close()
+
+
+def test_new_transport_accepts_commands_while_port_is_still_opening(instrument):
+    opening = threading.Event()
+    allow_open = threading.Event()
+    original_open = instrument.open
+
+    def slow_open():
+        opening.set()
+        assert allow_open.wait(timeout=2)
+        original_open()
+
+    instrument.open = slow_open
+    worker = SerialTransport("STARTING-TEST-PORT")
+    try:
+        assert opening.wait(timeout=1)
+        worker.send({"v": 1, "id": 1, "cmd": "hello"})
+        assert worker.outgoing.qsize() == 1
+        allow_open.set()
+        wait_for(worker, lambda items: any(p["type"] == "port_open" for p in items))
+        deadline = time.monotonic() + 1
+        while not instrument.writes and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert json.loads(instrument.writes[0])["cmd"] == "hello"
+    finally:
+        allow_open.set()
+        worker.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        worker.send({"id": 2, "cmd": "heartbeat"})
 
 
 def test_exact_line_limit_received_and_oversize_recovers(instrument):
