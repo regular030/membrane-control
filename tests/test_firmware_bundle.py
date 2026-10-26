@@ -32,7 +32,8 @@ def bundle_project(tmp_path, monkeypatch):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture " + name, encoding="utf-8")
     for name in ("firmware/.pio/libdeps/passwords.txt", "firmware/.env", "work/credentials.txt",
-                 "firmware/__pycache__/secret.py", "firmware/.pio/cache/token.txt"):
+                 "firmware/__pycache__/secret.py", "firmware/.pio/cache/token.txt",
+                 "firmware/include/ValveTestProfile.local.h"):
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("DO NOT SHIP CREDENTIALS", encoding="utf-8")
@@ -54,7 +55,7 @@ def bundle_project(tmp_path, monkeypatch):
         (build_dir / "partitions.bin").write_bytes(partition + b"\xff" * 32)
         (build_dir / "firmware.bin").write_bytes(b"\xe9" + target.encode() * 5)
         defines = ["ARDUINO_ESP32_DEV"]
-        if target != "esp32-relay-bench":
+        if target not in ("esp32-relay-bench", "esp32-valve-test"):
             defines.append("BASU_DRY_RUN=" + ("1" if target == "esp32-dry-run" else "0"))
         metadata[target] = {
             "env_name": target, "build_type": "release", "defines": defines,
@@ -127,7 +128,7 @@ def test_complete_bundle_uses_metadata_addresses_and_matches_every_hash(bundle_p
                 offset = int(part["offset"], 0)
                 assert factory[offset:offset + len(data)] == data
         assert b"LOCKED" in archive.read("README.md")
-    assert len(calls) == 5  # one build, one metadata query, three offline merges
+    assert len(calls) == 2 + len(builder.TARGETS)  # one build, one metadata query, one merge per target
     assert not any(value in ("upload", "erase", "--port", "--upload-port") for call in calls for value in call)
 
 
@@ -174,6 +175,19 @@ def test_rejects_application_larger_than_generated_partition(bundle_project):
     (root / "firmware/.pio/build/esp32-physical/firmware.bin").write_bytes(b"x" * (0x100000 + 1))
     with pytest.raises(ValueError, match="exceeds its generated partition"):
         builder.build_firmware("0.1.10")
+
+
+def test_reviewed_valve_profile_cannot_be_packaged_as_locked_factory_image(bundle_project):
+    _, metadata, _, _ = bundle_project
+    metadata['esp32-valve-test']['defines'].append('BASU_VALVE_PROFILE_HEADER="reviewed.h"')
+    with pytest.raises(ValueError, match='commissioned'):
+        builder.build_firmware('0.1.12')
+
+
+def test_local_commissioning_profile_is_not_in_factory_source_bundle(bundle_project):
+    root, _, _, _ = bundle_project
+    sources = builder.source_files(root)
+    assert 'firmware/include/ValveTestProfile.local.h' not in sources
 
 
 def test_rejects_merge_corruption(bundle_project, monkeypatch):

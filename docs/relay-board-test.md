@@ -85,3 +85,8 @@ of calling an unresponsive or stuck contact successful.
 This establishes a candidate relay mapping. It does not approve mains load wiring,
 pump operation, pressure protection or an experiment sequence. No sensor readings
 are invented by this firmware. The board reports `hardware_verified: false`.
+
+After mapping, the separate [Valve test (no sensors)](valve-test.md) can use a
+reviewed valve-only profile for short individual solenoid pulses. Do not attach
+loads and keep using this bare-board tool: its rest-pattern test can energize
+multiple relays, and it requires every contact load to remain disconnected.

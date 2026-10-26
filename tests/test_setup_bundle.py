@@ -18,7 +18,10 @@ def fake_source(tmp_path):
         "packaging/install_cp210x.ps1", "packaging/driver-config.json",
         "docs/setup-new-pc.md", "docs/START-HERE.md", "docs/operator-guide.md",
         "hardware/balance-usb-setup.md", "firmware/platformio.ini", "firmware/src/main.cpp",
+        "firmware/src/valve_test_main.cpp", "firmware/include/ValveTestProfile.h",
+        "firmware/examples/ValveTestProfile.example.h",
         "docs/relay-board-test.md", "protocol/relay-bench.md",
+        "docs/valve-test.md", "protocol/valve-test.md",
         "hardware/pump-interface.md",
         "docs/full-firmware.md",
     ]
@@ -26,6 +29,9 @@ def fake_source(tmp_path):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("checked source", encoding="utf-8")
+    (tmp_path / "firmware/platformio.ini").write_text(
+        "[env:esp32-dry-run]\n[env:esp32-relay-bench]\n[env:esp32-valve-test]\n[env:esp32-physical]\n",
+        encoding="utf-8")
     (tmp_path / "packaging/python-runtime.json").write_text(json.dumps({"version": "3.14.10"}))
     executable = tmp_path / "MembraneControl.exe"
     executable.write_bytes(b"test app binary")
@@ -34,7 +40,8 @@ def fake_source(tmp_path):
 
 def test_payload_hashes_actual_bytes_and_excludes_local_files(tmp_path):
     executable = fake_source(tmp_path)
-    for relative in ("firmware/.pio/build/secret.h", "firmware/__pycache__/cached.py", "firmware/operator.sqlite"):
+    for relative in ("firmware/.pio/build/secret.h", "firmware/__pycache__/cached.py", "firmware/operator.sqlite",
+                     "firmware/include/ValveTestProfile.local.h"):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("must not ship")
@@ -44,7 +51,12 @@ def test_payload_hashes_actual_bytes_and_excludes_local_files(tmp_path):
         manifest = json.loads(archive.read("setup-manifest.json"))
         assert manifest["version"] == "1.2.3"
         assert archive.read(manifest["app"]) == executable.read_bytes()
+        for name in ("docs/valve-test.md", "protocol/valve-test.md", "firmware/src/valve_test_main.cpp",
+                     "firmware/include/ValveTestProfile.h", "firmware/examples/ValveTestProfile.example.h"):
+            assert archive.read(name) == (tmp_path / name).read_bytes()
+        assert b"[env:esp32-valve-test]" in archive.read("firmware/platformio.ini")
         assert not any("secret" in name or "__pycache__" in name or "sqlite" in name for name in archive.namelist())
+        assert 'firmware/include/ValveTestProfile.local.h' not in archive.namelist()
         assert set(archive.namelist()) == set(manifest["files"]) | {"setup-manifest.json"}
         for relative, digest in manifest["files"].items():
             assert hashlib.sha256(archive.read(relative)).hexdigest() == digest
@@ -55,6 +67,15 @@ def test_incomplete_setup_fails_before_creating_bundle(tmp_path):
     (tmp_path / "packaging/setup_windows.ps1").unlink()
     archive_path = tmp_path / "payload.zip"
     with pytest.raises(RuntimeError, match="setup_windows.ps1"):
+        builder.create_payload(tmp_path, executable, "1.2.3", archive_path)
+    assert not archive_path.exists()
+
+
+def test_setup_does_not_silently_omit_valve_commissioning_instructions(tmp_path):
+    executable = fake_source(tmp_path)
+    (tmp_path / "docs/valve-test.md").unlink()
+    archive_path = tmp_path / "payload.zip"
+    with pytest.raises(RuntimeError, match="valve-test.md"):
         builder.create_payload(tmp_path, executable, "1.2.3", archive_path)
     assert not archive_path.exists()
 

@@ -419,6 +419,11 @@ class AppController:
                     self._abort(str(packet.get("error", "Command rejected")))
                 return
             if command == "hello":
+                if packet.get("device") == "membrane-valve-test":
+                    self.disconnect_controller(request_stop=False)
+                    self.snapshot["controller_status"] = "Valve test firmware found; open Valve test (no sensors)"
+                    self._log("Valve test firmware uses the separate Valve test (no sensors) window")
+                    return
                 if packet.get("device") == "membrane-relay-bench":
                     self.disconnect_controller(request_stop=False)
                     self.snapshot["controller_status"] = "Relay test firmware found; open Relay board test"

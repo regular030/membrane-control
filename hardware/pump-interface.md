@@ -63,6 +63,63 @@ would drive **pump pin 1**, referenced through the verified interface to
 Input/output isolation and returns must be resolved before choosing a common-
 ground module arrangement. The shipped firmware keeps its profile unverified.
 
+## Handoff: connecting the DFR0971 when it arrives
+
+Use the **DFRobot Gravity DFR0971, GP8403, two-channel I2C 0-10 V DAC**.
+The [manufacturer's module specification](https://www.dfrobot.com/product-2613.html)
+permits a 3.3-5 V supply and 2.7-5 V I2C high levels. For this ESP32 plan,
+power the module from a verified **3.3 V** rail so its I2C pull-ups also use
+3.3 V. The module generates the higher analog output voltage internally;
+do not connect the relay board's 12 V supply to the DAC's VCC terminal.
+
+**First, with the pump and controller unplugged and the DB15 harness
+disconnected at both ends:** identify the molded connector pin numbers and
+record continuity from pins **1, 3, 5, 9, 10 and 12** to each wire. Check for
+existing bridges and any divider/filter/amplifier. Repair or replace the
+harness if the separate returns cannot be identified. Do not infer connections
+from the four cable tags alone.
+
+Then use this proposed connection table, subject to review of the actual
+relay-board header and pump grounding:
+
+| From | To | Check |
+| --- | --- | --- |
+| ESP32 verified 3.3 V rail | DFR0971 VCC/+ | Module supply, not pump motor power |
+| ESP32 GND | DFR0971 GND/- | Logic and DAC reference |
+| ESP32 GPIO21 | DFR0971 SDA/D | Proposed I2C data pin; confirm header label |
+| ESP32 GPIO22 | DFR0971 SCL/C | Proposed I2C clock pin; confirm header label |
+| DFR0971 VOUT0 | Pump DB15 pin 1 (+) | Analog speed command |
+| DFR0971 output GND | Pump DB15 pin 3 (-) | Only after the input-reference/grounding review |
+
+The DAC schematic shares analog-output GND with logic GND: **this module is
+not an isolated output stage**. The last connection therefore references the
+pump input to ESP32/USB ground. If that is unsuitable for the installed pump
+and laptop grounding, use a reviewed isolated interface instead. This table
+does not authorize joining pump returns **3, 5 and 12**.
+
+Keep the pump disconnected for the first DAC test. Configure I2C address
+**0x58** only if the address switches match the manufacturer's table; select
+the **0-10 V output range** and channel **0**. With a voltmeter between VOUT0
+and output GND, verify commanded 0 V and several nonzero values, then verify
+return to 0 V on stop/reset and after a power cycle. Use a separate reviewed
+bench procedure: the normal app's shipped physical profile is locked, and
+the relay-board test firmware does not drive this DAC.
+
+The remaining pump connections are separate:
+
+- **Start/stop:** a suitable isolated signal contact across **DB15 10/12**,
+  electrically separate from any mains valve relay bus. No external voltage
+  is applied to this pair. Its GPIO/driver and stop behavior still require a
+  reviewed physical profile; buying the DAC alone does not complete this path.
+- **Feedback:** **DB15 9 (+)/5 (-)** goes through a separately designed,
+  protected/scaled ADC interface. Leave it insulated and disconnected until
+  that interface is reviewed. Do not connect it to the DAC output or raw GPIO.
+
+Only after the harness, grounding, stop contact, pressure input, output mapping
+and calibration pass commissioning should the pump be connected and operated
+in its verified **V** mode. GPIO21/22 are proposed profile assignments, not
+confirmation that the shipped firmware or a header position is configured.
+
 ## Recorded old wiring
 
 | Notebook wire | Recorded Arduino connection | What must be checked |
@@ -94,3 +151,4 @@ conversion. Verify the installed drive's behavior and pump-head calibration.
 - [Cole-Parmer/Barnant service manual, mirror](https://www.manualslib.com/manual/1449189/Cole-Parmer-75211-30.html), model listing identifies 75211-30 at 60-3600 RPM.
 - [Arduino Mega 2560 specifications](https://store.arduino.cc/products/arduino-mega-2560-rev3) and [PWM guide](https://support.arduino.cc/hc/en-us/articles/9350537961500-Use-PWM-output-with-Arduino).
 - [DFRobot GP8403/DFR0971 specification](https://wiki.dfrobot.com/dfr0971).
+- [DFRobot DFR0971 schematic, first page](https://dfimg.dfrobot.com/wiki/19365/DFR0971_gp8403-dac-module_schematics_V1.0.pdf), shared logic/output ground and I2C pull-ups to VCC.

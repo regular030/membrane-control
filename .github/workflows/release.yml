@@ -44,9 +44,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install platformio==6.2.0
-      - name: Build dry-run, relay-board test and commissioning-gated physical firmware
+      - name: Build dry-run, relay test, gated valve test and physical controller firmware
         working-directory: firmware
-        run: pio run -e esp32-dry-run -e esp32-relay-bench -e esp32-physical
+        run: pio run -e esp32-dry-run -e esp32-relay-bench -e esp32-valve-test -e esp32-physical
       - name: Run native firmware safety tests
         working-directory: firmware
         run: pio test -e native

@@ -19,13 +19,14 @@ def payload_sources(root: Path, executable: Path, firmware_archive: Path | None 
         "packaging/python-runtime.json", "docs/setup-new-pc.md",
         "docs/START-HERE.md", "docs/operator-guide.md", "hardware/balance-usb-setup.md",
         "docs/relay-board-test.md", "protocol/relay-bench.md",
+        "docs/valve-test.md", "protocol/valve-test.md",
         "hardware/pump-interface.md",
         "docs/full-firmware.md",
     ):
         sources[relative] = root / relative
     for source in sorted((root / "firmware").rglob("*")):
         relative = source.relative_to(root)
-        if not source.is_file() or any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
+        if not source.is_file() or source.name.endswith(".local.h") or any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
             continue
         if source.suffix not in {".h", ".hpp", ".cpp", ".c", ".py", ".ini", ".md"}:
             continue

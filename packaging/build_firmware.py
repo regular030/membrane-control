@@ -16,16 +16,19 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = ("esp32-dry-run", "esp32-relay-bench", "esp32-physical")
+TARGETS = ("esp32-dry-run", "esp32-relay-bench", "esp32-valve-test", "esp32-physical")
 PURPOSES = {
     "esp32-dry-run": "Protocol test with simulated measurements; no relay or sensor GPIO access.",
     "esp32-relay-bench": "Real relay pulses on an unloaded board only; no pump or sensor control.",
+    "esp32-valve-test": "Sensor-free solenoid valve commissioning; reviewed valve-only profile required, factory profile locked.",
     "esp32-physical": "Unverified factory profile: physical experiment operation remains locked.",
 }
 REQUIRED_SOURCES = (
     "firmware/README.md", "firmware/platformio.ini", "firmware/compact_paths.py",
     "firmware/native_compiler.py", "firmware/src/main.cpp", "firmware/src/relay_bench_main.cpp",
     "firmware/include/BoardProfile.h", "firmware/include/BoardConfig.h",
+    "firmware/src/valve_test_main.cpp", "firmware/include/ValveTestCore.h",
+    "firmware/include/ValveTestProfile.h", "firmware/include/ValveTestConfig.h",
 )
 SOURCE_SUFFIXES = {".h", ".hpp", ".cpp", ".c", ".py", ".ini", ".md", ".txt"}
 
@@ -57,6 +60,7 @@ def source_files(root: Path) -> dict[str, bytes]:
     for source in sorted((root / "firmware").rglob("*")):
         relative = source.relative_to(root)
         if (not source.is_file() or source.suffix not in SOURCE_SUFFIXES
+                or source.name.endswith(".local.h")
                 or any(part.startswith(".") or part in ("__pycache__", "work", "cache") for part in relative.parts)):
             continue
         name = archive_name(relative.as_posix())
@@ -65,6 +69,7 @@ def source_files(root: Path) -> dict[str, bytes]:
         if name not in result:
             raise ValueError(f"Required firmware source is missing: {name}")
     for name in ("protocol/v1.md", "protocol/relay-bench.md", "docs/relay-board-test.md",
+                 "protocol/valve-test.md", "docs/valve-test.md",
                  "docs/full-firmware.md", "hardware/README.md", "hardware/relay-board-pin-plan.md",
                  "hardware/pump-interface.md", "packaging/build_firmware.py", "LICENSE"):
         path = root / name
@@ -121,9 +126,9 @@ def flash_inputs(metadata: dict, target: str, core_dir: Path) -> tuple[list[tupl
     defines = metadata.get("defines", [])
     if not isinstance(defines, list) or "ARDUINO_ESP32_DEV" not in defines:
         raise ValueError("Firmware bundle requires the classic esp32dev board target")
-    if any("BASU_VERIFIED_PROFILE_HEADER" in str(value) for value in defines):
+    if any(any(flag in str(value) for flag in ("BASU_VERIFIED_PROFILE_HEADER", "BASU_VALVE_PROFILE_HEADER")) for value in defines):
         raise ValueError("A commissioned physical profile cannot be labelled as the unverified factory build")
-    if target != "esp32-relay-bench":
+    if target not in ("esp32-relay-bench", "esp32-valve-test"):
         expected = "BASU_DRY_RUN=" + ("1" if target == "esp32-dry-run" else "0")
         if expected not in defines:
             raise ValueError("Firmware target simulation flag does not match its label")
@@ -183,6 +188,9 @@ Choose one target:
 - esp32-dry-run: simulated protocol/recipe testing, without relay/sensor GPIO.
 - esp32-relay-bench: REAL relay pulses on a bare, unloaded board only. Follow
   docs/relay-board-test.md. This does not operate the pump or read sensors.
+- esp32-valve-test: one solenoid pulse at a time without sensors or a DAC.
+  The factory profile is LOCKED. A reviewed valve-only profile is required;
+  see docs/valve-test.md. Keep the pump physically isolated.
 - esp32-physical: the shipped profile is UNVERIFIED and physical operation stays
   LOCKED. This image is included for development completeness, not commissioning.
 

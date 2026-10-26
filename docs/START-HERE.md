@@ -30,6 +30,12 @@ or a checked recipe-review box does not make the real rig ready.
 
 ## Need help?
 
+To test equipment without sensors, uncheck **Simulation mode** and open
+**Connections and settings**. Choose **1. Bare relay board test** for an unloaded
+board, or **2. Valve test (no sensors)** after the maintainer has completed the
+separate reviewed valve profile. The factory valve-test image stays locked.
+See [the valve test guide](valve-test.md). The pump is not operated by either tool.
+
 - **No EXE:** use the release's **Assets**, not GitHub's green **Code** button.
 - **Windows blocks it:** ask the maintainer or IT. Python is not required.
 - **Start unavailable:** read the reason and next step shown on Dashboard.

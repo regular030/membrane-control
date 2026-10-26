@@ -13,6 +13,51 @@ firmware operates real 74HC595 outputs in bounded test pulses. Use the app's
 record the physical channel mapping. No pump or sensor interface is needed for
 this unloaded test, and it cannot run experiments.
 
+## Sensor-free solenoid valve commissioning
+
+The separate **esp32-valve-test** target supports one named solenoid at a time
+without ADC, DAC, pump, pressure, flow or balance interfaces. It is distinct from
+both unloaded raw-bit testing and production experiment control. The shipped
+profile is **UNVERIFIED / LOCKED** and performs no GPIO operations. Merely
+flashing this target does not enable a valve or approve 120 VAC load wiring.
+
+A separate reviewed header, selected with `BASU_VALVE_PROFILE_HEADER`, must
+provide `basu::compiledValveTestConfig()`. See
+[`examples/ValveTestProfile.example.h`](examples/ValveTestProfile.example.h).
+The template deliberately contains false review flags and unknown mapping bits.
+It must remain locked until the actual seven single-coil solenoid circuits,
+raw-bit mapping, all-off sixteen-bit rest word, unused outputs, safe reset/OE
+response, and pump exclusion have been established. Candidate serial-register
+pins are data GPIO14, clock GPIO13, latch GPIO12 and active-low OE GPIO5. The
+profile ID is a unique 1-64 character identifier using ASCII letters, digits,
+dash, underscore or dot. `UNVERIFIED` is reserved for the locked template.
+
+Keep the pump physically isolated during these tests. This target is not for
+motorized, reversing or latching actuators; those need their own verified drive
+and interlock design. The reviewed relay profile is separate from the full
+controller's production hardware approval and never changes it.
+
+Build only, without opening a port or uploading:
+
+```powershell
+.\.venv\Scripts\python.exe -m platformio run -d firmware -e esp32-valve-test
+```
+
+The app's separate **Valve test** window identifies `membrane-valve-test`,
+reports the compiled profile ID and requires fresh status/heartbeat plus explicit
+wiring, isolated-pump and clear-test-area confirmations before arming. It sends
+500 ms pulses; firmware accepts only integer durations 100-2000 ms, one valve
+number 1-7 at a time. A busy pulse cannot be replaced or prolonged. The one-second
+heartbeat lease applies while armed and pulsing. STOP, HELLO/new session, reset
+and heartbeat expiry discard arming. No valve restarts automatically.
+
+`valve_test_status` carries `locked`, `disarmed`, `ready`, `pulsing` or `fault`,
+the profile ID/verification, commanded `outputs_enabled`, `active_valve` (0 when
+inactive), and remaining milliseconds. Sensor fields stay null and production
+`hardware_verified` stays false. ACK/status confirm software commands, not
+physical motion or relay contact feedback. No raw mask, profile-write, recipe,
+manual-output or pump command is accepted by this firmware.
+
 ## One-time setup on each Windows computer
 
 For a new PC, the **MembraneControl-Setup** EXE in

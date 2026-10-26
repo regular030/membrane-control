@@ -29,6 +29,8 @@ logs/
 !.env.example
 config.local.*
 hardware/profiles/*.local.json
+firmware/include/*.local.h
+firmware/examples/*.local.h
 
 # Source attachments and drafts
 originals/

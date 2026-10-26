@@ -3,8 +3,9 @@
 Current connection, confirmed by the user on 26 October 2026:
 **balance USB-B I/O -> USB data cable -> computer USB**. Use the Nimbus native-USB
 driver if required. The user now confirms that Windows exposes a second COM
-port on this USB-B connection. Its COM number and receipt of weight lines have
-not yet been reported. The model reported is **Adam Nimbus NBL 8201e**.
+port on this USB-B connection. The user reports that the port appears but no
+weight arrives; the balance-side serial settings will be checked later. Its
+COM number is not yet reported. The model is **Adam Nimbus NBL 8201e**.
 The scale connects independently of the ESP32's USB-to-UART adapter, with a
 different COM port for each device.
 

@@ -1,6 +1,6 @@
 # Procurement baseline
 
-Updated 25 October 2026. Listings, prices and sellers can change. Quantities below support the initial bench prototype, not a complete commissioned mains assembly. Reuse existing suitable items.
+Updated 26 October 2026. Listings, prices and sellers can change. Quantities below support the initial bench prototype, not a complete commissioned mains assembly. Reuse existing suitable items.
 
 ## Initial purchases
 
@@ -35,12 +35,27 @@ photograph does not establish a usable pin map or mains-load rating.
 
 | Item | Candidate or specification | Remaining check |
 | --- | --- | --- |
-| Pump command interface, not yet selected | GP8403/DFR0971 is a candidate for the documented 75211-30 voltage input | Verify V mode, pin 1/3 input references, original conditioning and safe startup before purchase |
+| 1 pump command DAC | **DFRobot Gravity DFR0971 / GP8403, two-channel I2C 0-10 V**: [exact manufacturer product](https://www.dfrobot.com/product-2613.html); [Amazon Canada search, exact listing unverified](https://www.amazon.ca/s?k=DFRobot+DFR0971+GP8403) | Candidate selected for the command stage; verify the purchased item is DFR0971, supports a 3.3 V supply and 0-10 V output. Review V mode, DB15 1/3 reference, grounding and safe startup before connection |
 | Sensor ADC and conditioning | ADS1115-based acquisition or equivalent protected interface | Define sensor scaling and the separately verified pump-feedback range, protection, grounding and calibration |
 | Pump start/stop contact | Separate isolated signal contact/interface | Verify contact behavior/suitability across 75211-30 DB15 pins 10/12 |
 | DB15 harness | Two-row 15-pin connector matching installed pump | Verify gender and pinout; do not substitute a three-row VGA connector |
 | DC barrel adapter | Female 5.5 x 2.1 mm to secured pigtail or terminal | Check connector dimensions and mounting |
 | Enclosure and wiring | Rated terminals, glands, wire, ferrules, labels, fuses and mounting | Size after layout and electrical review |
+
+The exact DFR0971 manufacturer's specifications were checked on 26 October
+2026. An exact Amazon.ca product/ASIN could not be verified: Amazon search
+pages were inaccessible to the research tool and indexed results did not
+identify a matching Canadian listing. The Amazon link above is a **search**,
+not a verified ready-to-order product. Match the manufacturer/model, supply,
+I2C interface and output range; a generic PWM converter or ordinary 0-VCC DAC
+is a different part. Price, stock, seller and delivery are unverified.
+
+For Raj: the DAC adds only the speed-command path. It does not include the
+isolated start/stop contact, protected feedback ADC or a corrected DB15
+harness. Follow [the pump wiring handoff](pump-interface.md#handoff-connecting-the-dfr0971-when-it-arrives)
+for proposed GPIO21 SDA / GPIO22 SCL connections and the unpowered continuity
+checks required before connecting any pump wires. The physical firmware stays
+unverified until the complete interface is commissioned.
 
 ## Computer offered for comparison
 

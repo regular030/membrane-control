@@ -2,13 +2,53 @@
 
 Latest hardware update, 26 October 2026: the user now identifies the balance as
 an **Adam Nimbus NBL 8201e**, uses its USB-B I/O connection, and confirms a second
-Windows COM port appears. Actual weight receipt is still to be confirmed. Older
+Windows COM port appears. The user reports that no weight arrives; balance-side
+serial settings will be checked later. Older
 release records below describe the green RS232 adapter used at that time. The
 Cole-Parmer drive is now identified as **75211-30, 60-3600 RPM, 0.1 HP**. Its
 manufacturer-authored manual and DB15 diagram confirm 0-10 V command 1(+)/3(-),
 0-10 V feedback 9(+)/5(-), and start/stop contact 10/12. Actual mode, harness
 continuity, conditioning and calibration remain unverified. No physical outputs
 were operated to establish these documentation findings.
+
+## Sensor-free valve test, version 0.1.12
+
+Checked locally on Windows x64, 26 October 2026:
+
+- All **421 desktop/packaging tests** passed in one process with native exit 0
+  and no warnings in the final run. The added checks cover dedicated identity,
+  locked profiles, session attestations, matching acknowledgements, stale data,
+  restart detection, single pulses, no queued output, window/Qt shutdown and
+  COM-port ownership. Normal controller identity rejects valve-test firmware
+  and releases its port with a useful next step.
+- All **49 native firmware tests** passed, including 16 new valve-test cases.
+  All four ESP32 targets built successfully. The factory valve profile is locked
+  and does not access GPIO; native mocks also check reviewed mapping, polarity,
+  unused-bit preservation, pulse deadline, watchdog expiry and forbidden commands.
+- Setup/flash plan tests cover all four target selections, explicit valve-test
+  commissioning status, cancellation, target injection rejection, shortcut
+  arguments and bundle completeness. Local commissioned profile headers are
+  excluded, and factory-image packaging rejects commissioned profile macros.
+- The new dialog was checked with fake ports at a compact size and zoomed layouts.
+  Seven named 500 ms commands, unavailable sensors, isolated pump requirements,
+  guide link and visible Stop are separate from experiment controls. Displayed
+  states are commands, not measured valve or relay-contact positions.
+
+No physical rig or serial port was operated. Kunshpreet reports All LOW leaves
+the relays off and All HIGH turns them on. The individual raw-bit to valve map,
+safe reset/OE response, mains load installation and valve-only reviewed profile
+remain outstanding. The scale has a USB-B COM connection but no confirmed mass
+stream. Pump DAC, protected inputs and corrected return references remain to be
+installed and commissioned. The software watchdog is not an independent safety
+system.
+
+The final Windows EXE produced a 1360 x 940 demo screenshot and exited cleanly.
+The setup EXE verified its embedded payload and read-only plan without installing,
+downloading dependencies or opening USB. Four merged ESP32 images were verified
+against their generated component addresses/bytes and bundled with complete
+sources; SHA256 manifests cover the release files. Both workflows pass actionlint.
+Hosted Actions remain blocked by the existing account billing lock, so this
+release was built and verified locally.
 
 ## Live runtime table, version 0.1.11
 

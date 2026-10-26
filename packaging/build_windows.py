@@ -149,6 +149,8 @@ def build(version: str, clean: bool = True, firmware_archive: Path | None = None
             (ROOT / "docs" / "installation.md", "installation.md"),
             (ROOT / "docs" / "operator-guide.md", "operator-guide.md"),
             (ROOT / "docs" / "full-firmware.md", "full-firmware.md"),
+            (ROOT / "docs" / "valve-test.md", "valve-test.md"),
+            (ROOT / "hardware" / "pump-interface.md", "pump-interface.md"),
         ):
             archive.write(source, name)
         if firmware_archive is not None:

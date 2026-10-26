@@ -29,6 +29,7 @@ from .models import MAX_STEPS, Recipe
 from .device_status import device_statuses
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
+from .valve_test import ValveTestDialog
 
 
 STYLE = """
@@ -150,6 +151,7 @@ class MainWindow(QMainWindow):
                     QFontDatabase.addApplicationFont(str(path))
         self.controller = controller
         self._relay_bench_dialog = None
+        self._valve_test_dialog = None
         self._shutdown_started = False
         self._updating = False
         self._last_log = ""
@@ -567,9 +569,13 @@ class MainWindow(QMainWindow):
         cform.addRow(crow)
         self.controller_detail = _label("No controller connected", "muted", True)
         cform.addRow(self.controller_detail)
-        self.relay_bench_button = _button("Relay board test", self._open_relay_bench)
+        self.relay_bench_button = _button("1. Bare relay board test", self._open_relay_bench)
         self.relay_bench_button.setToolTip("Turn Simulation mode off first. Separate tool for REAL relays on a bare board with every contact load disconnected.")
         cform.addRow(self.relay_bench_button)
+        self.valve_test_button = _button("2. Valve test (no sensors)", self._open_valve_test)
+        self.valve_test_button.setToolTip("Test one solenoid valve at a time using a reviewed valve-only firmware profile. Pump stays isolated; no pressure, flow or scale connection is required.")
+        cform.addRow(self.valve_test_button)
+        cform.addRow(_label("Equipment tests: first map the unloaded relays, then use the reviewed valve-only profile. Experiment controls remain separate.", "muted", True))
         devices.addWidget(controller_box)
         balance_box = QGroupBox("Balance")
         bform = QFormLayout(balance_box)
@@ -1035,6 +1041,9 @@ class MainWindow(QMainWindow):
         if self._relay_bench_dialog is not None:
             self.statusBar().showMessage("Close the existing relay board test before opening another.", 10000)
             return
+        if self._valve_test_dialog is not None:
+            self.statusBar().showMessage("Close the valve test before opening the bare relay test.", 10000)
+            return
         if self.controller.simulation:
             self.statusBar().showMessage("Turn Simulation mode off before opening the real relay board test.", 10000)
             return
@@ -1074,6 +1083,56 @@ class MainWindow(QMainWindow):
                 dialog.shutdown()
             except Exception:
                 logging.exception("Could not shut down relay test dialog")
+            finally:
+                try:
+                    dialog.reject()
+                except RuntimeError:
+                    pass
+
+    def _open_valve_test(self):
+        if self._shutdown_started:
+            return
+        if self._relay_bench_dialog is not None or self._valve_test_dialog is not None:
+            self.statusBar().showMessage("Close the existing equipment test before opening another.", 10000)
+            return
+        if self.controller.simulation:
+            self.statusBar().showMessage("Turn Simulation mode off before opening the real valve test.", 10000)
+            return
+        if self.controller._active():
+            self.statusBar().showMessage("Stop the current operation before opening the valve test.", 10000)
+            return
+        port = self.controller_port.currentData()
+        balance = self.controller.balance
+        excluded = {balance.port} if balance is not None else set()
+        if port in excluded:
+            self.statusBar().showMessage("Select the ESP32 port, not the connected scale's port.", 10000)
+            return
+        try:
+            self.controller.disconnect_controller()
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not release the controller port: {exc}", 10000)
+            return
+        dialog = ValveTestDialog(self, selected_port=port, port_lister=self.controller.list_ports,
+                                 excluded_ports=excluded)
+        self._valve_test_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            try:
+                dialog.shutdown()
+            finally:
+                self._valve_test_dialog = None
+                dialog.deleteLater()
+        if not self._shutdown_started:
+            self._update_view(dict(self.controller.snapshot))
+
+    def shutdown_valve_test(self):
+        dialog, self._valve_test_dialog = self._valve_test_dialog, None
+        if dialog is not None:
+            try:
+                dialog.shutdown()
+            except Exception:
+                logging.exception("Could not shut down valve test dialog")
             finally:
                 try:
                     dialog.reject()
@@ -1390,6 +1449,7 @@ class MainWindow(QMainWindow):
             self.hardware_status.setText(hardware_text)
             self.controller_connect.setEnabled(not operating and not desktop_simulation)
             self.relay_bench_button.setEnabled(not operating and not desktop_simulation)
+            self.valve_test_button.setEnabled(not operating and not desktop_simulation)
             self.balance_connect.setEnabled(not operating and not desktop_simulation)
             self.controller_disconnect.setEnabled(not operating and connected and not desktop_simulation)
             self.balance_disconnect.setEnabled(not operating and balanced and not desktop_simulation)
@@ -1469,9 +1529,12 @@ class MainWindow(QMainWindow):
             self.shutdown_relay_bench()
         finally:
             try:
-                self.controller.close()
-            except Exception:
-                logging.exception("Could not finish application device cleanup")
+                self.shutdown_valve_test()
+            finally:
+                try:
+                    self.controller.close()
+                except Exception:
+                    logging.exception("Could not finish application device cleanup")
 
     def closeEvent(self, event):
         try:
