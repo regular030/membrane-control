@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import json
+from pathlib import Path
 import re
 import time
 
@@ -39,6 +41,7 @@ class ValveTestSession:
         self.verified = False
         self.valve_profile_verified = False
         self.profile_id = ''
+        self.expected_profile_id = ''
         self.firmware_version = ''
         self.attestations = dict(wiring_checked=False, pump_isolated=False, test_area_ready=False)
         self.armed = False
@@ -178,8 +181,7 @@ class ValveTestSession:
         self._begin_operation('valve_pulse', valve=valve, duration_ms=self.PULSE_MS)
         self.message = f'Requested V{valve} energize for 500 ms. Actual valve motion is not monitored.'
 
-    @staticmethod
-    def _check_identity(packet):
+    def _check_identity(self, packet):
         profile = packet.get('profile_id')
         verified = packet.get('valve_profile_verified')
         if (packet.get('ok') is not True or packet.get('device') != 'membrane-valve-test'
@@ -192,6 +194,8 @@ class ValveTestSession:
             or not isinstance(packet.get('firmware_version'), str)
             or not 1 <= len(packet['firmware_version']) <= 64):
             raise ValueError('Not the dedicated seven-valve test firmware. Flash the valve-test target.')
+        if self.expected_profile_id and profile != self.expected_profile_id:
+            raise ValueError(f'Wrong valve setup: expected {self.expected_profile_id}, received {profile}. Finish uploading the prepared setup before testing.')
 
     def _checked_status(self, packet):
         required = ('profile_id', 'valve_profile_verified', 'outputs_enabled', 'active_valve',
@@ -340,13 +344,24 @@ class ValveTestDialog(QDialog):
     """A separate operator window for a commissioned seven-valve profile."""
 
     def __init__(self, parent=None, *, selected_port='', port_lister=None,
-                 excluded_ports=(), transport_factory=None, clock=time.monotonic):
+                 excluded_ports=(), transport_factory=None, clock=time.monotonic,
+                 setup_directory=None):
         super().__init__(parent)
         self._shutdown_done = False
         self.setWindowTitle('Valve test (real solenoid valves)')
         self.setModal(True)
         self.resize(700, 700)
         self.session = ValveTestSession(transport_factory, clock)
+        self.setup_directory = Path(setup_directory) if setup_directory is not None else None
+        if self.setup_directory is not None:
+            try:
+                path = self.setup_directory / 'expected-profile.json'
+                if path.stat().st_size <= 1024:
+                    expected = json.loads(path.read_text(encoding='utf-8')).get('profile_id')
+                    if isinstance(expected, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', expected):
+                        self.session.expected_profile_id = expected
+            except (OSError, ValueError, AttributeError):
+                pass
         self.port_lister = port_lister or self._list_ports
         self.excluded_ports = set(excluded_ports)
         self._selected_port = selected_port
@@ -389,6 +404,10 @@ class ValveTestDialog(QDialog):
         self.setup_guide.setOpenExternalLinks(True)
         self.setup_guide.setWordWrap(True)
         layout.addWidget(self.setup_guide)
+        self.setup_button = QPushButton('Set up valve mapping and firmware')
+        self.setup_button.setToolTip('Record the measured relay bits and prepare a valve-only build without editing code. Disconnect from the board first.')
+        self.setup_button.clicked.connect(self._open_setup)
+        layout.addWidget(self.setup_button)
         self.attestation_checkboxes = {}
         for name, text in (
             ('wiring_checked', 'The valve mapping, polarity, safe states and mains wiring have been checked'),
@@ -485,6 +504,27 @@ class ValveTestDialog(QDialog):
         self.session.detach('Stop requested; disconnected and stopped sending heartbeats. Repeat the checks to test again.')
         self._render()
 
+    def _open_setup(self):
+        if self._shutdown_done or self.session.transport is not None:
+            return
+        from .valve_setup import ValveSetupDialog
+        dialog = ValveSetupDialog(self, port=self.port_combo.currentData() or '',
+                                  directory=self.setup_directory)
+        try:
+            dialog.exec()
+            if dialog.prepared_profile_id:
+                self.session.expected_profile_id = dialog.prepared_profile_id
+                self.session.message = ('Finish the upload in the separate console, reset with IO0 released, '
+                    f'then Connect. Expected setup: {dialog.prepared_profile_id}. Nothing is armed automatically.')
+                if self.setup_directory is not None:
+                    dialog._write(self.setup_directory / 'expected-profile.json',
+                                  {'profile_id': dialog.prepared_profile_id})
+        except OSError as error:
+            self.session.message = f'Could not save expected valve setup: {error}'
+        finally:
+            dialog.deleteLater()
+            self._render()
+
     def _tick(self):
         if not self._shutdown_done:
             self.session.tick()
@@ -499,6 +539,7 @@ class ValveTestDialog(QDialog):
         self.stop_button.setEnabled(live and connected)
         self.refresh_button.setEnabled(live and not connected)
         self.port_combo.setEnabled(live and not connected)
+        self.setup_button.setEnabled(live and not connected)
         self.status_label.setText(session.error or session.message)
         if session.verified:
             label = 'Reviewed valve profile' if session.valve_profile_verified else 'LOCKED: no reviewed valve profile'

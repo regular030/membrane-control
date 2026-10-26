@@ -38,8 +38,21 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false) {
   if (error) document["error"] = error;
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.13";
+    document["firmware_version"] = "0.1.14";
     document["pump_command_source"] = basu::pumpCommandSourceName(board.pumpCommandSource);
+    document["controller_mode"] = kSimulation ? "dry_run" : "physical";
+    if (kSimulation || hardware.ready()) document["hardware_status"] = nullptr;
+    else document["hardware_status"] = std::string(hardware.error()).substr(0, 160);
+    JsonObject sensorInputs = document["sensor_inputs"].to<JsonObject>();
+    const char* names[] = {"pressure", "flow", "pump_feedback"};
+    const basu::AnalogConfig* configured[] = {&board.pressure, &board.flow, &board.pumpFeedback};
+    for (std::size_t index = 0; index < 3; ++index) {
+      JsonObject input = sensorInputs[names[index]].to<JsonObject>();
+      input["source"] = basu::analogSourceName(configured[index]->source);
+      input["calibration_verified"] = configured[index]->calibrationVerified;
+      if (configured[index]->source == basu::AnalogSource::NativeAdc1) input["pin"] = configured[index]->pin;
+      else if (configured[index]->source == basu::AnalogSource::Ads1115) input["channel"] = configured[index]->adsChannel;
+    }
     document["protocol_version"] = 1;
     document["valve_count"] = basu::kValveCount;
     document["hardware_verified"] = controller.hardwareVerified();
@@ -140,6 +153,10 @@ void writeTelemetry(uint32_t now) {
   addReading("pressure_psi", controller.measurements().pressure);
   addReading("flow_ml_min", controller.measurements().flow);
   addReading("pump_feedback_v", controller.measurements().pumpFeedback);
+  JsonObject sensorStatus = document["sensor_status"].to<JsonObject>();
+  sensorStatus["pressure"] = hardware.sensorStatus(0, now);
+  sensorStatus["flow"] = hardware.sensorStatus(1, now);
+  sensorStatus["pump_feedback"] = hardware.sensorStatus(2, now);
   if (controller.fault().empty()) document["fault"] = nullptr;
   else document["fault"] = controller.fault();
   document["hardware_verified"] = controller.hardwareVerified();

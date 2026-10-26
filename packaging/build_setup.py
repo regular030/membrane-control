@@ -15,11 +15,13 @@ def payload_sources(root: Path, executable: Path, firmware_archive: Path | None 
     sources = {"app/MembraneControl.exe": executable}
     for relative in (
         "packaging/setup_windows.ps1", "packaging/flash_dry_run.ps1",
+        "packaging/prepare_valve_test.ps1", "packaging/prepare_valve_test.py",
         "packaging/install_cp210x.ps1", "packaging/driver-config.json",
         "packaging/python-runtime.json", "docs/setup-new-pc.md",
         "docs/START-HERE.md", "docs/operator-guide.md", "hardware/balance-usb-setup.md",
         "docs/relay-board-test.md", "protocol/relay-bench.md",
         "docs/valve-test.md", "protocol/valve-test.md",
+        "docs/flow-sensor-troubleshooting.md",
         "docs/pwm-converter-setup.md", "hardware/procurement.md",
         "firmware/examples/PwmConverterProfile.example.h",
         "firmware/examples/pwm-converter-bench/README.md",
@@ -29,6 +31,7 @@ def payload_sources(root: Path, executable: Path, firmware_archive: Path | None 
         "docs/full-firmware.md",
     ):
         sources[relative] = root / relative
+    sources['packaging/valve_profile.py'] = root / 'desktop/src/membrane_control/valve_profile.py'
     for source in sorted((root / "firmware").rglob("*")):
         relative = source.relative_to(root)
         if not source.is_file() or source.name.endswith(".local.h") or any(part.startswith(".") or part == "__pycache__" for part in relative.parts):

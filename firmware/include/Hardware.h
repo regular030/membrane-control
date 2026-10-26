@@ -7,6 +7,32 @@
 
 namespace basu {
 
+enum class SensorReadState { Never, Reading, OutOfRange, Unavailable };
+
+inline const char* analogSourceName(AnalogSource source) {
+  switch (source) {
+    case AnalogSource::NativeAdc1: return "native_adc1";
+    case AnalogSource::Ads1115: return "ads1115";
+    default: return "disabled";
+  }
+}
+
+// Diagnostics describe configured acquisition, not electrical connectivity.
+// The classifier is read-only and cannot initialize a sensor or unlock outputs.
+inline const char* classifySensorStatus(const BoardConfig& board, const AnalogConfig& input,
+    const Reading& reading, SensorReadState acquisition, bool profileValidated, bool hardwareReady,
+    bool simulation, uint32_t now) {
+  if (simulation) return "simulated";
+  if (input.source == AnalogSource::Disabled) return "not_configured";
+  if (!board.verifiedBoardConfig || !board.safeProfileVerified) return "profile_locked";
+  if (!calibrationValid(input)) return "uncalibrated";
+  if (!profileValidated) return "profile_locked";
+  if (!hardwareReady || acquisition == SensorReadState::Unavailable) return "hardware_unavailable";
+  if (acquisition == SensorReadState::Never) return "stale";
+  if (acquisition == SensorReadState::OutOfRange || !reading.valid) return "out_of_range";
+  return reading.fresh(now, board.sensorMaxAgeMs) ? "reading_received" : "stale";
+}
+
 // This entire adapter is dormant in the default simulation build. There are no
 // GPIO/I2C accesses before validateBoardConfig() and the compiled approval gate.
 class Hardware {
@@ -16,6 +42,7 @@ class Hardware {
   bool begin() {
     if (simulation_) return true;
     if (const char* error = validateBoardConfig(config_)) { error_ = error; return false; }
+    profileValidated_ = true;
     // Establish the pump's STOP contact before other outputs or I2C operations.
     digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
     pinMode(config_.pumpContactPin, OUTPUT);
@@ -130,6 +157,7 @@ class Hardware {
       for (std::size_t i = 0; i < configurations.size(); ++i) {
         if (configurations[i]->source == AnalogSource::NativeAdc1) {
           *destinations[i] = calibratedReading(*configurations[i], analogReadMilliVolts(configurations[i]->pin) / 1000.0, now);
+          sensorReadState_[i] = destinations[i]->valid ? SensorReadState::Reading : SensorReadState::OutOfRange;
         }
       }
     }
@@ -139,6 +167,13 @@ class Hardware {
   bool ready() const { return ready_; }
   const char* error() const { return error_; }
   const Measurements& measurements() const { return measurements_; }
+  const char* sensorStatus(std::size_t index, uint32_t now) const {
+    const auto configured = inputs();
+    const std::array<const Reading*, 3> measured{{&measurements_.pressure, &measurements_.flow, &measurements_.pumpFeedback}};
+    if (index >= configured.size()) return "not_configured";
+    return classifySensorStatus(config_, *configured[index], *measured[index], sensorReadState_[index],
+                                profileValidated_, ready_, simulation_, now);
+  }
 
  private:
   std::array<const AnalogConfig*, 3> inputs() const {
@@ -247,12 +282,14 @@ class Hardware {
       uint16_t raw = 0;
       if (!readRegister16(config_.ads1115Address, 0x01, conversionConfig)) {
         destinations[adsInputIndex_]->valid = false;
+        sensorReadState_[adsInputIndex_] = SensorReadState::Unavailable;
         adsPending_ = false;
         return;
       }
       if (!(conversionConfig & 0x8000)) {
         if (static_cast<uint32_t>(now - adsStartedMs_) > 30) {
           destinations[adsInputIndex_]->valid = false;
+          sensorReadState_[adsInputIndex_] = SensorReadState::Unavailable;
           adsPending_ = false;
         }
         return;
@@ -260,7 +297,12 @@ class Hardware {
       if (readRegister16(config_.ads1115Address, 0x00, raw)) {
         const double volts = static_cast<int16_t>(raw) * (4.096 / 32768.0);
         *destinations[adsInputIndex_] = calibratedReading(*configurations[adsInputIndex_], volts, now);
-      } else destinations[adsInputIndex_]->valid = false;
+        sensorReadState_[adsInputIndex_] = destinations[adsInputIndex_]->valid ?
+            SensorReadState::Reading : SensorReadState::OutOfRange;
+      } else {
+        destinations[adsInputIndex_]->valid = false;
+        sensorReadState_[adsInputIndex_] = SensorReadState::Unavailable;
+      }
       adsPending_ = false;
       adsInputIndex_ = (adsInputIndex_ + 1) % configurations.size();
     }
@@ -275,7 +317,10 @@ class Hardware {
         if (writeRegister(config_.ads1115Address, 0x01, bytes, sizeof(bytes))) {
           adsStartedMs_ = now;
           adsPending_ = true;
-        } else destinations[adsInputIndex_]->valid = false;
+        } else {
+          destinations[adsInputIndex_]->valid = false;
+          sensorReadState_[adsInputIndex_] = SensorReadState::Unavailable;
+        }
         break;
       }
       adsInputIndex_ = (adsInputIndex_ + 1) % configurations.size();
@@ -284,6 +329,7 @@ class Hardware {
 
   BoardConfig config_;
   bool simulation_;
+  bool profileValidated_ = false;
   bool ioInitialized_ = false;
   bool i2cInitialized_ = false;
   bool pwmInitialized_ = false;
@@ -294,6 +340,7 @@ class Hardware {
   const char* error_ = "hardware_not_initialized";
   Outputs applied_;
   Measurements measurements_;
+  std::array<SensorReadState, 3> sensorReadState_{{SensorReadState::Never, SensorReadState::Never, SensorReadState::Never}};
   uint32_t lastNativeSampleMs_ = 0;
   uint32_t lastHealthMs_ = 0;
   uint32_t adsStartedMs_ = 0;

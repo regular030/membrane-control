@@ -265,6 +265,9 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.stop_button)
         self.export_current_button = _button("Export CSV", self._export_current)
         controls.addWidget(self.export_current_button)
+        self.sensorless_valve_button = _button('Valve test (no sensors)', self._open_valve_test)
+        self.sensorless_valve_button.setToolTip('Open the separate valve-only test. No pressure, flow or scale is needed; the pump stays isolated.')
+        controls.addWidget(self.sensorless_valve_button)
         controls.addStretch()
         self.controller_badge = _label("Controller: disconnected", "muted")
         self.balance_badge = _label("Balance: disconnected", "muted")
@@ -297,7 +300,7 @@ class MainWindow(QMainWindow):
             cell.setContentsMargins(0, 0, 0, 0)
             cell.setSpacing(1)
             title = _label(name, "deviceName")
-            status = _label("Checking")
+            status = _label("Checking", wrap=True)
             status.setAccessibleName(f"{name} connection status")
             cell.addWidget(title)
             cell.addWidget(status)
@@ -1113,7 +1116,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Could not release the controller port: {exc}", 10000)
             return
         dialog = ValveTestDialog(self, selected_port=port, port_lister=self.controller.list_ports,
-                                 excluded_ports=excluded)
+                                 excluded_ports=excluded, setup_directory=self.controller.data_dir / 'valve-setup')
         self._valve_test_dialog = dialog
         try:
             dialog.exec()
@@ -1450,6 +1453,7 @@ class MainWindow(QMainWindow):
             self.controller_connect.setEnabled(not operating and not desktop_simulation)
             self.relay_bench_button.setEnabled(not operating and not desktop_simulation)
             self.valve_test_button.setEnabled(not operating and not desktop_simulation)
+            self.sensorless_valve_button.setEnabled(not operating and not desktop_simulation)
             self.balance_connect.setEnabled(not operating and not desktop_simulation)
             self.controller_disconnect.setEnabled(not operating and connected and not desktop_simulation)
             self.balance_disconnect.setEnabled(not operating and balanced and not desktop_simulation)

@@ -11,6 +11,51 @@ manufacturer-authored manual and DB15 diagram confirm 0-10 V command 1(+)/3(-),
 continuity, conditioning and calibration remain unverified. No physical outputs
 were operated to establish these documentation findings.
 
+## Guided sensor-free valve setup, version 0.1.14
+
+Checked locally on Windows x64, 26 October 2026:
+
+- **550 desktop/packaging tests passed**. Four real-symlink creation checks were
+  skipped because this Windows account lacks the required privilege; simulated
+  junction/reparse rejection checks passed. After the final Dashboard shortcut
+  placement, all **57 focused UI/setup tests** passed again.
+- The new profile tests cover strictly typed fields, seven distinct measured
+  bits, complete review flags, header quoting, path traversal/reparse rejection,
+  separate new workspaces, read-only plans, cancellation before upload, and
+  preservation of shared factory files. GUI tests cover blank mappings,
+  changed-map review reset, local drafts without inherited approvals, safe
+  helper arguments, no port access on open/save, port ownership and expected
+  profile identity on reconnect.
+- A synthetic test-only profile generated an isolated ESP32 valve project and
+  compiled successfully with the real pinned toolchain. The generated include
+  define and setup ID were confirmed in its build. All nine copied source files
+  matched, and the complete shared factory source hashes stayed unchanged. This
+  synthetic profile/image is not an installation approval or a release image.
+- **79 native firmware cases passed**. Twelve new input-diagnostic cases cover
+  disabled/locked channels without I/O, calibration, valid zero, first/fresh/stale
+  acquisition, range rejection, ADC/I2C failure and timestamp rollover. The two
+  affected full-controller ESP32 targets compiled; relay/valve factory behavior
+  is unchanged and the release builder checks all four targets.
+- The PowerShell preparation wrapper passed its actual read-only plan. No
+  workspace, PlatformIO process or serial connection was created by that plan.
+  The setup form and Dashboard shortcut were visually checked, and the app
+  exited cleanly after isolated UI checks.
+- The final packaged app launched in demo mode, produced a 1360 x 940 screenshot
+  and exited cleanly. The Setup EXE verified its embedded payload and read-only
+  plan without installing or opening USB. The bundled helper, adjacent profile
+  library and valve guide match the checked source; no private profiles are
+  included. All four factory ESP32 targets and release SHA256 checks passed.
+  Both workflows pass actionlint. Hosted Actions retain the existing account
+  billing lock, so the Windows release was built and verified locally.
+
+No physical device, serial port, pump or valve was operated or flashed. The
+seven actual raw-bit mappings, safe rest/reset behavior, loaded mains assembly
+and hydraulic test paths still require the lab's checks. All LOW/off and All
+HIGH/on identify polarity only. The setup form records reviewed results; it
+does not discover or certify them. Sensor acquisition remains unconfigured in
+the default physical profile. Scale work was deferred at the user's request;
+the balance parser and serial transport retain their prior release behavior.
+
 ## PWM converter support, version 0.1.13
 
 Checked locally on Windows x64, 26 October 2026:

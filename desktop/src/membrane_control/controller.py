@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 
 from .balance import MassFlow, parse_mass
+from .device_status import checked_controller_diagnostics, checked_sensor_status
 from .models import Recipe, number, valve_states
 from .recipes import built_in_recipes, read_recipe, write_recipe
 from .storage import RunStore
@@ -63,6 +64,7 @@ class AppController:
         self.snapshot = {"state": "idle", "simulation": True, "controller_connected": False,
             "controller_status": "Not connected", "balance_connected": False,
             "balance_status": "Not connected", "hardware_verified": False,
+            "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
@@ -208,6 +210,10 @@ class AppController:
                     self.snapshot.update(controller_connected=False, controller_status="Disconnected",
                         state="idle", start_pending=False, manual_pending=False, stop_pending=False, valves=[False]*7, pump_percent=0,
                         pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None, hardware_verified=False)
+                    self._reset_diagnostics()
+
+    def _reset_diagnostics(self):
+        self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={})
 
     def connect_balance(self, port, baud=9600):
         if self.simulation:
@@ -338,6 +344,7 @@ class AppController:
         self.snapshot.update(state="fault", fault=reason, start_pending=False, manual_pending=False, stop_pending=False,
             controller_connected=False, controller_status=status,
             hardware_verified=False, pressure_psi=None, flow_ml_min=None, flux_lmh=None, pump_feedback_v=None)
+        self._reset_diagnostics()
         self._finish_run("fault")
         self._log(reason)
 
@@ -436,7 +443,12 @@ class AppController:
                     or type(packet.get("hardware_verified")) is not bool):
                     self.snapshot["controller_status"] = "Unsupported controller identity or protocol"
                     return
-                self.device = dict(packet)
+                diagnostics = checked_controller_diagnostics(packet)
+                self.device = {key: value for key, value in packet.items()
+                               if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status")}
+                self.device.update(diagnostics)
+                self._reset_diagnostics()
+                self.snapshot.update(copy.deepcopy(diagnostics))
                 self.snapshot.update(controller_connected=True, controller_status="Connected",
                                      hardware_verified=packet["hardware_verified"], simulation=packet["simulation"])
                 self._log("Controller identified: " + str(packet.get("firmware_version", "unknown")))
@@ -515,6 +527,7 @@ class AppController:
         self.last_telemetry = now
         self.last_controller_uptime = uptime
         self.snapshot.update(values)
+        self.snapshot["sensor_status"] = checked_sensor_status(packet.get("sensor_status"))
         self.snapshot.update(valves=list(valves), pump_percent=pump, step_index=step, cycle=cycle,
             remaining_s=remaining, state="fault" if self.local_fault else state,
             fault=self.local_fault or fault, controller_connected=True,
@@ -568,6 +581,7 @@ class AppController:
             self.snapshot.update(state="fault", fault=self.local_fault, controller_connected=False,
                 controller_status="Stopped after application error", start_pending=False, manual_pending=False, stop_pending=False,
                 pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None)
+            self._reset_diagnostics()
             self._log(self.local_fault)
 
     def _tick(self):

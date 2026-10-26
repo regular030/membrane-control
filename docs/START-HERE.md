@@ -35,6 +35,9 @@ To test equipment without sensors, uncheck **Simulation mode** and open
 board, or **2. Valve test (no sensors)** after the maintainer has completed the
 separate reviewed valve profile. The factory valve-test image stays locked.
 See [the valve test guide](valve-test.md). The pump is not operated by either tool.
+The valve-test window has **Set up valve mapping and firmware** to prepare its
+private valve-only build without editing C++. For missing real flow values, use
+[flow sensor troubleshooting](flow-sensor-troubleshooting.md).
 
 For the selected pump PWM converter, give the maintainer the
 [order, wiring and first-test guide](pwm-converter-setup.md). Install the latest

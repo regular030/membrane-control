@@ -74,6 +74,7 @@ def source_files(root: Path) -> dict[str, bytes]:
             raise ValueError(f"Required firmware source is missing: {name}")
     for name in ("protocol/v1.md", "protocol/relay-bench.md", "docs/relay-board-test.md",
                  "protocol/valve-test.md", "docs/valve-test.md",
+                 "docs/flow-sensor-troubleshooting.md",
                  "docs/pwm-converter-setup.md", "hardware/procurement.md",
                  "docs/full-firmware.md", "hardware/README.md", "hardware/relay-board-pin-plan.md",
                  "hardware/pump-interface.md", "packaging/build_firmware.py", "LICENSE"):

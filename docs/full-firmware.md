@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.13 includes the complete controller source and compiled ESP32 images,
+Version 0.1.14 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.13-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.14-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -37,6 +37,9 @@ The full controller source is `firmware/src/main.cpp`; its I/O implementation is
    physical target reports that its profile has not been verified.
 
 Setup prepares all four build targets without opening a COM port or uploading.
+App 0.1.14 adds **Set up valve mapping and firmware** in the valve-test window.
+It builds a private reviewed valve profile without editing the shared source;
+see [Valve test](valve-test.md). The factory image remains locked.
 The helper builds from installed source before upload, so a reviewed custom
 profile can be rebuilt later. The separate firmware ZIP includes precompiled
 images, offsets and checksums for tools that can flash raw ESP32 binaries; follow

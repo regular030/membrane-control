@@ -15,6 +15,8 @@ spec.loader.exec_module(builder)
 def fake_source(tmp_path):
     required = [
         "packaging/setup_windows.ps1", "packaging/flash_dry_run.ps1",
+        "packaging/prepare_valve_test.ps1", "packaging/prepare_valve_test.py",
+        "desktop/src/membrane_control/valve_profile.py",
         "packaging/install_cp210x.ps1", "packaging/driver-config.json",
         "docs/setup-new-pc.md", "docs/START-HERE.md", "docs/operator-guide.md",
         "hardware/balance-usb-setup.md", "firmware/platformio.ini", "firmware/src/main.cpp",
@@ -22,6 +24,7 @@ def fake_source(tmp_path):
         "firmware/examples/ValveTestProfile.example.h",
         "docs/relay-board-test.md", "protocol/relay-bench.md",
         "docs/valve-test.md", "protocol/valve-test.md",
+        "docs/flow-sensor-troubleshooting.md",
         "docs/pwm-converter-setup.md", "hardware/procurement.md",
         "firmware/examples/PwmConverterProfile.example.h",
         "firmware/examples/pwm-converter-bench/README.md",
@@ -55,6 +58,9 @@ def test_payload_hashes_actual_bytes_and_excludes_local_files(tmp_path):
     with zipfile.ZipFile(archive_path) as archive:
         manifest = json.loads(archive.read("setup-manifest.json"))
         assert manifest["version"] == "1.2.3"
+        assert archive.read('packaging/valve_profile.py') == (tmp_path / 'desktop/src/membrane_control/valve_profile.py').read_bytes()
+        assert 'packaging/prepare_valve_test.py' in manifest['files']
+        assert 'packaging/prepare_valve_test.ps1' in manifest['files']
         assert archive.read(manifest["app"]) == executable.read_bytes()
         for name in ("docs/valve-test.md", "protocol/valve-test.md", "firmware/src/valve_test_main.cpp",
                      "firmware/include/ValveTestProfile.h", "firmware/examples/ValveTestProfile.example.h",

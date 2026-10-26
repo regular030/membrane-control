@@ -24,6 +24,42 @@ their own separate hardware and pressure requirements.
 
 ## Handoff for Raj and the lab technician
 
+### Easier setup in app 0.1.14
+
+No sensor connection is required. After recording the individual raw-bit map
+and checking the installation as described below:
+
+1. Install the latest **Setup EXE**, then open **Connections and settings** and
+   **2. Valve test (no sensors)** with Simulation mode off.
+2. Disconnect in the valve-test window if connected. Click **Set up valve mapping
+   and firmware**. Enter the measured raw bit for each V1-V7. Unknown bits remain
+   blank; All LOW off / All HIGH on does not identify the seven individual bits.
+3. Choose the measured all-off pattern. For the user's observed active-high
+   board this is **All LOW (0)**, provided the complete rest/reset checks pass.
+   Complete only reviews actually performed. **Save draft** keeps incomplete
+   work locally; reviews must be repeated when reopening it.
+4. With pump power/control isolated and relay contact loads disconnected for
+   the initial upload, click **Build and flash valve setup**. A separate console
+   builds a private valve-only copy. It does not edit the shared factory source,
+   change production approvals, or open a port while building.
+5. Read the selected COM port and setup ID. Type **UPLOAD VALVE TEST** in that
+   console to authorize the upload. For the three-wire adapter use IO0/EN as
+   instructed. Cancellation before that confirmation opens no serial port.
+6. After success, release IO0 and briefly press EN. Close the console, then
+   **Connect** in the valve-test window. The returned setup ID must match the
+   prepared one. An old or unsuccessful upload cannot silently use another map.
+7. Follow the session checks and **Arm valve tests**, then use one
+   **V1-V7: Energize 500 ms** button at a time. Reconnect loads only after the
+   installation checks. No pressure, flow, balance or PWM converter is needed.
+
+The app only records operator-entered results. It cannot discover or certify
+the mapping, mains installation or hydraulic safety. Private JSON/build files
+are kept in the app's data folder and are not published to GitHub. The shared
+factory valve image stays locked. The manual header workflow below remains
+available to maintainers; it is not necessary when using the setup form.
+
+### Checks and manual setup alternative
+
 1. With contact loads disconnected, use the [bare-board guide](relay-board-test.md).
    Record the rest pattern and each raw bit's actual numbered relay. Check contact
    continuity as well as clicks/LEDs. Do not assume bit 0 means relay 1.
@@ -93,4 +129,6 @@ Do not label a failed valve successful because its relay clicked. For motorized,
 reversing or latching actuators, stop and obtain their wiring and travel-time
 specification; this single-coil solenoid tool does not support them.
 
-Pump speed control is a later step. See the [DAC and pump wiring handoff](../hardware/pump-interface.md).
+Pump speed control is a later step. See the [pump wiring handoff](../hardware/pump-interface.md).
+Real sensor readings are intentionally unavailable in this tool; see
+[flow sensor troubleshooting](flow-sensor-troubleshooting.md) for the separate input setup.

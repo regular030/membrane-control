@@ -305,6 +305,31 @@ Register sources:
 
 ## Runtime behavior
 
+Full-controller firmware 0.1.14 adds optional read-only sensor diagnostics. HELLO
+includes `controller_mode` (`dry_run` or `physical`), `hardware_status` (null for
+simulation/ready hardware, otherwise an initialization/fault reason of at most
+160 characters), and `sensor_inputs`. That object has `pressure`, `flow` and
+`pump_feedback` entries: `source` is `disabled`, `native_adc1` or `ads1115`,
+`calibration_verified` is the profile's review flag, and selected inputs include
+their `pin` or ADS `channel` (possibly -1 while unmapped). These describe the
+compiled setup; they do not detect a plugged-in wire or apply configuration.
+
+Telemetry adds `sensor_status` with the same three keys. Its stable codes are
+`simulated`, `not_configured`, `profile_locked`, `hardware_unavailable`,
+`uncalibrated`, `out_of_range`, `stale`, and `reading_received`. Disabled inputs
+are `not_configured`, including factory defaults. Configured inputs behind an
+unreviewed profile are `profile_locked`. Invalid calibration is `uncalibrated`;
+an actual I2C initialization/read failure is `hardware_unavailable`. No first
+sample or an aged sample is `stale`; a sampled value failing reviewed bounds is
+`out_of_range`. `reading_received` means a fresh valid sample, not proof that
+the intended physical sensor is connected. A valid measured zero remains zero
+when the reviewed configuration uses `rejectRails=false`.
+
+Diagnostics never initiate extra ADC/I2C reads, invent raw values or bypass a
+profile, voltage-range, pressure or actuator gate. Locked physical firmware
+still acquires no sensors. Bare-relay and valve-test firmware still report null
+sensor measurements; those modes do not provide flow acquisition.
+
 See `../protocol/v1.md` for the shared wire contract. UART is 115200 8N1. Frames
 are newline-delimited JSON, at most 8192 bytes excluding LF. CRLF is accepted.
 Nested/oversized/malformed objects and trailing data are rejected. Strings must
