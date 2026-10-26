@@ -8,7 +8,7 @@ for the ready-to-run app.
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and sign in if needed. This project is private.
 2. Open the release given to you by the maintainer. Under **Assets**, download
-   `MembraneControl-0.1.4-windows-x64.exe` or the matching portable app ZIP.
+   `MembraneControl-0.1.5-windows-x64.exe` or the matching portable app ZIP.
    **Source code (zip)** is for developers and does not contain the EXE.
 3. If you chose the portable ZIP, right-click it and choose **Extract All**.
 4. Open the EXE. Leave **Simulation mode** checked and follow
@@ -18,6 +18,9 @@ First startup can take a little longer. The app includes its own libraries and
 can run the demo without internet or USB equipment. It does not install device
 drivers. Ordinary use does not require administrator access. If university
 software protection blocks the file, ask the maintainer or IT to review it.
+
+If the interface is too large, use **Ctrl + -** to shrink it. **Ctrl + +**
+(or **Ctrl + =**) enlarges it; **Ctrl + 0** restores 100%.
 
 ## Connect USB equipment later
 

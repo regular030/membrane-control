@@ -1,5 +1,27 @@
 # Software validation
 
+## Desktop version 0.1.5
+
+Native interface zoom, checked locally on Windows 11 x64, 26 October 2026:
+
+- All 126 desktop tests passed, including 32 Qt UI tests.
+- The packaged Windows EXE opened, produced a 1360 x 940 screenshot and exited cleanly.
+- Ctrl + -, Ctrl + + / =, shifted plus/equal variants and Ctrl + 0 were tested
+  with focus in text fields, table cells, the activity log and a plot.
+- Font sizes, layout spacing, control sizes, table columns/rows and native plot
+  labels scale from fixed 100% baselines. Repeated zoom/reset does not accumulate
+  rounding changes. New/imported rows and refreshing status styles keep the zoom.
+- Tests confirm zoom sends no controller commands and preserves experiment
+  settings, recipe values and displayed data. Stop remains available during a run.
+- All five tabs were checked at 60%, 80% and 100% across 1360 x 940,
+  1080 x 760 and 960 x 680 windows, plus 150% at 1360 x 940. Page scrolling
+  keeps larger content reachable. Zoom does not force the outer window to resize.
+- Warm zoom changes measured approximately 92-291 ms in local QA under concurrent
+  test load. These measurements are specific to this machine.
+
+Zoom starts at 100% each launch and ranges from 60% to 150% in 10% steps.
+Firmware is unchanged from 0.1.3. No physical equipment was operated for these checks.
+
 ## Desktop version 0.1.4
 
 Naming update, checked locally on Windows 11 x64, 25 October 2026:

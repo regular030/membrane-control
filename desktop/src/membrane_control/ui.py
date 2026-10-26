@@ -14,7 +14,7 @@ import time
 from typing import Any
 
 from PySide6.QtCore import Qt, QSignalBlocker, QTimer
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
@@ -26,6 +26,7 @@ import pyqtgraph as pg
 
 from .models import MAX_STEPS, Recipe
 from .device_status import device_statuses
+from .zoom import NativeZoom
 
 
 STYLE = """
@@ -67,6 +68,19 @@ QTableWidget { border: 1px solid #dce4e9; background: white; gridline-color: #e5
 QHeaderView::section { background: #edf2f5; color: #3c5666; border: 0; border-bottom: 1px solid #dce4e9; padding: 8px 5px; font-weight: 600; }
 QTableWidget::item:selected { background: #dcecf2; color: #183b4c; }
 QStatusBar { background: #edf1f4; color: #526a78; }
+QCheckBox::indicator { width: 14px; height: 14px; }
+QComboBox::drop-down { width: 20px; }
+QComboBox::down-arrow { width: 8px; height: 6px; }
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button { width: 16px; }
+QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow { width: 8px; height: 5px; }
+QScrollBar:vertical { width: 14px; }
+QScrollBar:horizontal { height: 14px; }
+QScrollBar::handle:vertical { min-height: 24px; }
+QScrollBar::handle:horizontal { min-width: 24px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 14px; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 14px; }
+QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical { width: 8px; height: 5px; }
+QScrollBar::left-arrow:horizontal, QScrollBar::right-arrow:horizontal { width: 5px; height: 8px; }
 """
 
 
@@ -99,6 +113,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, controller):
         super().__init__()
+        self._zoom: NativeZoom | None = None
         # Qt's Windows offscreen plugin does not enumerate system fonts.
         # Register installed fonts for readable automated screenshots without
         # changing normal desktop behavior or shipping third-party font files.
@@ -121,6 +136,7 @@ class MainWindow(QMainWindow):
         self._plot_time: deque[float] = deque(maxlen=600)
         self._plot_data = {key: deque(maxlen=600) for key in ("flow_ml_min", "pressure_psi", "flux_lmh", "mass_g")}
         self._curves: dict[str, Any] = {}
+        self._plots: dict[str, Any] = {}
         self._metric_labels: dict[str, QLabel] = {}
         self.device_status_labels: dict[str, QLabel] = {}
         self._device_status_names: dict[str, QLabel] = {}
@@ -173,6 +189,7 @@ class MainWindow(QMainWindow):
         self._refresh_ports()
         self._refresh_history()
         self._update_view(dict(self.controller.snapshot))
+        self._setup_zoom()
         self.timer = QTimer(self)
         self.timer.setInterval(100)
         self.timer.timeout.connect(self._on_tick)
@@ -182,10 +199,9 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         title = QVBoxLayout()
         title.setSpacing(2)
-        title.addWidget(_label("Membrane Control", "appTitle"))
-        title.addWidget(_label("Experiment controls, live measurements and recorded runs", "subtitle"))
-        row.addLayout(title)
-        row.addStretch()
+        title.addWidget(_label("Membrane Control", "appTitle", True))
+        title.addWidget(_label("Experiment controls, live measurements and recorded runs", "subtitle", True))
+        row.addLayout(title, 1)
         self.state_chip = _label("IDLE", "stateChip")
         row.addWidget(self.state_chip)
         self.simulation_check = QCheckBox("Simulation mode")
@@ -298,6 +314,7 @@ class MainWindow(QMainWindow):
             plot.getViewBox().setLimits(xMin=0, minXRange=5,
                                        minYRange=0.5 if key == "pressure_psi" else 1)
             self._curves[key] = plot.plot(pen=pg.mkPen(color, width=2))
+            self._plots[key] = plot
             grid.addWidget(plot, index // 2, index % 2)
         splitter.addWidget(charts)
 
@@ -358,7 +375,7 @@ class MainWindow(QMainWindow):
         trace_row.addStretch()
         trace_row.addWidget(_button("Clear traces", self._clear_traces))
         outer.addLayout(trace_row)
-        self.tabs.addTab(page, "Dashboard")
+        self._add_tab(page, "Dashboard")
 
     def _build_editor(self):
         page = QWidget()
@@ -432,7 +449,7 @@ class MainWindow(QMainWindow):
         bottom.addWidget(_button("Export JSON", self._export_recipe))
         bottom.addStretch()
         layout.addLayout(bottom)
-        self.tabs.addTab(page, "Sequence editor")
+        self._add_tab(page, "Sequence editor")
 
     def _build_connections(self):
         page = QWidget()
@@ -507,7 +524,7 @@ class MainWindow(QMainWindow):
         settings.addRow(self.settings_apply)
         layout.addWidget(settings_box)
         layout.addStretch()
-        self.tabs.addTab(page, "Connections and settings")
+        self._add_tab(page, "Connections and settings")
 
     def _build_history(self):
         page = QWidget()
@@ -531,7 +548,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.history_export)
         row.addStretch()
         layout.addLayout(row)
-        self.tabs.addTab(page, "Run history")
+        self._add_tab(page, "Run history")
         self.tabs.currentChanged.connect(lambda index: self._refresh_history() if index == 3 else None)
 
     def _build_help(self):
@@ -543,10 +560,11 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(22, 18, 22, 18)
         layout.setSpacing(14)
         title = _label("Start with a practice run")
-        title.setStyleSheet("font-size: 17pt; font-weight: 600;")
+        self._set_zoom_style(title, "font-size: 17pt; font-weight: 600;")
         layout.addWidget(title)
         layout.addWidget(_label("Developed for membrane research in Dr. Onita Basu's lab at Carleton University.", "muted", True))
         layout.addWidget(_label("Leave Simulation mode checked while learning. The app makes up readings and no real equipment moves.", "", True))
+        layout.addWidget(_label("To fit more on a smaller screen, press Ctrl + - to zoom out. Use Ctrl + + or Ctrl + = to zoom in, and Ctrl + 0 to return to 100%. The zoom percentage is shown at the bottom right.", "muted", True))
         practice = QGroupBox("Three steps to try the app")
         steps = QVBoxLayout(practice)
         for text in ("1. Open Dashboard, choose CWF under Preset, then click Start run.",
@@ -580,6 +598,47 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         page.setWidget(content)
         self.tabs.addTab(page, "Help")
+
+    def _add_tab(self, content, title):
+        # At high zoom, native scroll areas keep every control reachable without
+        # making the desktop window larger than the screen.
+        page = QScrollArea()
+        page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.Shape.NoFrame)
+        page.setAccessibleName(title + " page")
+        page.setWidget(content)
+        self.tabs.addTab(page, title)
+
+    def _setup_zoom(self):
+        self.zoom_label = _label("Zoom 100%", "muted")
+        self.zoom_label.setAccessibleName("Interface zoom percentage")
+        self.zoom_label.setToolTip("Ctrl + -: zoom out  |  Ctrl + + or =: zoom in  |  Ctrl + 0: reset\n60% to 150% in 10% steps. Display size only; experiment settings do not change.")
+        self.statusBar().addPermanentWidget(self.zoom_label)
+        self._zoom = NativeZoom(self, self._plots.values())
+        self.zoom_shortcuts = []
+        for keys, change in ((["Ctrl+-"], -10), (["Ctrl++", "Ctrl+=", "Ctrl+Shift++", "Ctrl+Shift+="], 10), (["Ctrl+0"], 0)):
+            shortcut = QShortcut(self)
+            shortcut.setKeys([QKeySequence(key) for key in keys])
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(lambda change=change: self.set_zoom_percent(100 if change == 0 else self.zoom_percent + change))
+            self.zoom_shortcuts.append(shortcut)
+
+    @property
+    def zoom_percent(self):
+        return self._zoom.percent if self._zoom is not None else 100
+
+    def set_zoom_percent(self, percent):
+        if self._zoom is None:
+            return
+        self._zoom.set_percent(percent)
+        self.zoom_label.setText(f"Zoom {self.zoom_percent}%")
+        self.statusBar().showMessage(f"Interface zoom: {self.zoom_percent}%. Ctrl + 0 resets to 100%. Experiment settings are unchanged.", 5000)
+
+    def _set_zoom_style(self, widget, source):
+        if self._zoom is None:
+            widget.setStyleSheet(source)
+        else:
+            self._zoom.set_stylesheet(widget, source)
 
     def _action(self, callback, success: str = "", show_dialog: bool = True):
         try:
@@ -673,6 +732,8 @@ class MainWindow(QMainWindow):
             pump.setAccessibleName(f"Step {row + 1} pump percent")
             self.steps_table.setCellWidget(row, 9, pump)
         self._update_editor_duration()
+        if self._zoom is not None:
+            self._zoom.register_tree(self.steps_table)
 
     def _step_data(self) -> list[dict]:
         rows = []
@@ -1012,7 +1073,7 @@ class MainWindow(QMainWindow):
                 self.simulation_check.setChecked(desktop_simulation)
             self.simulation_check.setEnabled(not operating)
             self.banner.setObjectName("simulationBanner" if simulation else "hardwareBanner")
-            self.banner.setStyleSheet("color: #79520a; background: #fff5dc; border: 1px solid #ead398; border-radius: 6px; padding: 10px;" if simulation else "color: #215265; background: #eaf3f7; border: 1px solid #cbdfe8; border-radius: 6px; padding: 10px;")
+            self._set_zoom_style(self.banner, "color: #79520a; background: #fff5dc; border: 1px solid #ead398; border-radius: 6px; padding: 10px;" if simulation else "color: #215265; background: #eaf3f7; border: 1px solid #cbdfe8; border-radius: 6px; padding: 10px;")
             if desktop_simulation:
                 banner_text = "SIMULATION  •  Practice with made up readings. No real equipment will move. Use Start here if this is your first visit."
             elif not connected:
@@ -1125,7 +1186,7 @@ class MainWindow(QMainWindow):
             status.setText(value)
             if status.property("statusLevel") != level:
                 status.setProperty("statusLevel", level)
-                status.setStyleSheet(f"font-size: 9pt; font-weight: 600; color: {colors.get(level, colors['muted'])};")
+                self._set_zoom_style(status, f"font-size: 9pt; font-weight: 600; color: {colors.get(level, colors['muted'])};")
             status.setAccessibleName(f"{name}: {value}")
             status.setAccessibleDescription(detail)
             for widget in (status, self._device_status_names[key], self._device_status_containers[key]):

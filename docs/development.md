@@ -30,6 +30,9 @@ For a clean smoke test with separate sample data:
 On a headless runner, set `QT_QPA_PLATFORM=offscreen`. The app's screenshot
 argument is for QA and does not require connected instruments. Confirm the
 screenshot visually when changing the UI.
+Check whole-interface zoom with Ctrl + -, Ctrl + + / Ctrl + =, and Ctrl + 0
+(reset to 100%), including the status bar's displayed percentage. Check both
+limits, 60% and 150%, and controls with keyboard focus. Each launch starts at 100%.
 
 See `firmware/README.md` for firmware build, upload and commissioning details.
 The default command-line build is:
@@ -75,7 +78,7 @@ firmware, and then builds and smoke-tests the Windows artifact. A failure in
 verification prevents the package job from running.
 
 For an authorized release, set the package version, commit the reviewed
-changes and tag the commit `v0.1.4` (or the matching next version). The release
+changes and tag the commit `v0.1.5` (or the matching next version). The release
 workflow checks the version, repeats verification, builds and smoke-tests the
 EXE, uploads a workflow artifact and creates a **draft prerelease**. A
 maintainer reviews the assets and publishes the prerelease. A private

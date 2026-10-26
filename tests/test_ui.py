@@ -4,6 +4,8 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
 
 from membrane_control.controller import AppController
@@ -21,6 +23,7 @@ def qt_app():
 def screen(qt_app, tmp_path):
     now = [100.0]
     controller = AppController(tmp_path, clock=lambda: now[0])
+    controller.list_ports = lambda: []  # Never enumerate or open real ports in UI tests.
     window = MainWindow(controller)
     window.timer.stop()
     controller.tick()
@@ -327,3 +330,168 @@ def test_csv_export_waits_until_operation_has_stopped(screen, monkeypatch):
     assert not window.export_current_button.isEnabled()
     window._export_csv(None)
     assert "Stop run" in window.statusBar().currentMessage()
+
+
+def test_zoom_scales_whole_layout_and_reset_has_no_rounding_drift(screen):
+    window, _, _ = screen
+    margins = window.centralWidget().layout().contentsMargins()
+    baseline_margins = (margins.left(), margins.top(), margins.right(), margins.bottom())
+    baseline_style = window.styleSheet()
+    baseline_font = window._metric_labels["mass_g"].font().pointSizeF()
+    for _ in range(3):
+        window.set_zoom_percent(80)
+        assert window.preset_combo.minimumWidth() == 152
+        assert window.steps_table.verticalHeader().defaultSectionSize() == 33
+        assert window.steps_table.columnWidth(2) == 50
+        assert window._metric_labels["mass_g"].font().pointSizeF() == pytest.approx(baseline_font * 0.8)
+        assert window.minimumWidth() == 864
+        window.set_zoom_percent(60)
+        window.set_zoom_percent(150)
+        window.set_zoom_percent(100)
+        restored = window.centralWidget().layout().contentsMargins()
+        assert (restored.left(), restored.top(), restored.right(), restored.bottom()) == baseline_margins
+        assert window.styleSheet() == baseline_style
+        assert window.steps_table.columnWidth(2) == 62
+        assert window.steps_table.verticalHeader().defaultSectionSize() == 41
+        assert window._metric_labels["mass_g"].font().pointSizeF() == baseline_font
+
+
+@pytest.mark.parametrize("target", ["name", "cell", "activity", "plot"])
+def test_zoom_shortcuts_work_while_controls_have_focus(screen, qt_app, target):
+    window, _, _ = screen
+    window.show()
+    window.activateWindow()
+    if target == "name":
+        window.tabs.setCurrentIndex(1)
+        widget = window.recipe_name
+    elif target == "cell":
+        window.tabs.setCurrentIndex(1)
+        widget = window.steps_table.cellWidget(0, 1).lineEdit()
+    elif target == "activity":
+        widget = window.activity
+        window.dashboard_scroll.verticalScrollBar().setValue(window.dashboard_scroll.verticalScrollBar().maximum())
+    else:
+        widget = window._plots["pressure_psi"]
+    widget.setFocus()
+    qt_app.processEvents()
+    QTest.keyClick(widget, Qt.Key.Key_Minus, Qt.KeyboardModifier.ControlModifier)
+    qt_app.processEvents()
+    assert window.zoom_percent == 90
+    QTest.keyClick(widget, Qt.Key.Key_Equal, Qt.KeyboardModifier.ControlModifier)
+    qt_app.processEvents()
+    assert window.zoom_percent == 100
+    QTest.keyClick(widget, Qt.Key.Key_Plus, Qt.KeyboardModifier.ControlModifier)
+    qt_app.processEvents()
+    assert window.zoom_percent == 110
+    QTest.keyClick(widget, Qt.Key.Key_Plus, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    qt_app.processEvents()
+    assert window.zoom_percent == 120
+    QTest.keyClick(widget, Qt.Key.Key_Equal, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    qt_app.processEvents()
+    assert window.zoom_percent == 130
+    QTest.keyClick(widget, Qt.Key.Key_0, Qt.KeyboardModifier.ControlModifier)
+    qt_app.processEvents()
+    assert window.zoom_percent == 100
+
+
+def test_zoom_does_not_change_experiment_or_send_controller_commands(screen):
+    window, controller, _ = screen
+    controller.start_run()
+    controller.tick()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    before = controller.recipe.to_dict()
+    settings = dict(controller.settings)
+    request_id = controller.next_id
+    started = controller.driver.engine.started
+    data = {key: list(values) for key, values in window._plot_data.items()}
+    window.set_zoom_percent(60)
+    window.set_zoom_percent(150)
+    assert controller.next_id == request_id
+    assert controller.recipe.to_dict() == before
+    assert controller.settings == settings
+    assert controller.driver.engine.started == started
+    assert controller.driver.engine.state == "running"
+    assert {key: list(values) for key, values in window._plot_data.items()} == data
+    assert window.stop_button.isEnabled()
+
+
+def test_zoom_survives_dynamic_styles_new_rows_and_deleted_widgets(screen, qt_app):
+    window, controller, _ = screen
+    window.set_zoom_percent(80)
+    base_count = len(window._zoom.widgets)
+    for _ in range(5):
+        window._add_step()
+        window.steps_table.selectRow(window.steps_table.rowCount() - 1)
+        window._move_step(-1)
+        window._remove_step()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        qt_app.processEvents()
+    window.set_zoom_percent(60)
+    controller.set_simulation(False)
+    window._update_view(dict(controller.snapshot))
+    assert "padding: 6px" in window.banner.styleSheet()
+    assert "font-size: 5.4pt" in window.device_status_labels["controller"].styleSheet()
+    assert window.steps_table.cellWidget(0, 1).font().pointSizeF() == pytest.approx(6)
+    assert len(window._zoom.widgets) < base_count + 40
+    window.set_zoom_percent(100)
+    assert window.steps_table.cellWidget(0, 1).font().pointSizeF() == pytest.approx(10)
+
+
+def test_zoom_keeps_outer_geometry_and_allows_small_laptop_window(screen, qt_app):
+    window, _, _ = screen
+    window.set_zoom_percent(80)
+    window.resize(1300, 700)
+    window.show()
+    qt_app.processEvents()
+    before = window.size()
+    for percent in (100, 150, 80):
+        window.set_zoom_percent(percent)
+        qt_app.processEvents()
+        assert window.size() == before
+    window.set_zoom_percent(60)
+    window.resize(960, 680)
+    qt_app.processEvents()
+    assert window.width() == 960 and window.height() == 680
+    assert window.minimumWidth() == 648
+    assert window.minimumHeight() == 456
+
+
+def test_zoom_bounds_and_native_plot_fonts(screen):
+    window, _, _ = screen
+    window.set_zoom_percent(5)
+    assert window.zoom_percent == 60
+    axis = window._plots["flow_ml_min"].getAxis("left")
+    assert axis.width() == pytest.approx(34.8, abs=0.5)  # Native graphics sizes use whole pixels.
+    assert axis.style["tickFont"].pointSizeF() > 0
+    assert window._plots["flow_ml_min"].getPlotItem().titleLabel.opts["size"] == "6pt"
+    window.set_zoom_percent(200)
+    assert window.zoom_percent == 150
+    assert window.zoom_label.text() == "Zoom 150%"
+    window.set_zoom_percent(100)
+    assert axis.style["tickFont"] is None
+    assert axis.width() == pytest.approx(58)
+
+
+def test_zoom_import_and_new_history_rows_keep_current_scale(screen, monkeypatch):
+    window, controller, now = screen
+    recipe = Recipe(name="Imported at small zoom", steps=[Step("Observe", 0.1)])
+    path = controller.data_dir / "zoom-import.json"
+    controller.save_recipe(path, recipe)
+    window.set_zoom_percent(80)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(path), "Recipe JSON (*.json)"))
+    window._import_recipe()
+    assert window._collect_recipe().to_dict() == recipe.to_dict()
+    assert window.steps_table.cellWidget(0, 1).font().pointSizeF() == pytest.approx(8)
+    assert window.steps_table.rowHeight(0) == 33
+    window.set_zoom_percent(60)
+    controller.start_run()
+    controller.tick()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    now[0] += 0.2
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert window.history_table.rowCount() >= 1
+    assert window.history_table.font().pointSizeF() == pytest.approx(6)
+    assert window.history_table.rowHeight(0) == round(window._zoom.tables[window.history_table]["row_default"] * 0.6)

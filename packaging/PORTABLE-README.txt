@@ -1,4 +1,4 @@
-Membrane Control 0.1.4
+Membrane Control 0.1.5
 Windows 11 x64 app
 
 Developed for membrane research in Dr. Onita Basu's lab at Carleton University.
@@ -13,6 +13,9 @@ Try the demo
 
 The Start here button in the app opens Help. Read START-HERE.md for the short
 guide, installation.md for download/USB help, and operator-guide.md for use.
+
+Resize the whole interface: Ctrl + - makes it smaller, Ctrl + + (or Ctrl + =)
+makes it larger, and Ctrl + 0 restores 100%. The bottom right shows the percentage.
 
 You do not need to install Python or LabVIEW. The app includes its libraries.
 Device drivers, when needed, come separately from the device manufacturer.

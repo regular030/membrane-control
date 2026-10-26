@@ -14,6 +14,9 @@ Try the demo first. You do not need any USB equipment.
 To find that run later, open **Run history**, select it and click
 **Export selected run**. The **Start here** button opens the app's **Help** tab.
 
+If the interface does not fit on screen, press **Ctrl + -** to shrink it.
+Use **Ctrl + +** (or **Ctrl + =**) to enlarge it and **Ctrl + 0** to reset to 100%.
+
 ## Know which mode you are using
 
 | Mode | What happens |

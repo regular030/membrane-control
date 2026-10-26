@@ -1,27 +1,27 @@
-Membrane Control 0.1.4 updates the project and application name.
+Membrane Control 0.1.5 adds keyboard zoom for the whole interface.
 
 Developed for membrane research in **Dr. Onita Basu's lab at Carleton University**.
 
 ## Download
 
-Under **Assets**, download **MembraneControl-0.1.4-windows-x64.exe** and double-click it. The matching app ZIP includes the EXE and short guides. Leave **Simulation mode** checked and click **Start here** for a practice run. Python and application libraries are bundled.
+Under **Assets**, download **MembraneControl-0.1.5-windows-x64.exe** and double-click it, or extract the matching portable ZIP. Python and application libraries are bundled.
 
-## Changes
+## Resize the interface
 
-- Renamed the private repository to `regular030/membrane-control`.
-- Updated app labels, Windows download names and documentation links to Membrane Control.
-- Added the lab credit to the README, app Help and portable guide.
-- Kept the existing operator data location, so previously recorded runs remain available.
+- **Ctrl + -**: zoom out.
+- **Ctrl + +** or **Ctrl + =**: zoom in.
+- **Ctrl + 0**: reset to 100%.
 
-The prior release's Start here guide, connection statuses, editable presets and control fixes are included. The existing firmware protocol and physical commissioning gates are retained. ESP32 firmware remains at version 0.1.3.
+Zoom changes in 10% steps from 60% to 150%. The current percentage appears at the bottom right. Each launch starts at 100%.
+
+Text, controls, spacing, table sizes and graph labels scale together. Smaller zoom allows the interface to fit in a smaller window. Zoom adjusts the display; experiment values retain their units and values.
 
 ## Validation
 
-Local Windows checks: **116 desktop tests passed**. The packaged EXE opened, produced a screenshot and exited cleanly. The updated Help tab was visually reviewed. GitHub-hosted Actions remain unavailable for this account; this release was built and checked locally.
+All **126 desktop tests passed**, including 32 Qt UI tests. See the [validation record](https://github.com/regular030/membrane-control/blob/v0.1.5/docs/validation.md) for the completed desktop, shortcut, visual and packaged EXE checks. GitHub-hosted Actions remain unavailable for this account; release checks run locally.
 
-Firmware is unchanged from 0.1.3, whose two ESP32 builds and 18 native tests passed. No board was flashed or physical rig tested for this release. Factory firmware remains a dry run. CIP, CWF and Fouling presets are demonstration templates pending lab approval.
+ESP32 firmware is unchanged from 0.1.3. No board was flashed or physical rig tested for this interface update. Factory firmware remains a dry run, with example recipes pending lab approval.
 
-[Start here](https://github.com/regular030/membrane-control/blob/v0.1.4/docs/START-HERE.md) |
-[Installation](https://github.com/regular030/membrane-control/blob/v0.1.4/docs/installation.md) |
-[Firmware setup](https://github.com/regular030/membrane-control/blob/v0.1.4/firmware/README.md) |
-[Validation](https://github.com/regular030/membrane-control/blob/v0.1.4/docs/validation.md)
+[Start here](https://github.com/regular030/membrane-control/blob/v0.1.5/docs/START-HERE.md) |
+[Installation](https://github.com/regular030/membrane-control/blob/v0.1.5/docs/installation.md) |
+[Operator guide](https://github.com/regular030/membrane-control/blob/v0.1.5/docs/operator-guide.md)

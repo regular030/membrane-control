@@ -34,6 +34,7 @@ Windows app
 ## Code map
 
 - `desktop/src/membrane_control/ui.py`: five tabs, first-use help and bounded chart buffers.
+- `zoom.py`: native interface scaling from fixed baseline sizes, with keyboard shortcuts in the main window.
 - `controller.py`: device identity, command transactions, freshness, run recording and fault gates.
 - `transport.py`: background serial workers and the desktop simulator.
 - `models.py` and `engine.py`: validated recipes and deterministic simulated sequencing.

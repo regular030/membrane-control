@@ -22,6 +22,10 @@ wait for the stopped state before exporting or changing the setup.
 
 ## Understand the screen
 
+Resize the whole interface with **Ctrl + -** (smaller) or **Ctrl + +** / **Ctrl + =**
+(larger). **Ctrl + 0** resets it to 100%. The percentage appears at the bottom
+right. Zoom changes in 10% steps from 60% to 150%; each launch starts at 100%.
+
 The **Device connections** panel on Dashboard shows what the app actually
 knows. Hover over a status for more detail.
 

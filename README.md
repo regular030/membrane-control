@@ -20,6 +20,8 @@ Open the [short Start here guide](docs/START-HERE.md).
 Python and the app's libraries are bundled. LabVIEW is not required.
 For download, driver or startup help, see [installation](docs/installation.md).
 The app's **Start here** button opens its **Help** tab.
+Use **Ctrl + -** to shrink the whole interface, **Ctrl + +** (or **Ctrl + =**)
+to enlarge it, and **Ctrl + 0** to reset to 100%.
 
 ## Find your way around
 
