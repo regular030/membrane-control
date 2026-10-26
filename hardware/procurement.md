@@ -35,7 +35,7 @@ photograph does not establish a usable pin map or mains-load rating.
 
 | Item | Candidate or specification | Remaining check |
 | --- | --- | --- |
-| 1 pump command DAC | **DFRobot Gravity DFR0971 / GP8403, two-channel I2C 0-10 V**: [exact manufacturer product](https://www.dfrobot.com/product-2613.html); [Amazon Canada search, exact listing unverified](https://www.amazon.ca/s?k=DFRobot+DFR0971+GP8403) | Candidate selected for the command stage; verify the purchased item is DFR0971, supports a 3.3 V supply and 0-10 V output. Review V mode, DB15 1/3 reference, grounding and safe startup before connection |
+| 1 pump command DAC | **DFRobot Gravity DFR0971 / GP8403, two-channel I2C 0-10 V**: [DigiKey Canada, part 1738-DFR0971-ND](https://www.digikey.ca/en/products/detail/dfrobot/DFR0971/18069239); [exact manufacturer product](https://www.dfrobot.com/product-2613.html) | Preferred purchase: matches the current GP8403 driver. Verify the received DFR0971, 3.3 V supply, 0-10 V output, V mode, DB15 1/3 reference, grounding and safe startup before connection |
 | Sensor ADC and conditioning | ADS1115-based acquisition or equivalent protected interface | Define sensor scaling and the separately verified pump-feedback range, protection, grounding and calibration |
 | Pump start/stop contact | Separate isolated signal contact/interface | Verify contact behavior/suitability across 75211-30 DB15 pins 10/12 |
 | DB15 harness | Two-row 15-pin connector matching installed pump | Verify gender and pinout; do not substitute a three-row VGA connector |
@@ -48,7 +48,22 @@ pages were inaccessible to the research tool and indexed results did not
 identify a matching Canadian listing. The Amazon link above is a **search**,
 not a verified ready-to-order product. Match the manufacturer/model, supply,
 I2C interface and output range; a generic PWM converter or ordinary 0-VCC DAC
-is a different part. Price, stock, seller and delivery are unverified.
+is a different part. Amazon price, stock, seller and delivery are unverified.
+
+**Canadian purchase links checked on 26 October 2026:** DigiKey Canada lists
+the exact DFR0971 at **CAD 14.83**, with 773 shown in stock. Confirm shipping,
+tax and fulfillment at checkout. This is the preferred way to retain the
+current driver and existing pump handoff without changing converter models.
+
+A different hardware option is the **DFRobot DFR1073 / GP8413**, listed at
+**CAD 21.29** with two units shown by
+[RobotShop Canada](https://ca.robotshop.com/products/gravity-gp8413-2-channel-15-bit-i2c-to-0-5v-10v-dac-module).
+The [manufacturer specification](https://wiki.dfrobot.com/dfr1073/) confirms
+3.3-5 V supply, I2C and selectable 0-5/0-10 V outputs. It uses a 15-bit GP8413,
+so it is **not a drop-in replacement in release 0.1.12**: its output encoding,
+scale and initialization must be implemented and tested before pump operation.
+Neither part has been bench-tested on this rig. Prices and stock can change;
+do not buy both modules for one pump command.
 
 For Raj: the DAC adds only the speed-command path. It does not include the
 isolated start/stop contact, protected feedback ADC or a corrected DB15
