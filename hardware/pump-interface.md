@@ -37,3 +37,44 @@ ESP32 PWM. Existing filtering or amplification must be identified before reuse.
 Current relay-board test firmware does not drive a pump or read these signals.
 The experiment firmware retains its verified hardware-profile, sensor and
 pressure gates. None of these notes authorizes connecting mains valve loads.
+
+## What the old Arduino project establishes
+
+The supplied `C UF mebrane-RR_OB.zip` was inspected again on 26 October 2026.
+It contains the generic National Instruments LIFA bridge and supporting
+libraries, plus `LabVIEW.docx`. It contains no native `.vi` files. The six
+images in that document show front panels for CIP, CWF and Fouling, not the
+LabVIEW block diagrams or pin-configuration constants.
+
+The relevant bridge operations in
+`10. LabVIEWInterface-C UF membrane codes-OB_RR.txt` are:
+
+| Source line | Command | Meaning |
+| --- | --- | --- |
+| 140-141 | `pinMode(command[2], command[3])` | LabVIEW supplies the pin number and mode |
+| 144-145 | `digitalWrite(command[2], command[3])` | LabVIEW supplies the digital output pin and level |
+| 186-187 | `analogRead(command[2])` | LabVIEW supplies the analog input channel |
+| 198-199 | `analogWrite(command[2], command[3])` | LabVIEW supplies the PWM output pin and duty value |
+
+The base sketch's custom setup and loop sections are empty. The D3 references
+in the bundled AFMotor library describe motor-shield support and do not prove
+that the membrane rig used that library to control its pump.
+
+Taken together, the notebook's orange-wire-to-D3 entry and the front panel's
+`Duty Cycle (0-255)` indicator suggest a PWM speed-command path. This is an
+inference, not a recovered LabVIEW assignment. Neither the bridge code nor the
+front-panel photos show a PWM filter, amplifier or 0-10 V converter. They also
+do not establish the pump's configured electrical input mode or a safe direct
+ESP32 connection.
+
+The recorded sensor connections are pressure white to A10 and flow white to
+A12; the pump's white feedback wire is recorded at A8 or A9. Those assignments
+come from the notebook, not fixed constants in the generic bridge. The
+pressure-transducer specification supplied separately states 0-5 V output.
+Analog signal conditioning must therefore be retained or designed for the
+ESP32/ADC input range, rather than copying Arduino terminals directly.
+
+To resolve the remaining pump wiring, inspect the exact pump drive model and
+trace the old orange D3 wire for interface components. Recovering the native
+LabVIEW VIs would establish the host-selected pins and processing. The red
+start/stop connection remains unresolved by these source files.
