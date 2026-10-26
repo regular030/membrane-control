@@ -45,6 +45,20 @@ If **Start run** is unavailable, read the reason and suggested next action on
 Dashboard. A recipe-review checkbox cannot make an unverified controller ready.
 Use **Start here** or the **Help** tab if you need the first-use instructions.
 
+## Read the live runtime table
+
+During a sequence, **Live readings** beneath the graphs adds one row whenever a
+sample is recorded, using the sequence's **Record every** interval. It includes
+the recorded timestamp, runtime, cycle/step, desired and measured flow, flow
+estimated from the scale, pressure, flux, mass, pump command/feedback, all seven
+commanded valve states, operating mode and device/fault status.
+
+Missing measurements display **Unavailable**. Valve and pump commands do not
+confirm actual movement. The table shows the latest 1,000 rows to keep memory
+bounded during long operation; complete samples remain in the local run database
+and CSV export. Turn off **Follow latest** to inspect earlier rows. A new run
+starts a new table; the completed run's rows remain visible until then.
+
 ## Review or change a sequence
 
 Open **Sequence editor**. Each row is one step with a duration, valve settings

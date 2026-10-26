@@ -86,6 +86,29 @@ QScrollBar::left-arrow:horizontal, QScrollBar::right-arrow:horizontal { width: 5
 """
 
 
+LIVE_TABLE_COLUMNS = (
+    ("time_utc", "Time (UTC)", 245), ("elapsed_s", "Run time (s)", 125),
+    ("cycle", "Cycle", 85), ("step_name", "Step name", 190),
+    ("desired_flow_ml_min", "Desired flow (mL/min)", 180),
+    ("flow_ml_min", "Flow sensor (mL/min)", 175),
+    ("pressure_psi", "Pressure (psi)", 135), ("flux_lmh", "Flux (L/m²/h)", 140),
+    ("mass_g", "Mass (g)", 115), ("pump_percent", "Pump command (%)", 175),
+    ("pump_feedback_v", "Pump feedback (V)", 175),
+    ("balance_flow_ml_min", "Balance flow (mL/min)", 185),
+    *((f"valve_{index}", f"V{index + 1} command", 130) for index in range(7)),
+    ("_sample_sequence", "Sample seq.", 105), ("run_id", "Run ID", 85),
+    ("state", "State", 115), ("step_index", "Step index", 110),
+    ("controller_status", "Controller status", 200), ("balance_status", "Scale status", 190),
+    ("fault", "Fault", 220), ("simulation", "Mode", 125),
+)
+LIVE_NUMERIC_FIELDS = frozenset({
+    "_sample_sequence", "run_id", "elapsed_s", "cycle", "step_index",
+    "desired_flow_ml_min", "flow_ml_min", "balance_flow_ml_min", "pressure_psi",
+    "flux_lmh", "mass_g", "pump_percent", "pump_feedback_v",
+})
+LIVE_TABLE_MAX_ROWS = 1000
+
+
 def _label(text: str, name: str = "", wrap: bool = False) -> QLabel:
     widget = QLabel(text)
     if name:
@@ -149,6 +172,8 @@ class MainWindow(QMainWindow):
         self._editor_recipe: Recipe | None = None
         self._history: list[dict] = []
         self._last_run_id = None
+        self._live_sample_sequence = 0
+        self._live_table_run_id = None
         self._next_step_index = 4
         self.setWindowTitle("Membrane Control")
         self.resize(1360, 940)
@@ -332,6 +357,39 @@ class MainWindow(QMainWindow):
             grid.addWidget(plot, index // 2, index % 2)
         splitter.addWidget(charts)
 
+        readings = QGroupBox("Live readings")
+        readings_layout = QVBoxLayout(readings)
+        readings_row = QHBoxLayout()
+        self.live_row_count = _label("0 rows", "muted")
+        readings_row.addWidget(self.live_row_count)
+        readings_row.addStretch()
+        self.follow_latest_check = QCheckBox("Follow latest")
+        self.follow_latest_check.setChecked(True)
+        self.follow_latest_check.setToolTip("Uncheck to inspect earlier rows without scrolling to each new sample.")
+        self.follow_latest_check.toggled.connect(self._follow_live_readings)
+        readings_row.addWidget(self.follow_latest_check)
+        readings_layout.addLayout(readings_row)
+        readings_layout.addWidget(_label("Latest 1,000 recorded samples. Full runs remain in Run history. Valve and pump entries are commands.", "muted", True))
+        self.live_table = QTableWidget(0, len(LIVE_TABLE_COLUMNS))
+        self.live_table.setAccessibleName("Live recorded readings")
+        self.live_table.setMinimumHeight(150)
+        self.live_table.setHorizontalHeaderLabels([title for _key, title, _width in LIVE_TABLE_COLUMNS])
+        self.live_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.live_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.live_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.live_table.setAlternatingRowColors(True)
+        self.live_table.setWordWrap(False)
+        self.live_table.setSortingEnabled(False)
+        self.live_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
+        self.live_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.live_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.live_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        for column, (key, _title, width) in enumerate(LIVE_TABLE_COLUMNS):
+            self.live_table.setColumnWidth(column, width)
+            self.live_table.horizontalHeaderItem(column).setData(Qt.ItemDataRole.UserRole, key)
+        readings_layout.addWidget(self.live_table)
+        splitter.addWidget(readings)
+
         lower = QWidget()
         low_layout = QHBoxLayout(lower)
         low_layout.setContentsMargins(0, 0, 0, 0)
@@ -391,7 +449,8 @@ class MainWindow(QMainWindow):
         low_layout.addWidget(log_group, 2)
         splitter.addWidget(lower)
         splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(2, 2)
         self.dashboard_scroll = QScrollArea()
         self.dashboard_scroll.setWidgetResizable(True)
         self.dashboard_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1129,6 +1188,84 @@ class MainWindow(QMainWindow):
             curve.setData([], [])
         self._plot_start = time.monotonic()
 
+    @staticmethod
+    def _live_reading_text(sample, key):
+        if key.startswith("valve_"):
+            valves = sample.get("valves")
+            index = int(key.split("_")[1])
+            value = valves[index] if isinstance(valves, (list, tuple)) and index < len(valves) else None
+            return "ON" if value is True else "OFF" if value is False else "Unavailable"
+        value = sample.get(key)
+        if key == "simulation":
+            return "Simulation" if value is True else "Hardware" if value is False else "Unavailable"
+        if key == "fault" and "fault" in sample and value is None:
+            return "No fault"
+        if value is None:
+            return "Unavailable"
+        if key in LIVE_NUMERIC_FIELDS:
+            if type(value) not in (int, float) or not math.isfinite(value):
+                return "Unavailable"
+            return str(value) if type(value) is int else f"{value:.6g}"
+        return str(value)
+
+    def _follow_live_readings(self, follow):
+        if follow:
+            self.live_table.scrollToBottom()
+
+    def _update_live_readings(self, snapshot):
+        """Append only committed recording events; snapshots alone create no row."""
+        active_run_id = snapshot.get("run_id")
+        table = self.live_table
+        previous_scroll = table.verticalScrollBar().value()
+        removed_rows = 0
+        changed = False
+        if active_run_id is not None and active_run_id != self._live_table_run_id:
+            table.setRowCount(0)
+            self._live_table_run_id = active_run_id
+            previous_scroll = 0
+            changed = True
+        samples = self.controller.recorded_samples_after(self._live_sample_sequence)
+        if not samples:
+            if changed:
+                self.live_row_count.setText("0 rows")
+            return
+        table.setUpdatesEnabled(False)
+        try:
+            for sample in samples:
+                sequence = sample.get("_sample_sequence")
+                if type(sequence) is not int or sequence <= self._live_sample_sequence:
+                    continue
+                self._live_sample_sequence = sequence
+                run_id = sample.get("run_id")
+                if active_run_id is not None and run_id != active_run_id:
+                    continue  # Do not redisplay a previous run while a new one awaits its first sample.
+                if run_id != self._live_table_run_id:
+                    table.setRowCount(0)
+                    self._live_table_run_id = run_id
+                    previous_scroll = removed_rows = 0
+                if table.rowCount() >= LIVE_TABLE_MAX_ROWS:
+                    table.removeRow(0)
+                    removed_rows += 1
+                row = table.rowCount()
+                table.insertRow(row)
+                for column, (key, _title, _width) in enumerate(LIVE_TABLE_COLUMNS):
+                    text = self._live_reading_text(sample, key)
+                    item = QTableWidgetItem(text)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    item.setToolTip(text)
+                    if column == 0:
+                        item.setData(Qt.ItemDataRole.UserRole, sequence)
+                    table.setItem(row, column, item)
+                changed = True
+        finally:
+            table.setUpdatesEnabled(True)
+        if changed:
+            self.live_row_count.setText(f"{table.rowCount():,} rows")
+            if self.follow_latest_check.isChecked():
+                table.scrollToBottom()
+            else:
+                table.verticalScrollBar().setValue(max(0, previous_scroll - removed_rows))
+
     def _on_tick(self):
         if self._shutdown_started:
             return
@@ -1260,6 +1397,7 @@ class MainWindow(QMainWindow):
             if self._last_run_id is not None and current_run_id is None:
                 self._refresh_history()
             self._last_run_id = current_run_id
+            self._update_live_readings(snap)
             self.export_current_button.setEnabled(not operating and (bool(current_run_id) or bool(self._history)))
             self.history_export.setEnabled(not operating and bool(self._history))
             self.export_current_button.setToolTip("Stop the run before exporting. Readings are saved automatically." if operating

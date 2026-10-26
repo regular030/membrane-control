@@ -57,6 +57,8 @@ class AppController:
         self.run_started = None
         self.last_record = -100.0
         self.run_id = None
+        self._recorded_samples = deque(maxlen=1000)
+        self._sample_sequence = 0
         self.closed = False
         self.snapshot = {"state": "idle", "simulation": True, "controller_connected": False,
             "controller_status": "Not connected", "balance_connected": False,
@@ -339,11 +341,22 @@ class AppController:
         self._finish_run("fault")
         self._log(reason)
 
+    def recorded_samples_after(self, sequence):
+        """Recent committed readings, without querying SQLite on the UI timer."""
+        return [copy.deepcopy(sample) for sample in self._recorded_samples
+                if sample["_sample_sequence"] > sequence]
+
+    def _record_sample(self):
+        record = self.store.sample(self.run_id, self.snapshot)
+        self._sample_sequence += 1
+        record["_sample_sequence"] = self._sample_sequence
+        self._recorded_samples.append(record)
+
     def _finish_run(self, status):
         if self.run_id is not None:
             if self.run_started is not None:
                 self.snapshot["elapsed_s"] = max(0.0, self.clock() - self.run_started)
-            self.store.sample(self.run_id, self.snapshot)
+            self._record_sample()
             self.store.finish(self.run_id, status)
             self._log(f"Run {self.run_id}: {status}")
         self.run_id = None
@@ -617,7 +630,7 @@ class AppController:
         if self.run_id is not None:
             interval = self.recipe.sample_interval_s
             if now-self.last_record >= interval:
-                self.store.sample(self.run_id, self.snapshot)
+                self._record_sample()
                 self.last_record = now
 
     def _accept_mass(self, now, mass):

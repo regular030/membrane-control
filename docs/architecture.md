@@ -75,6 +75,11 @@ comparison target. The controller snapshots it for charts and recording, but
 defaults it to zero. Recording and CSV export preserve target and measured flow
 as separate fields without inferring a pump command or manufacturing a reading.
 
+After a successful sample write, the controller exposes a detached, sequenced
+record for the live runtime table. Its in-memory queue and the UI table each
+retain at most 1,000 records. The UI consumes new records rather than inventing
+rows on every refresh, and the complete run remains in SQLite for export.
+
 The supplied source archive did not contain native LabVIEW VIs. CIP, CWF and
 Fouling are editable demonstration recipes, not recovered chemical procedures.
 Translate Raj's approved step table into recipes before commissioning the rig.

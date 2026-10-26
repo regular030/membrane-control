@@ -1,15 +1,18 @@
 # Connect the Adam Nimbus balance
 
 The latest photos show the existing **USB-to-RS232 adapter connected to the
-balance's DB9 RS-232 port**. Reuse that connection first. It is independent of
-the ESP32's USB-to-UART connection; select a different COM port for each device.
+balance's DB9 RS-232 port**. The lab PC currently exposes only the ESP32 port
+while that adapter is connected. Use the balance's USB-B I/O connection with
+the matching Nimbus driver as the next diagnostic path, or identify the green
+adapter's own chipset/driver. Either path is independent of the ESP32's
+USB-to-UART connection; select a different COM port for each device.
 
 ## Choose one connection path
 
 | Path | Cable and driver |
 | --- | --- |
-| Existing, preferred | Balance DB9 RS-232 → existing green USB-to-RS232 adapter → computer USB. Use the driver for the adapter's actual chipset if Windows needs one. Its chipset cannot be identified from the photos alone. |
-| Alternative | Balance USB-B **I/O** → USB data cable → computer USB. Use [Adam's Nimbus driver](https://adamequipment.com/support/software-downloads.html) if required. |
+| Existing adapter, once detected | Balance DB9 RS-232 → existing green USB-to-RS232 adapter → computer USB. Use the driver for the adapter's actual chipset if Windows needs one. Its chipset cannot be identified from the photos alone. The Nimbus native-USB driver does not establish this adapter's driver. |
+| Next diagnostic path | Balance USB-B **I/O** → USB data cable → computer USB. Use [Adam's Nimbus driver](https://adamequipment.com/support/software-downloads.html) if required. |
 
 Use one path at a time. The balance's USB-A **Display** socket is for the remote
 display, not the computer. The balance retains its own power supply. The

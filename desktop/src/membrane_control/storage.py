@@ -45,10 +45,14 @@ class RunStore:
         fields = {k: snapshot.get(k) for k in (
             "elapsed_s", "simulation", "state", "step_index", "cycle", "pressure_psi",
             "flow_ml_min", "desired_flow_ml_min", "balance_flow_ml_min", "flux_lmh", "mass_g", "pump_percent", "pump_feedback_v",
-            "valves", "fault", "controller_status", "balance_status")}
+            "valves", "fault", "controller_status", "balance_status", "step_name")}
+        payload = json.dumps(fields, allow_nan=False)
+        timestamp = utc_now()
         with self.connection:
             self.connection.execute("INSERT INTO samples(run_id,time_utc,payload_json) VALUES(?,?,?)",
-                                    (run_id, utc_now(), json.dumps(fields, allow_nan=False)))
+                                    (run_id, timestamp, payload))
+        # Return only committed data, detached from the caller's mutable snapshot.
+        return {"run_id": run_id, "time_utc": timestamp, **json.loads(payload)}
 
     def finish(self, run_id, status):
         with self.connection:
@@ -77,7 +81,7 @@ class RunStore:
         path = Path(path)
         fields = ["time_utc", "elapsed_s", "simulation", "state", "step_index", "cycle", "pressure_psi",
                   "flow_ml_min", "desired_flow_ml_min", "balance_flow_ml_min", "flux_lmh", "mass_g", "pump_percent", "pump_feedback_v", "valves", "fault",
-                  "controller_status", "balance_status"]
+                  "controller_status", "balance_status", "step_name"]
         with path.open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()

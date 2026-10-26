@@ -41,6 +41,11 @@ measured flow. It is a comparison target; pump commands remain percentages until
 the pump and flow-control calibration are established. See the
 [flow-target guide](docs/operator-guide.md#compare-desired-and-measured-flow).
 
+The Dashboard's **Live readings** table shows recorded runtime values beneath
+the graphs, including time, cycle/step, flow target and measurements, pressure,
+flux, mass, pump values and all seven commanded valve states. Complete run
+records stay available for CSV export.
+
 ## Before using the real rig
 
 This is a prototype. The real wiring, sensor calibration and valve/pump

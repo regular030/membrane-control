@@ -1,5 +1,35 @@
 # Software validation
 
+## Live runtime table, version 0.1.11
+
+Checked locally on Windows 11 x64, 26 October 2026:
+
+- All 338 desktop/packaging tests passed with native process exit code 0.
+  New checks cover exact database/sample timestamps, detached records, sample
+  intervals, final samples, failed writes producing no display event, bounded
+  memory and compatibility of old CSV records.
+- UI checks cover recorded rows only, unavailable measurements, all seven
+  commanded valve states, the 1,000-row limit, Follow latest and retained scroll
+  position, new-run clearing, completed-run retention and final samples.
+- A simulated run was visually inspected at 1360 x 940 with seven live rows.
+  Time, runtime, cycle/step and the main measurements are placed first; other
+  measurements and statuses remain accessible through horizontal scrolling.
+  Existing compact-window, scrolling and zoom checks passed.
+- The packaged application launched, produced its screenshot and exited cleanly.
+  The setup EXE authenticated its embedded payload and read-only plan without
+  installation, dependency downloads or serial-port access.
+- Firmware logic is unchanged from 0.1.10. Its compiled images were reused only
+  after the source hashes matched saved PlatformIO build metadata; merged
+  images were verified against component bytes. The prior 33 native firmware
+  tests and all three target builds passed as recorded below.
+- Both workflows pass local actionlint. Hosted Actions remain blocked by the
+  account billing lock; release files were built and checked locally.
+
+No hardware was operated or flashed. The scale is still connected through an
+unidentified green RS232 adapter, and the lab PC has not exposed its COM port.
+The Nimbus native-USB driver applies to the balance's USB-B I/O path instead.
+Wiring, calibration and complete physical rig commissioning remain outstanding.
+
 ## Desired flow and complete firmware bundle, version 0.1.10
 
 Checked locally on Windows 11 x64, 26 October 2026:
