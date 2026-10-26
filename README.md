@@ -36,6 +36,11 @@ to enlarge it, and **Ctrl + 0** to reset to 100%.
 | Run history | Find recorded runs and export their measurements |
 | Help | First-use instructions and an explanation of the operating modes |
 
+**Desired flow (mL/min)** saves a target with your sequence and plots it beside
+measured flow. It is a comparison target; pump commands remain percentages until
+the pump and flow-control calibration are established. See the
+[flow-target guide](docs/operator-guide.md#compare-desired-and-measured-flow).
+
 ## Before using the real rig
 
 This is a prototype. The real wiring, sensor calibration and valve/pump
@@ -61,6 +66,7 @@ See [automatic GitHub builds](docs/development.md#automatic-github-builds).
 
 - [Development](docs/development.md): run the source, tests and Windows build.
 - [ESP32 setup](firmware/README.md): USB detection, firmware upload and hardware verification.
+- [Full firmware release](docs/full-firmware.md): controller source, compiled images and the three upload choices.
 - [Real relay board test](docs/relay-board-test.md): test the unloaded relay board and record its channel mapping.
 - [Architecture](docs/architecture.md) and [protocol](protocol/v1.md): how the code fits together.
 - [Hardware](hardware/README.md), [parts](hardware/procurement.md) and [pin plan](hardware/relay-board-pin-plan.md).

@@ -201,6 +201,7 @@ function Get-SetupShortcutSpecs {
     foreach ($item in @(@{Name='Membrane Control'; Script=$null; Firmware=$null},
         @{Name='Flash ESP32 dry run'; Script='flash_dry_run.ps1'; Firmware='esp32-dry-run'},
         @{Name='Flash relay board test'; Script='flash_dry_run.ps1'; Firmware='esp32-relay-bench'},
+        @{Name='Flash full controller (setup required)'; Script='flash_dry_run.ps1'; Firmware='esp32-physical'},
         @{Name='USB driver help'; Script='install_cp210x.ps1'; Firmware=$null})) {
         $scriptPath = if ($item.Script) { Join-Path $Destination ('packaging/' + $item.Script) } else { $null }
         $arguments = ''
@@ -245,9 +246,10 @@ function Invoke-MembraneSetup {
             app=(Join-Path $checked.InstallRoot 'MembraneControl.exe'); python=$checked.Manifest.python;
             pythonVersion=$checked.Manifest.python.version;
             files=$checked.Files.Count; flashes_board=$false; installs_drivers=$false;
-            firmware_targets=@('esp32-dry-run', 'esp32-relay-bench');
+            firmware_targets=@('esp32-dry-run', 'esp32-relay-bench', 'esp32-physical');
+            full_controller=[PSCustomObject]@{environment='esp32-physical';commissioning_required=$true;shipped_profile_verified=$false};
             steps=@('Verify payload hashes', 'Copy application and firmware', 'Prepare dedicated Python and virtual environment',
-                'Install PlatformIO 6.2.0 and pyserial 3.5', 'Build dry-run and relay-board test firmware without uploading', 'Create shortcuts') } | ConvertTo-Json -Depth 5
+                'Install PlatformIO 6.2.0 and pyserial 3.5', 'Build dry-run, relay-board test and locked full controller firmware without uploading', 'Create shortcuts') } | ConvertTo-Json -Depth 5
         return
     }
     New-Item -ItemType Directory -Path $checked.InstallRoot -Force | Out-Null
@@ -276,10 +278,11 @@ function Invoke-MembraneSetup {
             'install', '--index-url', 'https://pypi.org/simple', '--no-input', 'platformio==6.2.0', 'pyserial==3.5')
         $env:PLATFORMIO_CORE_DIR = Join-Path $checked.InstallRoot 'tools/platformio'
         Invoke-SetupCommand -FilePath $venvPython -ArgumentList @('-I', '-m', 'platformio', '--no-ansi', 'run', '-d',
-            (Join-Path $checked.InstallRoot 'firmware'), '-e', 'esp32-dry-run', '-e', 'esp32-relay-bench')
+            (Join-Path $checked.InstallRoot 'firmware'), '-e', 'esp32-dry-run', '-e', 'esp32-relay-bench', '-e', 'esp32-physical')
         New-SetupShortcuts -Destination $checked.InstallRoot
         Copy-Item -LiteralPath (Join-Path $checked.SourceRoot 'setup-manifest.json') -Destination (Join-Path $checked.InstallRoot 'setup-manifest.json') -Force
         Write-SetupLog 'Setup complete. Open Membrane Control to use the app. Flash ESP32 dry run is the no-output test; Flash relay board test operates only unloaded relays. Upload separately when the board and COM port are ready.'
+        Write-SetupLog 'Flash full controller (setup required) installs the full program with an unverified hardware profile. Physical outputs stay locked until a reviewed profile and rig commissioning are complete.'
         Write-SetupLog 'If Windows shows no controller COM port, use the optional USB driver help shortcut for the official driver instructions.'
     } catch {
         Write-SetupLog ("SETUP FAILED: " + $_.Exception.Message)

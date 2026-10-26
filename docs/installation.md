@@ -5,7 +5,7 @@ for the ready-to-run app.
 
 ## Download
 
-For a new Windows x64 PC, download **MembraneControl-Setup-0.1.9-windows-x64.exe**
+For a new Windows x64 PC, download **MembraneControl-Setup-0.1.10-windows-x64.exe**
 from the release and double-click it. Internet is required to install its own
 Python runtime, PlatformIO and ESP32 compiler/framework. It also installs the
 app and creates shortcuts. See the [new-PC setup guide](https://github.com/regular030/membrane-control/blob/main/docs/setup-new-pc.md).
@@ -17,7 +17,7 @@ Python runtime and application libraries it needs.
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    to download the application and setup files.
 2. Open the release given to you by the maintainer. Under **Assets**, download
-   `MembraneControl-0.1.9-windows-x64.exe` or the matching portable app ZIP.
+   `MembraneControl-0.1.10-windows-x64.exe` or the matching portable app ZIP.
    **Source code (zip)** is for developers and does not contain the EXE.
 3. If you chose the portable ZIP, right-click it and choose **Extract All**.
 4. Open the EXE. Leave **Simulation mode** checked and follow

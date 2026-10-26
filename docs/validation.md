@@ -1,5 +1,38 @@
 # Software validation
 
+## Desired flow and complete firmware bundle, version 0.1.10
+
+Checked locally on Windows 11 x64, 26 October 2026:
+
+- All 320 desktop/packaging tests passed. Targets persist through preset
+  save/import, are independently graphed and exported, and cannot change during
+  active operations. Firmware commands omit the comparison target. Old recipes
+  and recorded samples remain readable without fabricating measured flow.
+- Compact-window checks cover unclipped valve and target controls, scrolling
+  and zoom. Port-list tests cover adapters plugged in after startup, preserving
+  selections and leaving genuinely missing Windows devices absent.
+- An initial combined Qt test process passed its assertions but failed during
+  native finalization. The test harness now owns one QApplication per session
+  and disposes plot widgets, scenes and windows through normal Qt deferred
+  deletion while Qt is alive. It does not suppress process exits or alter app
+  shutdown. Both the normal source app and packaged app exited cleanly.
+- All 33 native firmware safety tests passed and all three ESP32 targets built.
+  PlatformIO metadata supplied component offsets of 0x1000, 0x8000, 0xe000 and
+  0x10000. Each merged factory image at 0x0 matched its component bytes exactly.
+- The firmware ZIP's source/config/helper/test files, per-target manifests,
+  component/factory images and checksums were verified. All target manifests
+  report hardware_verified=false; the physical factory profile remains locked.
+- The regular EXE produced a 1360 x 940 PNG and exited cleanly. The real setup
+  EXE authenticated its payload and installation plan without installing tools
+  or opening USB. Its payload and the portable ZIP include the firmware bundle.
+- Both workflows pass local actionlint. Hosted Actions remain blocked by the
+  account billing lock; published binaries were built and checked locally.
+
+No physical board, relay, pump or sensor was operated in these checks. The
+scale's adapter has not been identified: the lab PC currently exposes only the
+ESP32 port. Interface wiring, calibration, a clean-PC installation and complete
+rig commissioning still require on-site verification.
+
 ## Serial shutdown and relay startup, version 0.1.9
 
 Checked locally on Windows 11 x64, 26 October 2026:

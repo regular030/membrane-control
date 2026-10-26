@@ -32,6 +32,23 @@ ESP32's 3.3 V TTL UART adapter is not a substitute for an RS-232 interface.
    the **Balance** section, then click **Connect**. Close other programs using
    that port first.
 
+## If the balance is absent from the port menu
+
+Opening **Connections and settings** refreshes the port lists. You can also
+click **Refresh serial ports** after reconnecting the cable. The scale may be
+listed as **USB Serial Port** or by its adapter chipset name rather than Adam
+or Nimbus. Refreshing does not connect either device automatically.
+
+If Device Manager shows only the ESP32's COM port, the scale's connection is not
+yet available to the app. Check the green USB-to-RS232 adapter's USB connection
+and whether it appears under **Other devices** with a warning. Open its
+**Properties > Details > Hardware Ids** and record the `USB\VID_...&PID_...`
+identifier to select the correct adapter driver. Try another computer USB port
+and compare Device Manager before and after unplugging this adapter.
+
+Do not install a guessed CP210x driver merely because that is the ESP32's
+adapter. The app cannot create a COM port for hardware Windows has not exposed.
+
 ## Confirm readings
 
 The app waits for incoming weights; it does not configure the balance or send

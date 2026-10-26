@@ -69,6 +69,12 @@ closed-loop flow controller. Pump voltage feedback, actual flow-meter readings
 and balance-derived flow are different measurements. Solenoid valves are on/off;
 a percentage opening is not supported by the existing valves.
 
+Recipes optionally store `desired_flow_ml_min` as a nonnegative desktop
+comparison target. The controller snapshots it for charts and recording, but
+`Recipe.to_wire_dict()` omits it from firmware commands. Importing old recipes
+defaults it to zero. Recording and CSV export preserve target and measured flow
+as separate fields without inferring a pump command or manufacturing a reading.
+
 The supplied source archive did not contain native LabVIEW VIs. CIP, CWF and
 Fouling are editable demonstration recipes, not recovered chemical procedures.
 Translate Raj's approved step table into recipes before commissioning the rig.

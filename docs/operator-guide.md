@@ -61,6 +61,23 @@ For a real experiment, use only the lab's approved sequence and measurement
 settings. Membrane area affects flux; liquid density affects flow calculated
 from the scale. Do not change these values just to make a graph look right.
 
+## Compare desired and measured flow
+
+Enter **Desired flow (mL/min)** on Dashboard and click **Apply target**. This
+changes only the comparison target, not the pump setting or other sequence
+edits. You can also set it in **Sequence editor**, then use **Apply sequence**.
+The value is saved with custom presets and restored when you import one.
+
+The flow graph shows **Measured flow** and a separate dashed **Desired flow**
+line. Recorded samples and exported CSV files include both values; the target
+is not substituted for a missing measurement. Older presets start with a target
+of 0 mL/min, and older run samples export a blank target column.
+
+This version does not automatically adjust the pump to reach that flow. Pump
+output remains the configured percentage in each step or manual command until
+the pump interface and flow-control calibration are verified. Stop the current
+operation before changing the target.
+
 ## Try manual controls
 
 With no sequence running, a valve button sends that valve command immediately.

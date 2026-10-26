@@ -20,6 +20,7 @@ def fake_source(tmp_path):
         "hardware/balance-usb-setup.md", "firmware/platformio.ini", "firmware/src/main.cpp",
         "docs/relay-board-test.md", "protocol/relay-bench.md",
         "hardware/pump-interface.md",
+        "docs/full-firmware.md",
     ]
     for relative in required:
         path = tmp_path / relative
@@ -56,3 +57,22 @@ def test_incomplete_setup_fails_before_creating_bundle(tmp_path):
     with pytest.raises(RuntimeError, match="setup_windows.ps1"):
         builder.create_payload(tmp_path, executable, "1.2.3", archive_path)
     assert not archive_path.exists()
+
+
+def test_setup_authenticates_full_firmware_archive(tmp_path):
+    executable = fake_source(tmp_path)
+    firmware = tmp_path / "MembraneControl-Firmware-1.2.3-esp32.zip"
+    firmware.write_bytes(b"compiled firmware archive fixture")
+    output = tmp_path / "payload.zip"
+    builder.create_payload(tmp_path, executable, "1.2.3", output, firmware)
+    relative = "firmware-release/" + firmware.name
+    with zipfile.ZipFile(output) as archive:
+        manifest = json.loads(archive.read("setup-manifest.json"))
+        assert archive.read(relative) == firmware.read_bytes()
+        assert manifest["files"][relative] == hashlib.sha256(firmware.read_bytes()).hexdigest()
+
+
+def test_setup_does_not_silently_omit_missing_firmware_archive(tmp_path):
+    executable = fake_source(tmp_path)
+    with pytest.raises(RuntimeError, match="firmware-release"):
+        builder.create_payload(tmp_path, executable, "1.2.3", tmp_path / "payload.zip", tmp_path / "missing.zip")

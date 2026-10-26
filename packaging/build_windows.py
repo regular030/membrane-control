@@ -3,8 +3,9 @@
 Run on Windows after installing the project's development dependencies:
     python packaging/build_windows.py
 
-No dependencies or device drivers are downloaded by this script. PyInstaller
-must already be installed in the active Python environment.
+PyInstaller and PlatformIO must already be installed in the active Python
+environment. Firmware builds can download their pinned toolchain dependencies.
+No device driver is installed and no serial port is opened by this script.
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ def write_checksums(paths: list[Path], destination: Path) -> None:
     destination.write_text("".join(lines), encoding="utf-8")
 
 
-def build(version: str, clean: bool = True) -> Path:
+def build(version: str, clean: bool = True, firmware_archive: Path | None = None) -> Path:
     if sys.platform != "win32" or platform.machine().lower() not in {"amd64", "x86_64"}:
         raise RuntimeError("Build this Windows x64 executable on Windows x64 with 64-bit Python.")
     if sys.maxsize <= 2**32:
@@ -147,8 +148,11 @@ def build(version: str, clean: bool = True) -> Path:
             (ROOT / "docs" / "START-HERE.md", "START-HERE.md"),
             (ROOT / "docs" / "installation.md", "installation.md"),
             (ROOT / "docs" / "operator-guide.md", "operator-guide.md"),
+            (ROOT / "docs" / "full-firmware.md", "full-firmware.md"),
         ):
             archive.write(source, name)
+        if firmware_archive is not None:
+            archive.write(firmware_archive, firmware_archive.name)
     write_checksums([released_exe, archive_path, manifest_path], release_dir / "SHA256SUMS.txt")
     print(f"Release executable: {released_exe}")
     print(f"Portable ZIP: {archive_path}")
@@ -163,9 +167,11 @@ def main() -> int:
     args = parser.parse_args()
     try:
         version = validate_version(args.version or package_version())
-        executable = build(version, clean=not args.incremental)
+        from build_firmware import build_firmware
+        firmware_archive = build_firmware(version)
+        executable = build(version, clean=not args.incremental, firmware_archive=firmware_archive)
         from build_setup import build_setup
-        build_setup(version, executable)
+        build_setup(version, executable, firmware_archive=firmware_archive)
     except (ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"Build failed: {exc}", file=sys.stderr)
         return 1

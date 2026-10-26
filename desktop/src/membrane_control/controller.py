@@ -65,6 +65,7 @@ class AppController:
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
             "elapsed_s": 0.0, "run_id": None, "log": [], "recipe_name": self.recipe.name,
+            "desired_flow_ml_min": self.recipe.desired_flow_ml_min,
             "step_name": "Ready", "start_pending": False, "manual_pending": False, "stop_pending": False}
         self.set_simulation(True)
 
@@ -114,7 +115,16 @@ class AppController:
         recipe.validate()
         self.recipe = copy.deepcopy(recipe)
         self.snapshot["recipe_name"] = recipe.name
+        self.snapshot["desired_flow_ml_min"] = self.recipe.desired_flow_ml_min
         self._log(f"Loaded {recipe.name}")
+
+    def set_desired_flow(self, value):
+        if self._active():
+            raise ValueError("Stop before changing desired flow")
+        target = number(value, "Desired flow", 0, 1_000_000)
+        self.recipe.desired_flow_ml_min = target
+        self.snapshot["desired_flow_ml_min"] = target
+        self._log(f"Desired flow set to {target:g} mL/min")
 
     def save_recipe(self, path, recipe):
         write_recipe(path, recipe)
@@ -239,7 +249,7 @@ class AppController:
         self.run_started = None
         self.snapshot["start_pending"] = True
         try:
-            self._request("load_recipe", recipe=self.recipe.to_dict())
+            self._request("load_recipe", recipe=self.recipe.to_wire_dict())
         except Exception:
             self.start_phase = None
             self.snapshot["start_pending"] = False

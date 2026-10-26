@@ -2,7 +2,7 @@
 param(
     [string]$InstallRoot = '',
     [string]$Port = '',
-    [ValidateSet('esp32-dry-run', 'esp32-relay-bench')]
+    [ValidateSet('esp32-dry-run', 'esp32-relay-bench', 'esp32-physical')]
     [string]$Firmware = 'esp32-dry-run',
     [switch]$Plan,
     [switch]$DefinitionsOnly
@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 function Get-DryRunFlashPlan {
     param([string]$Root, [string]$ComPort,
-        [ValidateSet('esp32-dry-run', 'esp32-relay-bench')][string]$Firmware = 'esp32-dry-run')
+        [ValidateSet('esp32-dry-run', 'esp32-relay-bench', 'esp32-physical')][string]$Firmware = 'esp32-dry-run')
     # ValidateSet is case-insensitive in Windows PowerShell 5.1; PlatformIO
     # environment names must still receive their canonical spelling.
     $Firmware = $Firmware.ToLowerInvariant()
@@ -27,12 +27,14 @@ function Get-DryRunFlashPlan {
     }
     return [PSCustomObject]@{ python=$python; core=(Join-Path $destination 'tools/platformio'); port=$name;
         arguments=@('-I', '-m', 'platformio', '--no-ansi', 'run', '-d', $firmwareRoot, '-e', $Firmware, '-t', 'upload', '--upload-port', $name);
-        environment=$Firmware; selected_firmware=$Firmware; replaces_existing_firmware=$true }
+        environment=$Firmware; selected_firmware=$Firmware; replaces_existing_firmware=$true;
+        commissioning_required=($Firmware -eq 'esp32-physical');
+        physical_outputs_locked_by_default=($Firmware -eq 'esp32-physical') }
 }
 
 function Invoke-DryRunFlash {
     param([string]$Root, [string]$ComPort, [switch]$PlanOnly,
-        [ValidateSet('esp32-dry-run', 'esp32-relay-bench')][string]$Firmware = 'esp32-dry-run')
+        [ValidateSet('esp32-dry-run', 'esp32-relay-bench', 'esp32-physical')][string]$Firmware = 'esp32-dry-run')
     if ($PlanOnly) {
         Get-DryRunFlashPlan -Root $Root -ComPort $ComPort -Firmware $Firmware | ConvertTo-Json -Depth 4
         return
@@ -41,6 +43,10 @@ function Invoke-DryRunFlash {
     if ($Firmware -eq 'esp32-relay-bench') {
         Write-Host 'RELAY BOARD TEST OPERATES REAL RELAYS. Disconnect every external wire from all relay COM, NO and NC contacts.' -ForegroundColor Yellow
         Write-Host 'Use only the standalone Srliya 16-channel relay board, not the Freenove camera board. Sensors and pump interfaces are not needed for this bench test.'
+    } elseif ($Firmware -eq 'esp32-physical') {
+        Write-Host 'FULL CONTROLLER (SETUP REQUIRED): the shipped hardware profile is unverified and physical outputs are locked.' -ForegroundColor Yellow
+        Write-Host 'This is the full controller program, not dry run. Do not run an experiment until the wiring, sensor interfaces and a compiled hardware profile have been reviewed and commissioned.'
+        Write-Host 'An app checkbox cannot unlock the shipped profile. Keep the rig loads disconnected for this initial upload.'
     } else {
         Write-Host 'Dry-run firmware uses generated measurements and does not operate relay GPIO.'
     }
@@ -71,6 +77,9 @@ function Invoke-DryRunFlash {
         if ($Firmware -eq 'esp32-relay-bench') {
             Write-Host 'Open Connections and settings, then Relay board test. Keep all relay contacts disconnected and follow the rest-pattern check before testing individual bits.'
             Write-Host 'This tool switches unloaded relays. It does not verify valve movement, commission the rig or enable an experiment.'
+        } elseif ($Firmware -eq 'esp32-physical') {
+            Write-Host 'Open the app, turn Simulation mode off and select this controller port. The shipped full controller must report an unverified installation with physical controls locked.'
+            Write-Host 'Finish the reviewed hardware profile, sensor calibration, pump interface and process-safe wiring before real operation. Uploading this target alone does not commission the rig.'
         } else {
             Write-Host 'Open the app, turn Simulation mode off and select this controller port. It must report Connected (dry run).'
             Write-Host 'This does not commission the relay wiring or enable physical equipment.'

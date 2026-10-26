@@ -91,6 +91,7 @@ class Recipe:
     sample_interval_s: float = 1.0
     require_balance: bool = False
     steps: list[Step] = field(default_factory=lambda: [Step()])
+    desired_flow_ml_min: float = 0.0
 
     def validate(self) -> None:
         self.name = text(self.name, "Recipe name")
@@ -102,6 +103,7 @@ class Recipe:
             raise ValueError("Approval and balance requirement must be booleans")
         integer(self.repeat, "Repeat count", 1, 100)
         self.sample_interval_s = number(self.sample_interval_s, "Recording interval", 0.1, 3600)
+        self.desired_flow_ml_min = number(self.desired_flow_ml_min, "Desired flow (mL/min)", 0, 1_000_000)
         if not isinstance(self.steps, list) or not 1 <= len(self.steps) <= MAX_STEPS:
             raise ValueError(f"A sequence needs 1-{MAX_STEPS} steps")
         for step in self.steps:
@@ -121,7 +123,14 @@ class Recipe:
                 "hardware_approved": self.hardware_approved, "repeat": self.repeat,
                 "sample_interval_s": self.sample_interval_s,
                 "require_balance": self.require_balance,
+                "desired_flow_ml_min": self.desired_flow_ml_min,
                 "steps": [s.to_dict() for s in self.steps]}
+
+    def to_wire_dict(self) -> dict:
+        """Keep the desktop comparison target out of firmware output commands."""
+        data = self.to_dict()
+        data.pop("desired_flow_ml_min")
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> Recipe:
@@ -133,6 +142,7 @@ class Recipe:
         result = cls(data.get("name"), data.get("description", ""),
                      data.get("hardware_approved", False), data.get("repeat", 1),
                      data.get("sample_interval_s", 1.0), data.get("require_balance", False),
-                     [Step.from_dict(s) for s in steps])
+                     [Step.from_dict(s) for s in steps],
+                     data.get("desired_flow_ml_min", 0.0))
         result.validate()
         return result

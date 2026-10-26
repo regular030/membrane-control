@@ -11,7 +11,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def payload_sources(root: Path, executable: Path) -> dict[str, Path]:
+def payload_sources(root: Path, executable: Path, firmware_archive: Path | None = None) -> dict[str, Path]:
     sources = {"app/MembraneControl.exe": executable}
     for relative in (
         "packaging/setup_windows.ps1", "packaging/flash_dry_run.ps1",
@@ -20,6 +20,7 @@ def payload_sources(root: Path, executable: Path) -> dict[str, Path]:
         "docs/START-HERE.md", "docs/operator-guide.md", "hardware/balance-usb-setup.md",
         "docs/relay-board-test.md", "protocol/relay-bench.md",
         "hardware/pump-interface.md",
+        "docs/full-firmware.md",
     ):
         sources[relative] = root / relative
     for source in sorted((root / "firmware").rglob("*")):
@@ -29,14 +30,17 @@ def payload_sources(root: Path, executable: Path) -> dict[str, Path]:
         if source.suffix not in {".h", ".hpp", ".cpp", ".c", ".py", ".ini", ".md"}:
             continue
         sources[relative.as_posix()] = source
+    if firmware_archive is not None:
+        sources["firmware-release/" + firmware_archive.name] = firmware_archive
     for name, source in sources.items():
         if not source.is_file():
             raise RuntimeError(f"Required setup payload file is missing: {name}")
     return sources
 
 
-def create_payload(root: Path, executable: Path, version: str, archive: Path) -> dict:
-    sources = payload_sources(root, executable)
+def create_payload(root: Path, executable: Path, version: str, archive: Path,
+                   firmware_archive: Path | None = None) -> dict:
+    sources = payload_sources(root, executable, firmware_archive)
     configuration = json.loads((root / "packaging/python-runtime.json").read_text(encoding="utf-8"))
     manifest = {
         "version": version, "app": "app/MembraneControl.exe", "python": configuration,
@@ -50,12 +54,12 @@ def create_payload(root: Path, executable: Path, version: str, archive: Path) ->
     return manifest
 
 
-def build_setup(version: str, executable: Path) -> Path:
+def build_setup(version: str, executable: Path, firmware_archive: Path | None = None) -> Path:
     if os.name != "nt":
         raise RuntimeError("Build the setup EXE on Windows x64.")
     directory = ROOT / "build" / "setup"
     archive = directory / "payload.zip"
-    create_payload(ROOT, executable, version, archive)
+    create_payload(ROOT, executable, version, archive, firmware_archive)
     windows = Path(os.environ.get("SystemRoot", "C:/Windows"))
     candidates = [windows / "Microsoft.NET" / framework / "v4.0.30319" / "csc.exe"
                   for framework in ("Framework64", "Framework")]
@@ -71,8 +75,10 @@ def build_setup(version: str, executable: Path) -> Path:
     from build_windows import write_checksums
     release = destination.parent
     stem = f"MembraneControl-{version}-windows-x64"
-    write_checksums([destination, executable, release / (stem + ".zip"), release / (stem + "-build.json")],
-                    release / "SHA256SUMS.txt")
+    checked_files = [destination, executable, release / (stem + ".zip"), release / (stem + "-build.json")]
+    if firmware_archive is not None:
+        checked_files.append(firmware_archive)
+    write_checksums(checked_files, release / "SHA256SUMS.txt")
     print(f"Fresh-PC setup: {destination}")
     return destination
 
@@ -80,4 +86,5 @@ def build_setup(version: str, executable: Path) -> Path:
 if __name__ == "__main__":
     from build_windows import package_version
     version = package_version()
-    build_setup(version, ROOT / "dist/release" / f"MembraneControl-{version}-windows-x64.exe")
+    build_setup(version, ROOT / "dist/release" / f"MembraneControl-{version}-windows-x64.exe",
+                ROOT / "dist/release" / f"MembraneControl-Firmware-{version}-esp32.zip")

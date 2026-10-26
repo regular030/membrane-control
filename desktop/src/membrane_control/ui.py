@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         self._timer_fault = ""
         self._timer_stop_requested = False
         self._plot_time: deque[float] = deque(maxlen=600)
-        self._plot_data = {key: deque(maxlen=600) for key in ("flow_ml_min", "pressure_psi", "flux_lmh", "mass_g")}
+        self._plot_data = {key: deque(maxlen=600) for key in ("flow_ml_min", "desired_flow_ml_min", "pressure_psi", "flux_lmh", "mass_g")}
         self._curves: dict[str, Any] = {}
         self._plots: dict[str, Any] = {}
         self._metric_labels: dict[str, QLabel] = {}
@@ -297,7 +297,8 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
-        splitter.setMinimumHeight(430)
+        # Let the scroll area use the children's layout minimum. A fixed height
+        # overrides the larger hint once wrapped text and added controls settle.
         charts = QWidget()
         grid = QGridLayout(charts)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -318,7 +319,15 @@ class MainWindow(QMainWindow):
             plot.getAxis("bottom").enableAutoSIPrefix(False)
             plot.getViewBox().setLimits(xMin=0, minXRange=5,
                                        minYRange=0.5 if key == "pressure_psi" else 1)
-            self._curves[key] = plot.plot(pen=pg.mkPen(color, width=2))
+            if key == "flow_ml_min":
+                self.flow_legend = plot.addLegend(offset=(10, 8), colCount=2,
+                    labelTextSize="8pt", labelTextColor="#536b7b",
+                    brush=pg.mkBrush(255, 255, 255, 220), pen=None)
+                self._curves[key] = plot.plot(pen=pg.mkPen(color, width=2), name="Measured flow")
+                self._curves["desired_flow_ml_min"] = plot.plot(
+                    pen=pg.mkPen("#bd792b", width=2, style=Qt.PenStyle.DashLine), name="Desired flow")
+            else:
+                self._curves[key] = plot.plot(pen=pg.mkPen(color, width=2))
             self._plots[key] = plot
             grid.addWidget(plot, index // 2, index % 2)
         splitter.addWidget(charts)
@@ -355,6 +364,21 @@ class MainWindow(QMainWindow):
         pump_row.addWidget(self.manual_pump_sent)
         pump_row.addStretch()
         manual_layout.addLayout(pump_row)
+        target_row = QHBoxLayout()
+        target_row.addWidget(_label("Desired flow (mL/min)"))
+        self.desired_flow_spin = QDoubleSpinBox()
+        self.desired_flow_spin.setRange(0, 1_000_000)
+        self.desired_flow_spin.setDecimals(2)
+        self.desired_flow_spin.setAccessibleName("Desired flow millilitres per minute")
+        self.desired_flow_spin.setToolTip("Comparison target saved with the sequence. Apply target updates only this target; it does not change pump output.")
+        self.desired_flow_spin.valueChanged.connect(self._sync_desired_flow)
+        target_row.addWidget(self.desired_flow_spin)
+        self.apply_target_button = _button("Apply target", self._apply_desired_flow)
+        target_row.addWidget(self.apply_target_button)
+        target_row.addStretch()
+        manual_layout.addLayout(target_row)
+        self.desired_flow_note = _label("Target for comparison; pump output remains set in % until calibrated.", "muted", True)
+        manual_layout.addWidget(self.desired_flow_note)
         low_layout.addWidget(manual, 3)
         log_group = QGroupBox("Activity")
         log_layout = QVBoxLayout(log_group)
@@ -403,6 +427,12 @@ class MainWindow(QMainWindow):
         self.sample_spin.setValue(30)
         self.sample_spin.setAccessibleName("Recipe recording interval seconds")
         self.recipe_balance = QCheckBox("Require scale readings during this sequence")
+        self.recipe_desired_flow_spin = QDoubleSpinBox()
+        self.recipe_desired_flow_spin.setRange(0, 1_000_000)
+        self.recipe_desired_flow_spin.setDecimals(2)
+        self.recipe_desired_flow_spin.setAccessibleName("Recipe desired flow millilitres per minute")
+        self.recipe_desired_flow_spin.setToolTip("Target for comparison. Apply sequence or Start run saves this target with the sequence; pump settings remain in %.")
+        self.recipe_desired_flow_spin.valueChanged.connect(self._sync_desired_flow)
         self.recipe_approved = QCheckBox("Sequence reviewed for this rig")
         self.recipe_approved.setToolTip("Tick only after a trained operator has checked the valve choices, pump settings and timing. This does not approve the equipment setup.")
         form.addWidget(_label("Name"), 0, 0)
@@ -413,10 +443,13 @@ class MainWindow(QMainWindow):
         form.addWidget(self.repeat_spin, 2, 1)
         form.addWidget(_label("Record every"), 2, 2)
         form.addWidget(self.sample_spin, 2, 3)
-        form.addWidget(self.recipe_balance, 3, 1)
-        form.addWidget(self.recipe_approved, 3, 3)
+        form.addWidget(_label("Desired flow (mL/min)"), 3, 0)
+        form.addWidget(self.recipe_desired_flow_spin, 3, 1)
+        form.addWidget(_label("Target for comparison; pump output remains set in % until calibrated.", "muted", True), 3, 2, 1, 2)
+        form.addWidget(self.recipe_balance, 4, 1)
+        form.addWidget(self.recipe_approved, 4, 3)
         self.recipe_approval_note = _label("Sequence review is separate from equipment setup. This box cannot unlock an unfinished controller.", "muted", True)
-        form.addWidget(self.recipe_approval_note, 4, 1, 1, 3)
+        form.addWidget(self.recipe_approval_note, 5, 1, 1, 3)
         form.setColumnStretch(1, 2)
         form.setColumnStretch(3, 2)
         layout.addLayout(form)
@@ -496,6 +529,8 @@ class MainWindow(QMainWindow):
         bform.addRow(brow)
         self.balance_detail = _label("No balance connected", "muted", True)
         bform.addRow(self.balance_detail)
+        self.balance_port_hint = _label("The scale may appear as USB Serial Port or the adapter name. It needs its own COM port; refresh after plugging it in.", "muted", True)
+        bform.addRow(self.balance_port_hint)
         devices.addWidget(balance_box)
         layout.addLayout(devices)
         refresh = QHBoxLayout()
@@ -533,6 +568,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(settings_box)
         layout.addStretch()
         self._add_tab(page, "Connections and settings")
+        self.connections_tab_index = self.tabs.count() - 1
+        self.tabs.currentChanged.connect(self._refresh_ports_on_tab_entry)
 
     def _build_history(self):
         page = QWidget()
@@ -639,6 +676,7 @@ class MainWindow(QMainWindow):
         if self._zoom is None:
             return
         self._zoom.set_percent(percent)
+        self.flow_legend.setLabelTextSize(f"{8 * self._zoom.factor:g}pt")
         self.zoom_label.setText(f"Zoom {self.zoom_percent}%")
         self.statusBar().showMessage(f"Interface zoom: {self.zoom_percent}%. Ctrl + 0 resets to 100%. Experiment settings are unchanged.", 5000)
 
@@ -695,6 +733,7 @@ class MainWindow(QMainWindow):
         self.recipe_description.setText(recipe.description)
         self.repeat_spin.setValue(recipe.repeat)
         self.sample_spin.setValue(recipe.sample_interval_s)
+        self._sync_desired_flow(recipe.desired_flow_ml_min)
         self.recipe_balance.setChecked(recipe.require_balance)
         self.recipe_approved.setChecked(recipe.hardware_approved)
         self._populate_steps([{"name": s.name, "duration_s": s.duration_s, "valves": list(s.valves), "pump_percent": s.pump_percent} for s in recipe.steps])
@@ -764,12 +803,24 @@ class MainWindow(QMainWindow):
             "repeat": self.repeat_spin.value(),
             "sample_interval_s": self.sample_spin.value(),
             "require_balance": self.recipe_balance.isChecked(),
+            "desired_flow_ml_min": self.desired_flow_spin.value(),
             "steps": self._step_data(),
         })
         errors = recipe.validate()
         if isinstance(errors, (list, tuple)) and errors:
             raise ValueError("\n".join(map(str, errors)))
         return recipe
+
+    def _sync_desired_flow(self, value):
+        for name in ("desired_flow_spin", "recipe_desired_flow_spin"):
+            control = getattr(self, name, None)
+            if control is not None:
+                with QSignalBlocker(control):
+                    control.setValue(value)
+
+    def _apply_desired_flow(self):
+        self._action(lambda: self.controller.set_desired_flow(self.desired_flow_spin.value()),
+                     "Desired flow target applied. Pump output is unchanged.")
 
     def _apply_recipe(self):
         def apply():
@@ -900,6 +951,10 @@ class MainWindow(QMainWindow):
                     combo.setCurrentIndex(index)
         except Exception as exc:
             self.statusBar().showMessage(f"Could not list serial ports: {exc}", 10000)
+
+    def _refresh_ports_on_tab_entry(self, index):
+        if index == self.connections_tab_index and not self._shutdown_started:
+            self._refresh_ports()
 
     def _connect_controller(self):
         port = self.controller_port.currentData()
@@ -1156,6 +1211,7 @@ class MainWindow(QMainWindow):
             for widget in (self.preset_combo, self.apply_recipe_button, self.steps_table, self.recipe_approved,
                            self.settings_apply, self.recipe_name, self.recipe_description, self.repeat_spin,
                            self.sample_spin, self.recipe_balance, self.import_button, self.save_as_button,
+                           self.desired_flow_spin, self.recipe_desired_flow_spin, self.apply_target_button,
                            *self._editor_edit_buttons):
                 widget.setEnabled(not operating)
             applied_recipe = getattr(self.controller, "recipe", None)
