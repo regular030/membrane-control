@@ -1,5 +1,20 @@
 # Software validation
 
+## Automatic GitHub builds, 26 October 2026
+
+- Both workflow YAML files pass actionlint 1.7.12. Optional ShellCheck and
+  Pyflakes integration were unavailable and disabled for this local check.
+- The publishing shell script passes Bash syntax checking. Local mocked runs
+  confirm successful current-main publication, skipped stale commits and refusal
+  to publish an asset whose checksum changed. Windows CRLF checksum files are supported.
+- Automatic main builds publish only after the existing desktop, firmware and
+  packaged-EXE checks succeed. Each development release points to its tested commit.
+- GitHub's latest hosted run did not start any jobs. Its annotation reports recent
+  account payment failures or a spending limit that needs increasing. This account
+  issue prevents an end-to-end hosted build until resolved in GitHub Billing & plans.
+
+No application or firmware code changed in this workflow update.
+
 ## Desktop version 0.1.5
 
 Native interface zoom, checked locally on Windows 11 x64, 26 October 2026:

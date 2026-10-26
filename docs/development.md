@@ -71,11 +71,28 @@ checks its dimensions and requires a clean process exit. Also test on a clean
 Windows account without Python installed before lab distribution. Verify
 device-driver and physical-interface behavior separately on the bench.
 
-## CI and draft releases
+## Automatic GitHub builds
 
-The CI workflow runs Python tests on Windows and Ubuntu, builds ESP32 dry-run
-firmware, and then builds and smoke-tests the Windows artifact. A failure in
-verification prevents the package job from running.
+Push to `main` to run **Build Windows app** in GitHub Actions. It runs the
+desktop tests on Windows and Ubuntu, builds/tests the ESP32 firmware, then
+builds and smoke-tests the Windows EXE. A failed check prevents publication.
+You can also select this workflow under **Actions > Run workflow** on `main`.
+
+After a successful current-main build, open the repository's **Releases** page
+and choose the newest **Main build**. Download its Windows EXE under **Assets**,
+or the portable ZIP. The workflow's summary also links to that download.
+Temporary Actions artifacts are retained for seven days.
+
+Each automatic development release has a unique `build-...` tag pointing to
+the tested commit. Publishing is serialized, and a run whose commit is no
+longer the head of `main` skips publication. Existing versioned releases stay
+available. Pull requests receive the same tests/build, with no release publishing.
+
+If no jobs start, inspect the run's **Annotations**. An account payment or
+spending-limit error must be resolved in GitHub **Billing & plans** before
+GitHub-hosted builds can run. No local rebuild or hook is needed for this workflow.
+
+## Versioned releases
 
 For an authorized release, set the package version, commit the reviewed
 changes and tag the commit `v0.1.5` (or the matching next version). The release

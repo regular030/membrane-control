@@ -1,4 +1,4 @@
-name: Verify application and firmware
+name: Build Windows app
 
 on:
   push:
@@ -12,6 +12,7 @@ permissions:
 jobs:
   desktop-tests:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +41,7 @@ jobs:
 
   firmware:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,6 +59,7 @@ jobs:
   windows-package:
     needs: [desktop-tests, firmware]
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,3 +81,52 @@ jobs:
           name: MembraneControl-windows-x64
           path: dist/release/*
           if-no-files-found: error
+          retention-days: 7
+
+  publish-main-build:
+    needs: windows-package
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: publish-main-build
+      cancel-in-progress: false
+    steps:
+      - name: Download the tested Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: MembraneControl-windows-x64
+          path: dist/release
+      - name: Publish a downloadable main build
+        working-directory: dist/release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          current_head=$(gh api "repos/${GH_REPO}/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$current_head" != "$GITHUB_SHA" ]]; then
+            echo "A newer main commit exists; skipping publication of this older build." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Windows build manifests may contain CRLF line endings.
+          tr -d '\r' < SHA256SUMS.txt | sha256sum --check -
+          short_sha="${GITHUB_SHA:0:7}"
+          build_tag="build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${short_sha}"
+          notes_file="${RUNNER_TEMP}/main-build-notes.md"
+          cat > "$notes_file" <<EOF
+          Automatically built and tested from main commit ${short_sha}.
+
+          Download the Windows EXE under Assets, or the portable ZIP containing the EXE and guides.
+          This is a development build. Review the lab's setup and approved sequence before physical operation.
+
+          Commit: ${GITHUB_SERVER_URL}/${GH_REPO}/commit/${GITHUB_SHA}
+          Build checks: ${GITHUB_SERVER_URL}/${GH_REPO}/actions/runs/${GITHUB_RUN_ID}
+          EOF
+          release_url=$(gh release create "$build_tag" ./*.exe ./*.zip ./*-build.json ./SHA256SUMS.txt \
+            --repo "$GH_REPO" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Main build ${GITHUB_RUN_NUMBER} (${short_sha})" --notes-file "$notes_file")
+          printf '### Windows download\n\n[Open this build and download the EXE](%s)\n' "$release_url" >> "$GITHUB_STEP_SUMMARY"

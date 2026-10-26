@@ -52,6 +52,10 @@ keep important CSV exports when updating the app.
 
 Everyday users can use the EXE without these tools.
 
+Pushing changes to `main` builds and tests the app on GitHub. After the checks
+pass, the new **Main build** appears under **Releases** with a Windows EXE.
+See [automatic GitHub builds](docs/development.md#automatic-github-builds).
+
 - [Development](docs/development.md): run the source, tests and Windows build.
 - [ESP32 setup](firmware/README.md): USB detection, firmware upload and hardware verification.
 - [Architecture](docs/architecture.md) and [protocol](protocol/v1.md): how the code fits together.
