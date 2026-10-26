@@ -24,9 +24,10 @@ Confirm the SANSUN adapter's exact output plug and polarity on the ordered unit,
 
 The selected board has more channels than the seven valve outputs required.
 Unused channels must remain in their reviewed inactive states. Pump speed and
-remote start/stop use separate control interfaces. The cable tags say 0-10 V,
-but the installed drive's actual input/output ranges remain unverified; do not
-buy a DAC solely from that assumption. The firmware represents this candidate
+remote start/stop use separate control interfaces. The identified 75211-30
+manual confirms 0-10 V voltage command and feedback, with separate documented
+return pins. Verify its actual mode, harness and references before selecting
+the interface modules. The firmware represents this candidate
 as a 16-bit shift-register board with unassigned hardware mappings; the product
 photograph does not establish a usable pin map or mains-load rating.
 
@@ -34,9 +35,9 @@ photograph does not establish a usable pin map or mains-load rating.
 
 | Item | Candidate or specification | Remaining check |
 | --- | --- | --- |
-| Pump command interface, not yet selected | GP8403/DFR0971 is a candidate only if its output matches the confirmed drive input | Verify the installed drive model, selected voltage/PWM mode, original conditioning and returns before purchase |
+| Pump command interface, not yet selected | GP8403/DFR0971 is a candidate for the documented 75211-30 voltage input | Verify V mode, pin 1/3 input references, original conditioning and safe startup before purchase |
 | Sensor ADC and conditioning | ADS1115-based acquisition or equivalent protected interface | Define sensor scaling and the separately verified pump-feedback range, protection, grounding and calibration |
-| Pump start/stop contact | Separate isolated signal contact/interface | Verify pump input and contact suitability |
+| Pump start/stop contact | Separate isolated signal contact/interface | Verify contact behavior/suitability across 75211-30 DB15 pins 10/12 |
 | DB15 harness | Two-row 15-pin connector matching installed pump | Verify gender and pinout; do not substitute a three-row VGA connector |
 | DC barrel adapter | Female 5.5 x 2.1 mm to secured pigtail or terminal | Check connector dimensions and mounting |
 | Enclosure and wiring | Rated terminals, glands, wire, ferrules, labels, fuses and mounting | Size after layout and electrical review |

@@ -11,7 +11,7 @@ and the unresolved board-input voltage discrepancy.
 | Equipment | Interface or role |
 | --- | --- |
 | Seven Granzow H4B19-00Y valves | Photos identify 110-120 VAC, 50/60 Hz, 8 W coils |
-| Cole-Parmer digital gear pump | Current DB15 remote-control connection; exact drive model needed |
+| Cole-Parmer 75211-30 digital gear-pump drive | Current DB15 interface; user reports 60-3600 RPM and 0.1 HP |
 | Masterflex L/S pump | Later DB25 profile; exact drive model needed |
 | Omega PX309-100G5V | 0-100 psi gauge, 0-5 V analog output |
 | McMillan 101-3T-CM-A2 | Flow measurement; 12-15 V supply, 0-5 V and pulse options |
@@ -24,24 +24,29 @@ The previously listed Omega USB pressure sensor is not required for the initial 
 
 See [pump input/output clarification](pump-interface.md): **pump VOUT goes to
 an ADC; a DAC drives the pump VIN/speed input**. DB15 alone does not establish
-either signal's range. The exact installed drive model remains unconfirmed.
+either signal's range. The user has now identified **75211-30**; the matching
+manufacturer manual confirms the model's 0-10 V voltage-control interface.
 
-Cable tags show a 0-10 V speed command into the pump, a separate 0-10 V speed output and remote start/stop. The tagged DB15-to-DB25 mappings are evidence to reconcile with the exact manufacturer manual, not complete instructions for connecting the ESP32.
+Cable tags show a 0-10 V speed command, separate 0-10 V speed output and remote
+start/stop. Their old DB15 signal numbers agree with the 75211-30 diagram, but
+the generic GROUND tag identifies pin 12, the start/stop return. The analog
+return pins 3 and 5 still need tracing in the harness. The new DB25 annotations
+refer to a future interface, not this drive's connector.
 
-Treat 0-10 V as a cable-label claim, not a verified setting of the installed
-drive. If its exact manual confirms a 0-10 V command, a compatible DAC/output
-stage is one option. If the old system instead used a 0-5 V or PWM interface,
-identify that configuration and any conditioning before choosing the replacement.
-The current firmware's GP8403 driver is a candidate interface, not proof that
-the installed pump needs 10 V. Remote start/stop and analog readback also need
-their model-specific interfaces verified.
+The 75211-30 manual documents command **DB15 1(+)/3(-)**, speed feedback
+**9(+)/5(-)** and remote contact **10/12**. This replaces the earlier inference
+from labels alone. Check the drive's selected mode, harness continuity and
+conditioning before connecting a replacement controller. Pin 12 is not shown
+as the common return for both analog signals. The GP8403 is a candidate command
+source, subject to verification of its interface and references.
 
 A related [Masterflex family manual](https://documents.thermofisher.com/TFS-Assets/MBD/manuals/Thermo-Scientific-Dry-Bags-Peristaltic-Pump-Complex-Drive-DB3000A-Operating-Manual-GLOBAL-EN-low-res.pdf), printed page 3-23, has separate analog-input return, analog-output reference and digital-control reference pins. This is why a generic ground tag cannot establish all return connections. It is not verification of the installed models.
 
 ## Analog acquisition
 
 The 0-5 V sensors require input scaling, filtering, protection and calibration.
-Establish the pump feedback's actual range separately; its tag says 0-10 V.
+The identified pump's documented feedback range is 0-10 V; verify actual wiring
+and scaling separately.
 If an ADS1115 is selected, its programmable full-scale range does not permit
 input pins above their supply-referenced electrical limits. Read the
 [TI datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf) before defining the interface.
@@ -60,7 +65,8 @@ The documented single-line mass stream has weight and unit but no per-reading st
 
 ## Items to resolve before energizing
 
-- Pump model identifiers, connector gender and signal-specific returns.
+- Cole-Parmer drive revision, harness continuity and signal-specific returns;
+  the later Masterflex pump's exact model is still needed.
 - Board schematic, relay GPIO/polarity and startup output behavior.
 - Valve contact rating for the actual AC inductive load and wiring protection.
 - Power-supply voltage/current and total controller/interface demand.

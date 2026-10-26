@@ -39,7 +39,8 @@ Acceptance: clean-machine installation test; CSV export verified against stored 
 ## Open decisions
 
 - Selected 16-channel ESP32 board revision, schematic, shift-register pins, free I2C/GPIO pins and relay polarity.
-- Exact DB15 pump model and future DB25 pump model.
+- DB15 pump is now identified as Cole-Parmer 75211-30. Verify its revision,
+  selected mode, analog returns and harness; identify the future DB25 drive.
 - Analogue front-end design, electrical isolation and sensor supply arrangements.
 - Lab-approved limits, shutdown behavior and independent emergency shutdown.
 - Definition of old unlabeled controls and partially visible table columns.

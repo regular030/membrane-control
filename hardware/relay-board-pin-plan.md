@@ -44,7 +44,9 @@ With the relay board externally powered, leave the USB-UART adapter's 3.3 V and 
 
 The pump's VOUT is feedback **from** the pump. It belongs on a protected ADC
 input. The DAC output drives the opposite direction, into the pump's VIN/speed
-command input, only after its model-specific range is confirmed. See
+command input. The identified 75211-30 manual documents a 0-10 V command at
+DB15 1(+)/3(-) and feedback at 9(+)/5(-). The actual harness and references must
+still be checked. See
 [pump interface](pump-interface.md).
 
 This is the preferred external-ADC plan already supported by the firmware:
@@ -53,8 +55,8 @@ This is the preferred external-ADC plan already supported by the firmware:
 | --- | --- |
 | Pressure sensor 0-5 V output | Scaling/protection interface, then ADS1115 A0 |
 | Flow sensor 0-5 V analog output | Scaling/protection interface, then ADS1115 A1 |
-| Pump speed feedback; actual range unverified, tag says 0-10 V | Range-matched scaling/protection interface, then ADS1115 A2 |
-| Pump speed command | GP8403 VOUT0 to the verified pump speed-input terminal |
+| Pump speed feedback, documented 0-10 V on DB15 9(+)/5(-) | Range-matched scaling/protection interface, then ADS1115 A2; use the specified return |
+| Pump speed command | Suitable GP8403/output interface to DB15 1(+)/3(-), after reference/ground verification |
 
 Use the flow sensor's analog output for this plan. Its pulse output is a different interface. For a 3.3 V-powered ADS1115, keep normal analog pin voltage within 0-3.3 V; selecting a larger ADC gain range does not make it 5 V or 10 V tolerant. Connect each pump signal's specified return according to the exact drive manual. Do not assume every cable tag called GROUND is the right analog return.
 
@@ -62,7 +64,7 @@ If using the ESP32's native ADC instead, reserve GPIO34 for conditioned pressure
 
 ### Pump remote start/stop
 
-Prefer a spare onboard relay, provisionally physical channel 8, as the pump's remote dry contact, if its contact characteristics suit the pump's remote input. Its COM and NO contacts connect only to the pump's verified remote-start pair. Do not apply the board's supply voltage to that pair. Keep this signal-contact circuit separated from mains valve contacts.
+Prefer a spare onboard relay, provisionally physical channel 8, as the pump's remote dry contact, if its contact characteristics suit the pump's remote input. The 75211-30 manual shows remote start/stop across **DB15 pins 10 and 12**. Its COM and NO contacts connect only across the verified pair. Do not apply the board's supply voltage to it. Keep this signal-contact circuit separated from mains valve contacts.
 
 **Version 0.1.0 limitation:** the physical driver currently expects a separate `pumpContactPin`, such as a reviewed GPIO26-driven isolated contact stage. It does not yet pack pump RUN into a spare 74HC595 relay bit. Using onboard relay 8 requires a driver change, validation of the physical relay-to-bit mapping and tests of STOP-before-DAC/valve changes. It is not enabled by this document. Avoid adding a separate contact stage merely to finalize wiring before that choice is settled.
 

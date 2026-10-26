@@ -1,97 +1,96 @@
-# Pump connector: input, output and remote start
+# Cole-Parmer 75211-30 pump interface
 
-The DB15 is a connector. It does not by itself establish a voltage range,
-serial protocol or pin assignment. The installed digital gear pump's exact
-drive model/nameplate is still needed before final wiring or physical operation.
-Do not substitute the later Masterflex DB25 profile for this drive.
+The user identified the installed drive as **Cole-Parmer 75211-30**, with a
+**60-3600 RPM, 0.1 HP** nameplate. This is the current DB15 digital gear-pump
+profile, separate from the later Masterflex L/S/DB25 equipment.
 
-## Direction of each signal
+## Manufacturer-documented signals
 
-```text
-ESP32 command -> DAC voltage output -> pump speed INPUT (VIN)
-pump speed OUTPUT (VOUT) -> protected/scaled ADC input -> ESP32 reading
-```
+Cole-Parmer/Barnant operating manual **A-1299-0853, Edition 03** explicitly
+covers models 75211-30 and 75211-35. Its remote-control section and DB15 diagram
+on printed pages 12-13 document a 0-10 V voltage command, a separate 0-10 V speed
+feedback signal and a contact input for remote start/stop. Select/check the
+**V** mode for voltage control; current-loop modes are separate options.
 
-The photographed cable tags label both speed signals **0-10 V**. That is useful
-evidence, but it still needs checking against the installed drive's manual and
-selected voltage/current control mode. It does not mean the pump's output needs
-a DAC. A DAC generates the command; an ADC reads feedback.
+The diagram was visually checked, including the individual signal returns:
 
-**The installed pump's actual operating range is not confirmed as 0-10 V.**
-That number came from the photographed tags, not a measurement or an identified
-drive manual. The fact that the old Arduino controlled it is useful evidence
-about the old interface, but does not determine the pump's selectable/full-scale
-range.
+| Function | DB15 signal | DB15 return | ESP32-side interface role |
+| --- | --- | --- | --- |
+| Speed command into pump | Pin 1 (+) | Pin 3 (-) | Suitable 0-10 V DAC/output stage, using the input's specified return |
+| Speed feedback from pump | Pin 9 (+) | Pin 5 (-) | Protected/scaled ADC input, using the output's specified return |
+| Remote start/stop | Pin 10 | Pin 12 | Suitable isolated dry-contact interface across the pair |
 
-The recorded Arduino was a Mega 2560, whose GPIOs operate at 5 V. Its D3
-`analogWrite()` output is PWM, not a generated 10 V analog voltage. Possible
-explanations include a 0-5 V/PWM-compatible configuration, intermediate
-conditioning, or using only part of a wider command range. These are hypotheses,
-not a recovered circuit. A raw 10 V feedback connection to an ordinary Mega
-analog input would also be outside its normal input range. Trace the original
-wire and identify the drive before selecting a DAC or feedback divider.
+These are connector pin numbers, not wire colors or positions along an ESP32
+header. Check molded connector numbers and continuity with equipment disconnected
+before changing the harness. The diagram does not show pins 3, 5 and 12 joined;
+do not substitute pin 12 for both analog returns or blindly join the returns.
 
-See Arduino's [Mega 2560 specifications](https://store.arduino.cc/products/arduino-mega-2560-rev3)
-and [PWM documentation](https://support.arduino.cc/hc/en-us/articles/9350537961500-Use-PWM-output-with-Arduino).
+The user's follow-up photos repeat the four cable tags with both an **Old
+DB15** column and a **New DB25** column. Use the old DB15 numbers for this
+75211-30. The DB25 annotations do not establish another drive's pinout.
 
-| Notebook wire | Recorded old Arduino connection | New interface role |
+The earlier cable tags listed **1, 9, 10 and 12**. If that is the complete
+harness, the documented analog returns are absent unless they are connected
+elsewhere. Trace the actual circuit before migrating it. Do not apply Arduino
+VIN, the relay-board supply or a GPIO output to the start/stop pair.
+
+With the harness disconnected from both drive and controller, a continuity
+check can establish whether DB15 pins 3 or 5 are already wired to the labelled
+ground conductor inside the plug. Record any existing connections rather than
+adding bridges based on the generic GROUND tag. The photos alone do not show
+the internal wiring or an analog scaling stage.
+
+The operating range is documented; the installed mode, actual cable continuity,
+reference/ground arrangement and calibration still need verification. This is
+not confirmation of a complete physical wiring profile or an absolute maximum
+input-voltage damage threshold.
+
+## Why the old Arduino can still have worked
+
+The old board was an Arduino Mega 2560 with 5 V I/O. D3 supports PWM;
+`analogWrite()` does not generate a 10 V analog command by itself. A lower
+command range or external conditioning could explain the old setup. The old
+bridge code does not identify that circuitry. The pump manual does not establish
+raw PWM as a supported replacement for its DC voltage input.
+
+Likewise, a 0-10 V feedback capability does not prove that 10 V was ever present
+at the old Arduino input. Any existing divider or protection must be traced.
+Do not connect raw pump feedback directly to an Arduino or ESP32 analog input.
+
+A GP8403/DFR0971 remains a candidate 0-10 V command source. Its VOUT terminal
+would drive **pump pin 1**, referenced through the verified interface to
+**pump pin 3**. Pump pin 9 is an output to an ADC, not a destination for the DAC.
+Input/output isolation and returns must be resolved before choosing a common-
+ground module arrangement. The shipped firmware keeps its profile unverified.
+
+## Recorded old wiring
+
+| Notebook wire | Recorded Arduino connection | What must be checked |
 | --- | --- | --- |
-| Orange, pump VIN | Digital 3 | Speed command into pump, using the verified input range and a suitable voltage-output stage |
-| White, pump VOUT | Analog A8 or A9; handwriting unclear | Speed feedback from pump, through input scaling/protection to an ADC |
-| Blue, pump ground | GND beside AREF/13 | Pump's designated signal reference; verify signal-specific returns against its manual |
-| Red, start/stop | Arduino VIN | Unresolved. Arduino VIN is a power terminal, so this old connection must not be copied to an ESP32 GPIO or power pad |
+| Orange, pump VIN | Digital 3 | Continuity to DB15 pin 1, input return pin 3 and any PWM/voltage conditioning |
+| White, pump VOUT | Analog A8 or A9; handwriting unclear | Continuity to pin 9, output return pin 5 and existing input scaling |
+| Blue, ground | GND beside AREF/13; cable tag says DB15 pin 12 | This is the documented start/stop return; check where analog returns 3/5 went |
+| Red, start/stop | Arduino VIN | Verify pin 10/contact circuit; do not copy the old power-terminal connection |
 
-A DFRobot GP8403/DFR0971 is a candidate for a verified 0-10 V command input:
-its **VOUT0/VOUT1** terminals are voltage outputs. The module's VOUT0 would go to
-the pump's speed **input**, not the pump's VOUT. See the
-[manufacturer specification](https://wiki.dfrobot.com/dfr0971).
+The archive contains generic NI LIFA bridge code, not native LabVIEW VIs. In
+`10. LabVIEWInterface-C UF membrane codes-OB_RR.txt`, lines 140-145 configure or
+write host-selected digital pins; lines 186-199 read a host-selected analog
+channel or perform a host-selected PWM write. The base sketch's custom sections
+are empty. The six LabVIEW document images show front panels, not pin constants.
+The notebook's D3 connection and Duty Cycle (0-255) indicator suggest PWM, but do
+not recover the full circuit. Pressure A10 and flow A12 also come from the
+notebook rather than fixed bridge assignments.
 
-The pump VOUT must stay within the protected ADC input range after conditioning.
-It is speed feedback, not independent measurement of the actual fluid flow.
-Likewise, old use of Arduino D3 does not prove that the pump input accepts raw
-ESP32 PWM. Existing filtering or amplification must be identified before reuse.
+## Revision and calibration
 
-Current relay-board test firmware does not drive a pump or read these signals.
-The experiment firmware retains its verified hardware-profile, sensor and
-pressure gates. None of these notes authorizes connecting mains valve loads.
+The user's 60-3600 RPM nameplate agrees with the service manual's model listing.
+The older operating manual's specification page lists 180-3600 RPM. Preserve
+that revision discrepancy and do not assume an exact volts-to-RPM or mL/min
+conversion. Verify the installed drive's behavior and pump-head calibration.
 
-## What the old Arduino project establishes
+## Sources
 
-The supplied `C UF mebrane-RR_OB.zip` was inspected again on 26 October 2026.
-It contains the generic National Instruments LIFA bridge and supporting
-libraries, plus `LabVIEW.docx`. It contains no native `.vi` files. The six
-images in that document show front panels for CIP, CWF and Fouling, not the
-LabVIEW block diagrams or pin-configuration constants.
-
-The relevant bridge operations in
-`10. LabVIEWInterface-C UF membrane codes-OB_RR.txt` are:
-
-| Source line | Command | Meaning |
-| --- | --- | --- |
-| 140-141 | `pinMode(command[2], command[3])` | LabVIEW supplies the pin number and mode |
-| 144-145 | `digitalWrite(command[2], command[3])` | LabVIEW supplies the digital output pin and level |
-| 186-187 | `analogRead(command[2])` | LabVIEW supplies the analog input channel |
-| 198-199 | `analogWrite(command[2], command[3])` | LabVIEW supplies the PWM output pin and duty value |
-
-The base sketch's custom setup and loop sections are empty. The D3 references
-in the bundled AFMotor library describe motor-shield support and do not prove
-that the membrane rig used that library to control its pump.
-
-Taken together, the notebook's orange-wire-to-D3 entry and the front panel's
-`Duty Cycle (0-255)` indicator suggest a PWM speed-command path. This is an
-inference, not a recovered LabVIEW assignment. Neither the bridge code nor the
-front-panel photos show a PWM filter, amplifier or 0-10 V converter. They also
-do not establish the pump's configured electrical input mode or a safe direct
-ESP32 connection.
-
-The recorded sensor connections are pressure white to A10 and flow white to
-A12; the pump's white feedback wire is recorded at A8 or A9. Those assignments
-come from the notebook, not fixed constants in the generic bridge. The
-pressure-transducer specification supplied separately states 0-5 V output.
-Analog signal conditioning must therefore be retained or designed for the
-ESP32/ADC input range, rather than copying Arduino terminals directly.
-
-To resolve the remaining pump wiring, inspect the exact pump drive model and
-trace the old orange D3 wire for interface components. Recovering the native
-LabVIEW VIs would establish the host-selected pins and processing. The red
-start/stop connection remains unresolved by these source files.
+- [Cole-Parmer/Barnant operating manual, mirror](https://manualmachine.com/coleparmer/7521130/15945005-instruction-manual/), A-1299-0853 Edition 03, printed pages 12-13 and 21.
+- [Cole-Parmer/Barnant service manual, mirror](https://www.manualslib.com/manual/1449189/Cole-Parmer-75211-30.html), model listing identifies 75211-30 at 60-3600 RPM.
+- [Arduino Mega 2560 specifications](https://store.arduino.cc/products/arduino-mega-2560-rev3) and [PWM guide](https://support.arduino.cc/hc/en-us/articles/9350537961500-Use-PWM-output-with-Arduino).
+- [DFRobot GP8403/DFR0971 specification](https://wiki.dfrobot.com/dfr0971).

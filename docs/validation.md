@@ -4,7 +4,11 @@ Latest hardware update, 26 October 2026: the user now identifies the balance as
 an **Adam Nimbus NBL 8201e**, uses its USB-B I/O connection, and confirms a second
 Windows COM port appears. Actual weight receipt is still to be confirmed. Older
 release records below describe the green RS232 adapter used at that time. The
-Cole-Parmer pump drive's model and actual signal ranges remain unconfirmed.
+Cole-Parmer drive is now identified as **75211-30, 60-3600 RPM, 0.1 HP**. Its
+manufacturer-authored manual and DB15 diagram confirm 0-10 V command 1(+)/3(-),
+0-10 V feedback 9(+)/5(-), and start/stop contact 10/12. Actual mode, harness
+continuity, conditioning and calibration remain unverified. No physical outputs
+were operated to establish these documentation findings.
 
 ## Live runtime table, version 0.1.11
 
