@@ -33,6 +33,17 @@ photograph does not establish a usable pin map or mains-load rating.
 
 ## Parts requiring final interface selection
 
+The user now prefers Amazon delivery. A verified Canadian product page for an
+alternative command interface is the
+[EC Buying PWM-to-0-10 V module, B0CPJGFCGR](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR).
+Its listed 3.3 V PWM compatibility and 3.3-12 V supply range make it a candidate
+for the existing ESP32 and regulated 12 V supply. This is **PWM, not I2C**:
+release 0.1.12 does not yet have its driver. Do not order it together with a
+GP8403 DAC for the same command path. See the
+[PWM alternative and old-code findings](pump-interface.md#amazon-pwm-converter-alternative)
+for the required firmware change, grounding/output checks and separate feedback
+protection. Amazon price, current availability and delivery remain unverified.
+
 | Item | Candidate or specification | Remaining check |
 | --- | --- | --- |
 | 1 pump command DAC | **DFRobot Gravity DFR0971 / GP8403, two-channel I2C 0-10 V**: [DigiKey Canada, part 1738-DFR0971-ND](https://www.digikey.ca/en/products/detail/dfrobot/DFR0971/18069239); [exact manufacturer product](https://www.dfrobot.com/product-2613.html) | Preferred purchase: matches the current GP8403 driver. Verify the received DFR0971, 3.3 V supply, 0-10 V output, V mode, DB15 1/3 reference, grounding and safe startup before connection |

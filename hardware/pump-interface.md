@@ -47,7 +47,11 @@ input-voltage damage threshold.
 
 ## Why the old Arduino can still have worked
 
-The old board was an Arduino Mega 2560 with 5 V I/O. D3 supports PWM;
+The old board was an Arduino Mega 2560 with 5 V I/O. The user confirms the
+notebook's direct connections: orange pump speed input to **D3**, white pump
+feedback to **A8**, blue to GND beside AREF/D13, and red start/stop to the
+Arduino VIN header. Do not assume an unseen external DAC or conversion board.
+D3 supports PWM;
 `analogWrite()` does not generate a 10 V analog command by itself. A lower
 command range or external conditioning could explain the old setup. The old
 bridge code does not identify that circuitry. The pump manual does not establish
@@ -125,7 +129,7 @@ confirmation that the shipped firmware or a header position is configured.
 | Notebook wire | Recorded Arduino connection | What must be checked |
 | --- | --- | --- |
 | Orange, pump VIN | Digital 3 | Continuity to DB15 pin 1, input return pin 3 and any PWM/voltage conditioning |
-| White, pump VOUT | Analog A8 or A9; handwriting unclear | Continuity to pin 9, output return pin 5 and existing input scaling |
+| White, pump VOUT | Analog A8, confirmed by the user | Continuity to pin 9, output return pin 5 and actual feedback voltage |
 | Blue, ground | GND beside AREF/13; cable tag says DB15 pin 12 | This is the documented start/stop return; check where analog returns 3/5 went |
 | Red, start/stop | Arduino VIN | Verify pin 10/contact circuit; do not copy the old power-terminal connection |
 
@@ -137,6 +141,39 @@ are empty. The six LabVIEW document images show front panels, not pin constants.
 The notebook's D3 connection and Duty Cycle (0-255) indicator suggest PWM, but do
 not recover the full circuit. Pressure A10 and flow A12 also come from the
 notebook rather than fixed bridge assignments.
+
+## Amazon PWM-converter alternative
+
+The user's preference is Amazon rather than DigiKey because of delivery.
+An actual Canadian listing is
+[EC Buying PWM-to-voltage converter, B0CPJGFCGR](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR).
+Its own product description specifies 3.3-12 V module supply, 3.3-24 V PWM
+high level, 22 Hz-20 kHz input, and selectable 0-5/0-10 V output. It explicitly
+states no isolation and a shared supply/signal/output ground. Price and delivery
+to the lab address were not exposed; check the offer before ordering.
+
+This is a candidate for **ESP32 3.3 V PWM -> converter -> pump DC speed input**.
+A regulated 12 V supply is within its stated module-supply range. It avoids
+depending on the pump to interpret raw PWM. It does not use I2C and **cannot be
+operated by the GP8403 driver in release 0.1.12**; a separate PWM output driver,
+reviewed output pin and startup/watchdog tests must be added before use.
+
+The intended pump-side output remains OUT to DB15 pin 1, with the correctly
+reviewed module reference to pin 3. Because the converter is not isolated,
+resolve its reference to ESP32/USB and pump grounds before connecting it.
+First test it with the pump disconnected: verify its range selection, output
+at several duty cycles, zero command, reset, loss of PWM and power sequencing.
+Do not assume loss of PWM guarantees a zero output. The independent pump
+stop contact remains required. Feedback 9/5 still needs protected/scaled ADC
+acquisition; the command converter does not protect the feedback input.
+
+The original archive was re-read for this clarification. In its
+`10. LabVIEWInterface-C UF membrane codes-OB_RR.txt`, line 187 calls
+`analogRead(command[2])` and line 199 calls
+`analogWrite(command[2], command[3])`. LabVIEW supplies the channel/pin and duty
+value at runtime. The ZIP has no native `.vi` files, so it cannot recover those
+host-side constants or scaling. The notebook supplies the physical mapping.
+Pressure A10 and flow A12 are analog channels, not I2C connections.
 
 ## Revision and calibration
 
