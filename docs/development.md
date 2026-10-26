@@ -57,9 +57,18 @@ specific. Install development dependencies first, then run:
 ```
 
 The build creates a single windowed executable, a portable ZIP, dependency
-build metadata and `SHA256SUMS.txt` under `dist/release/`. It bundles the Python
+build metadata, a fresh-PC **MembraneControl-Setup** executable and `SHA256SUMS.txt`
+under `dist/release/`. The app bundles the Python
 runtime and application libraries. Device drivers are intentionally external.
 No installer or administrator access is required for ordinary app execution.
+
+The optional setup EXE contains the app and checked firmware sources. Its small
+.NET Framework launcher needs no Python on the destination PC. Setup downloads
+the pinned official full PythonCore x64 runtime, checks SHA256 before extraction,
+creates its own tool environment and prebuilds dry-run firmware. Nothing is
+uploaded to a board during installation. See [new-PC setup](setup-new-pc.md).
+`python packaging/smoke_setup.py` verifies the actual setup payload and plan
+without installing anything, downloading tools or opening USB ports.
 
 Package resources, including preset JSON, belong inside `membrane_control`
 and must be read with `importlib.resources`. The build collects that package's

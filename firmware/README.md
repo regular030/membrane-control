@@ -8,6 +8,12 @@ Nothing in this repository establishes that the physical rig is commissioned.
 
 ## One-time setup on each Windows computer
 
+For a new PC, the **MembraneControl-Setup** EXE in
+[Releases](https://github.com/regular030/membrane-control/releases) performs the
+Python and firmware-tool setup automatically. It creates a separate **Flash ESP32
+dry run** shortcut. See [new-PC setup](../docs/setup-new-pc.md). The manual commands
+below are an alternative for a source checkout, not prerequisites for that installer.
+
 The downloaded EXE runs the desktop app. It does not include the firmware build
 tools or upload firmware. A fresh clone or source ZIP also has no `.venv` folder;
 that folder is created locally and must not be copied from another computer.
@@ -20,7 +26,8 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install "platformio==6.2.0"
 ```
 
-Python 3.12 is the version used for local project validation. If `py -3.12` is
+Python 3.12 is used for desktop/source validation; the setup's dedicated Python
+3.14.10 runtime has also compiled the ESP32 dry-run build. If `py -3.12` is
 unavailable, install Python from [python.org](https://www.python.org/downloads/windows/)
 or check the installed versions with `py -0p` before choosing an interpreter.
 PlatformIO's general requirements are documented
@@ -63,6 +70,10 @@ USB/UART communication only; it does not commission the relays or rig.
    RS-232 or RS-485 signals. With a separately powered board, leave the adapter's
    3.3 V and 5 V supply outputs unconnected. Use the board header's actual labels,
    not an assumed pin order from a product photo.
+   For the DAOKAI six-in-one adapter and the supplied DIP-mode chart, choose
+   **USB-TTL**: DIP 1 (USB) ON, DIP 2 (485) OFF, S1 toward **232-485** (shown as
+   Down in that chart). Disconnect USB and board power before changing modes
+   or wiring. A flashing TX LED alone does not establish an ESP32 response.
 3. Close Membrane Control and all serial monitors so they release the port.
    Identify the controller adapter in Device Manager by unplugging/replugging
    that adapter only. The balance's USB-to-RS-232 cable is a separate device and

@@ -1,5 +1,35 @@
 # Software validation
 
+## Fresh-PC setup, version 0.1.7
+
+Checked locally on Windows 11 x64, 26 October 2026:
+
+- All 173 software tests passed: the existing 130 desktop tests and 43 setup,
+  driver-helper and bundle checks. External installs, downloads and serial ports
+  are mocked in the setup unit tests.
+- The real setup EXE compiled with the Windows .NET Framework compiler. Its
+  `--plan` smoke check authenticated the embedded payload, accepted a target
+  containing spaces and left that install target absent. No tools were installed
+  or downloaded by this check.
+- The regular app EXE opened, produced a 1360 x 940 PNG and exited cleanly.
+- The official full PythonCore 3.14.10 x64 ZIP matched its published SHA256. An
+  isolated runtime created a venv, installed PlatformIO 6.2.0 and pyserial 3.5,
+  and freshly compiled 48 firmware/framework translation units. The dry-run build
+  passed: 323057 bytes flash, 32800 bytes RAM. A native PowerShell 5.1 interpreter
+  probe was also exercised, including the fix for its argument-quoting behavior.
+- Python and pip downloads succeeded. A fresh compiler download hit a PlatformIO
+  mirror DNS failure. The compile reused cached package archives only after their
+  SHA256 and sizes matched the live publisher metadata. A completely fresh
+  network installation and a separate clean Windows PC remain unverified.
+- Silicon Labs' driver archive returned HTTP 403. Automatic driver installation
+  stays disabled, with no invented hash or unsigned fallback. The helper provides
+  official guidance. Its tests cover disabled downloads and validation failures.
+- Both GitHub workflow files pass local actionlint with optional ShellCheck and
+  Pyflakes integration disabled. Hosted Actions remain blocked by account billing.
+
+Setup never uploads firmware. No real serial port, board or physical rig was
+operated during these software checks. The controller firmware source is unchanged.
+
 ## Desktop version 0.1.6
 
 Serial disconnect handling, checked locally on Windows 11 x64, 26 October 2026:

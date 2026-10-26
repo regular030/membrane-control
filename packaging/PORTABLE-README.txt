@@ -1,4 +1,4 @@
-Membrane Control 0.1.5
+Membrane Control portable app
 Windows 11 x64 app
 
 Developed for membrane research in Dr. Onita Basu's lab at Carleton University.

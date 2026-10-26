@@ -10,15 +10,19 @@ sequences and saving results. **Start with the demo. No USB devices are needed.*
 Open the [short Start here guide](docs/START-HERE.md).
 
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
-   and download the Windows `.exe` under **Assets**. Sign in if GitHub asks.
+   and download the Windows `.exe` under **Assets**. For a fresh PC including
+   Python and ESP32 firmware tools, choose **MembraneControl-Setup**.
+   Sign in if GitHub asks.
    **Source code (zip)** contains the code, not the ready-to-run app.
-2. Double-click the EXE. Leave **Simulation mode** checked.
+2. Double-click the EXE. If using Setup, wait for completion and open the new
+   **Membrane Control** shortcut. Leave **Simulation mode** checked.
 3. Choose a **Preset**, then click **Start run**.
 4. Click **Stop run**, then **Export CSV** to save the results.
 5. Use **Run history** to find and export earlier runs.
 
 Python and the app's libraries are bundled. LabVIEW is not required.
 For download, driver or startup help, see [installation](docs/installation.md).
+For setup on a new PC, see [one-file setup](docs/setup-new-pc.md).
 The app's **Start here** button opens its **Help** tab.
 Use **Ctrl + -** to shrink the whole interface, **Ctrl + +** (or **Ctrl + =**)
 to enlarge it, and **Ctrl + 0** to reset to 100%.

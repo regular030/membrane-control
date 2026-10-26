@@ -163,7 +163,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         version = validate_version(args.version or package_version())
-        build(version, clean=not args.incremental)
+        executable = build(version, clean=not args.incremental)
+        from build_setup import build_setup
+        build_setup(version, executable)
     except (ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"Build failed: {exc}", file=sys.stderr)
         return 1

@@ -1,25 +1,25 @@
-Membrane Control 0.1.6 fixes misleading connection errors when a serial port cannot open or the controller is unplugged.
+Membrane Control 0.1.7 adds a one-file Windows setup for a new PC, including Python and the ESP32 firmware tools.
 
 Developed for membrane research in **Dr. Onita Basu's lab at Carleton University**.
 
 ## Download
 
-Under **Assets**, download **MembraneControl-0.1.6-windows-x64.exe** and double-click it, or extract the matching portable ZIP. Python and application libraries are bundled. Firmware build tools and USB drivers are separate.
+Under **Assets**, download **MembraneControl-Setup-0.1.7-windows-x64.exe** and double-click it. No existing Python installation is needed. Internet is required for the official Python runtime and firmware dependencies. Setup installs the app, its own Python, PlatformIO and the ESP32 compiler/framework, and creates app and dry-run flashing shortcuts.
 
-## Connection errors
+## Setup behavior
 
-A failed serial connection now detaches immediately and keeps its original error, such as access denied or a disconnected USB adapter. It no longer accumulates commands on a stopped worker and replaces the useful error with "queue full" or "No acknowledgement for stop". An active run disconnect still faults and withdraws heartbeats immediately.
+Setup runs for the current user. It verifies bundled file hashes and the official Python ZIP before use, records progress in a log, and prebuilds the dry-run firmware without opening a serial port. It does not register a global Python installation or change PATH. Firmware upload remains a separate action on the COM port chosen by the operator.
 
-The firmware guide now includes first-time Windows tool setup and dry-run flashing instructions for the 16-relay board with an external USB-to-UART adapter. Confirm the actual board input voltage and polarity before applying power. The listing alone does not verify 12 V compatibility.
+USB drivers remain separate. The optional USB driver help shortcut provides official guidance; automatic CP210x driver installation is disabled because the vendor archive was unavailable for verification. The scale adapter's chipset must be identified before choosing its driver.
 
-Balance instructions now cover the photographed USB-to-RS232 adapter, alongside the alternative USB-B I/O connection.
+The regular **MembraneControl-0.1.7-windows-x64.exe** and matching ZIP remain available for app-only use. Those downloads already bundle the app's Python runtime and libraries.
 
 ## Validation
 
-All **130 desktop tests passed**, including regressions for failed port opening, active USB disconnects, preserved error messages and slow port startup. The packaged Windows EXE was also checked for launch, screenshot and clean exit. See the [validation record](https://github.com/regular030/membrane-control/blob/v0.1.6/docs/validation.md).
+All **173 software tests passed**. The app EXE passed its launch check, and the actual setup EXE verified its embedded payload and read-only setup plan. A dedicated Python 3.14.10 runtime installed PlatformIO 6.2.0 and compiled dry-run firmware. Fresh compiler download encountered a package-mirror DNS error; the compile used cached archives checked against the publisher's SHA256 values. A complete installation on a clean separate PC remains to be checked. See the [validation record](https://github.com/regular030/membrane-control/blob/v0.1.7/docs/validation.md).
 
-ESP32 firmware is unchanged from 0.1.3. No board was flashed or physical rig tested for this update. Factory firmware remains a dry run, with physical operation awaiting commissioning. GitHub-hosted Actions remain blocked by the account's billing/spending-limit error; release checks run locally.
+ESP32 firmware source is unchanged from 0.1.3. No board was flashed or physical rig tested for this update. Factory firmware remains a dry run, with physical operation awaiting commissioning. GitHub-hosted Actions remain blocked by the account's billing/spending-limit error; release checks run locally.
 
-[Start here](https://github.com/regular030/membrane-control/blob/v0.1.6/docs/START-HERE.md) |
-[Installation](https://github.com/regular030/membrane-control/blob/v0.1.6/docs/installation.md) |
-[Firmware setup and flashing](https://github.com/regular030/membrane-control/blob/v0.1.6/firmware/README.md)
+[New-PC setup](https://github.com/regular030/membrane-control/blob/v0.1.7/docs/setup-new-pc.md) |
+[Installation](https://github.com/regular030/membrane-control/blob/v0.1.7/docs/installation.md) |
+[Firmware setup and flashing](https://github.com/regular030/membrane-control/blob/v0.1.7/firmware/README.md)

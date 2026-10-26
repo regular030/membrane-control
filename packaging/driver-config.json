@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "Silicon Labs CP210x Universal Windows Driver",
+  "available": false,
+  "advertised_version": "11.6.0",
+  "checked_date": "2026-10-26",
+  "url": "https://www.silabs.com/documents/public/software/CP210x_Universal_Windows_Driver.zip",
+  "sha256": null,
+  "support_url": "https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers",
+  "inf_path": "silabser.inf",
+  "catalog_path": "silabser.cat",
+  "unavailable_reason": "The official archive returned HTTP 403 during release preparation. No archive or checksum could be verified, so automatic download and driver installation are disabled."
+}
