@@ -32,6 +32,7 @@ class RelayBenchSession:
         self.transport_factory = transport_factory or SerialTransport
         self.clock = clock
         self.transport = None
+        self._cleanup_transport = None
         self.next_id = 0
         self.pending = {}
         self.operation = None
@@ -53,6 +54,10 @@ class RelayBenchSession:
         self.last_heartbeat_ack = None
         self.error = ''
         self.message = 'Not connected. Select the bare relay board port, then Connect.'
+
+    @property
+    def cleanup_pending(self):
+        return self._cleanup_transport is not None
 
     @property
     def fresh(self):
@@ -115,6 +120,8 @@ class RelayBenchSession:
     def connect(self, port):
         if self.transport is not None:
             raise ValueError('Disconnect before choosing another board.')
+        if self.cleanup_pending:
+            raise ValueError('Previous serial connection still needs cleanup. Choose Recover connection before reconnecting.')
         if not isinstance(port, str) or not port.strip():
             raise ValueError('Select the relay board serial port.')
         self._clear_attestations()
@@ -143,6 +150,10 @@ class RelayBenchSession:
 
     def detach(self, message='Disconnected. Reconnect and repeat the bare-board checks.'):
         transport, self.transport = self.transport, None
+        retry = transport is None
+        if retry:
+            transport = self._cleanup_transport
+        self._cleanup_transport = None
         self.pending.clear()
         self._clear_attestations()
         self.verified = False
@@ -156,12 +167,26 @@ class RelayBenchSession:
             # and closes its handle. Duck transports retain zero-argument close.
             self.next_id = self.next_id % 0x7ffffffe + 1
             try:
-                close_transport(transport, stop_message={'v': 1, 'id': self.next_id, 'cmd': 'stop'})
+                stop = None if retry else {'v': 1, 'id': self.next_id, 'cmd': 'stop'}
+                close_transport(transport, stop_message=stop)
             except Exception as exc:
                 logging.exception('Could not close relay test serial connection')
+                if getattr(transport, 'cleanup_pending', True):
+                    self._cleanup_transport = transport
                 if not self.error:
                     self.error = f'Could not close the serial connection: {exc}'[:500]
+                if self.cleanup_pending and 'Recover connection' not in self.error:
+                    self.error = (self.error[:330] + ' Port cleanup is pending; choose Recover connection to retry.')[:500]
         self.message = self.error or message
+
+    def recover(self, port):
+        """Release this session first; a new HELLO never restores relay checks."""
+        self.detach('Releasing the previous connection before a fresh handshake.')
+        if self.cleanup_pending:
+            return
+        # SerialTransport also retries retired cleanup owners from deleted
+        # dialogs. It refuses to open a replacement while their handle remains.
+        self.connect(port)
 
     def fail(self, message):
         if not self.error:
@@ -420,8 +445,13 @@ class RelayBenchDialog(QDialog):
         self.connect_button.clicked.connect(self.connect_board)
         self.disconnect_button = QPushButton('Disconnect')
         self.disconnect_button.clicked.connect(self.disconnect_board)
+        self.recover_button = QPushButton('Recover connection')
+        self.recover_button.setToolTip('Release the previous serial connection, then identify the board again. '
+                                       'No relay test resumes; repeat all bare-board checks.')
+        self.recover_button.clicked.connect(self.recover_board)
         row.addWidget(self.connect_button)
         row.addWidget(self.disconnect_button)
+        row.addWidget(self.recover_button)
         layout.addLayout(row)
         self.status_label = QLabel()
         self.status_label.setWordWrap(True)
@@ -532,6 +562,14 @@ class RelayBenchDialog(QDialog):
         self.session.detach()
         self._render()
 
+    def recover_board(self):
+        port = self.port_combo.currentData()
+        if port in self.excluded_ports:
+            self.session.message = 'This port is already used by another instrument.'
+            self._render()
+            return
+        self._act(lambda: self.session.recover(port))
+
     def stop(self):
         self.session.detach('Stop requested; disconnected and stopped sending heartbeats. Reconnect to test again.')
         self._render()
@@ -565,8 +603,10 @@ class RelayBenchDialog(QDialog):
         session = self.session
         connected = session.transport is not None
         live = not self._shutdown_done
-        self.connect_button.setEnabled(live and not connected and bool(self.port_combo.currentData()))
-        self.disconnect_button.setEnabled(live and connected)
+        self.connect_button.setEnabled(live and not connected and not session.cleanup_pending
+                                       and bool(self.port_combo.currentData()))
+        self.disconnect_button.setEnabled(live and (connected or session.cleanup_pending))
+        self.recover_button.setEnabled(live and bool(self.port_combo.currentData()))
         self.stop_button.setEnabled(live and connected)
         self.refresh_button.setEnabled(live and not connected)
         self.port_combo.setEnabled(live and not connected)

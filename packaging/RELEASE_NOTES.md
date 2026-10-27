@@ -1,29 +1,40 @@
-Membrane Control 0.1.15 adds normal-firmware control for the six confirmed valves and improves Adam Nimbus scale communication.
+Membrane Control 0.1.16 corrects the installed valve IDs/mapping and fixes serial-port cleanup and recovery.
 
 Developed for **Dr. Onita Basu's lab at Carleton University**.
 
-## Download and update
+## Update
 
-Install **MembraneControl-Setup-0.1.15-windows-x64.exe**. Close the app's controller connection, use the installed **Flash normal controller** shortcut to upload `esp32-physical`, then reconnect with Simulation mode off. Updating only the app does not update the ESP32.
+Close the old app completely and install **MembraneControl-Setup-0.1.16-windows-x64.exe**. The COM recovery fix is in the desktop app. For the corrected normal valve mapping, also use **Flash normal controller**, select the ESP32 port (currently COM5), and reconnect in the main controller screen. App-only updates cannot change the ESP32 program.
 
-## Six valves in normal firmware
+## Confirmed valve map
 
-The user confirmed **six valves: V1-V6 = relay bits 0-5, LOW off and HIGH energized**. Dashboard now shows six ON/OFF controls above the measurements. They work with normal firmware without pressure, flow, balance, DAC, a valve-profile form or extra approval checkboxes. The states persist until changed or stopped, replacing the need to use the old 500 ms test program for this task.
+The installed labels are **V1, V2, V3, V4, V5 and V7**. There is **no V6**:
 
-The dedicated valve-only command holds pump_percent at zero. Stop turns all six off; reconnect, reset and the existing three-second communication watchdog do not resume an old valve state. Bits6-15 stay LOW, and the unused seventh legacy wire slot is rejected if true. Pump/manual and automatic experiment configuration requirements remain separate. The six-valve capability does not claim that missing sensor channels are configured.
+| Valve | Bit |
+| --- | --- |
+| V1 | 0 |
+| V2 | 1 |
+| V3 | 2 |
+| V4 | 3 |
+| V5 | 5 |
+| V7 | 6 |
 
-Follow [normal valve controls](https://github.com/regular030/membrane-control/blob/v0.1.15/docs/normal-valves.md). Older pulse/relay tools remain optional under Connections and settings.
+Bit4 and bits7-15 remain LOW in manual mode. The normal UI retains the actual V7 label and hides V6 in controls, live data and sequence editing. The demo sequence no longer commands the absent V6. Normal ON/OFF still works without sensors or extra profile forms; pump/experiment behavior is unchanged.
 
-## Adam Nimbus scale
+Firmware announces explicit installed IDs as well as the bits. The new app keeps old firmware identifiable but disables the mismatched valve capability with an update message. The seven-slot wire format retains physical numbering: absent V6/index5 is false; V7/index6 is active. See [normal valves](https://github.com/regular030/membrane-control/blob/v0.1.16/docs/normal-valves.md).
 
-The main scale connection can request weights automatically at most once per second when data is not streaming, using the documented fixed Print command. It can also request a reading explicitly. Formats NONE8N1 / EVEN7E1 / ODD7O1 and4800 baud are supported; raw balances accept CR, LF and CRLF. The parser accepts documented Net fields, decimal comma and form boundaries without treating Gross/Tare/ID as net mass.
+## COM5 recovery
 
-Raw-balance USB DTR readiness now defaults on; ESP32 reset/control lines retain their previous behavior. No tare, zero, reset or scale-settings commands are sent. A request does not count as a received weight. The separate **Test scale / raw data** window shows actual received bytes, escaped text/hex, decoded lines, valid masses and errors, and releases the normal scale port first.
+Failure-injection tests reproduced two software bugs: a failed close could lose ownership of an open handle, and a blocking driver close could freeze the GUI despite its worker timeout. Pending/failed handles are now retained across deleted test windows. One owned background closer performs driver cleanup, callers wait only their deadline, and a new connection cannot overlap the app's retired owner.
 
-The lab's current settings are **COM6 /9600**, USB-B I/O. The physical display works, but a live response is not yet verified because COM6 is on the separate lab PC. Use the [scale connection guide](https://github.com/regular030/membrane-control/blob/v0.1.15/docs/scale-connection.md) if it still reports no weight. DTR is a compatibility improvement, not a confirmed diagnosis of this particular unit.
+**Recover connection** in **Bare relay board test** retries cleanup, then starts a fresh firmware handshake. It clears old test state and does not replay pulses. Terminal errors take priority over stale packets, receive overflow keeps its exact reason, and hidden Dashboard graph refreshes pause behind equipment dialogs while polling continues. Other instruments' active ports are not seized.
+
+The bare-relay firmware does not need reflashing solely for this app recovery change. A listed COM port still cannot prove firmware response or external driver health. The exact cause of the physical COM5 incident remains unconfirmed because it is on the separate lab PC. See [serial recovery](https://github.com/regular030/membrane-control/blob/v0.1.16/docs/serial-recovery.md).
 
 ## Validation
 
-**657 desktop/packaging tests passed**, with four real-symlink cases skipped for unavailable Windows privilege. **98 native firmware tests and all four ESP32 target builds passed.** Serial tests use fake streams and include actual byte framing, fixed Print requests, format/DTR handling, bounded polling, no invented weight evidence and cleanup. The packaged app launched and exited cleanly; Setup verified its payload without installation or USB access. Release checksums and actionlint passed. See [validation](https://github.com/regular030/membrane-control/blob/v0.1.15/docs/validation.md).
+**686 desktop/packaging tests passed**, with four real-symlink cases skipped for unavailable Windows privilege. **100 native firmware tests and all four ESP32 builds passed.** Twelve recovery regressions cover failed/blocked closes, already-closed errors, deleted-window ownership, pending open, concurrent deadlines, no pulse replay, terminal overflow and active-instrument preservation. The corrected mapping and Recover button were visually checked with fake ports. Final packaging results are recorded in [validation](https://github.com/regular030/membrane-control/blob/v0.1.16/docs/validation.md).
 
-No physical valves or lab serial ports were operated while preparing this release. Hosted Actions retain the existing account billing lock; these binaries are built and verified locally.
+The final packaged app passed an isolated Demo launch and clean exit; the Setup EXE passed its payload verification in plan mode. Setup/portable sources and docs match the final files, and firmware manifests plus all release artifact checksums passed. Both GitHub workflows passed actionlint.
+
+This release retains the prior Nimbus scale improvements. No lab serial port was opened, no firmware was uploaded, and no physical valve was operated while preparing this update. Hosted Actions retain the existing account billing lock; binaries are built and checked locally.

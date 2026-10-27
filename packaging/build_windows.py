@@ -153,6 +153,7 @@ def build(version: str, clean: bool = True, firmware_archive: Path | None = None
             (ROOT / "docs" / "flow-sensor-troubleshooting.md", "flow-sensor-troubleshooting.md"),
             (ROOT / "docs" / "normal-valves.md", "normal-valves.md"),
             (ROOT / "docs" / "scale-connection.md", "scale-connection.md"),
+            (ROOT / "docs" / "serial-recovery.md", "serial-recovery.md"),
             (ROOT / "docs" / "pwm-converter-setup.md", "pwm-converter-setup.md"),
             (ROOT / "hardware" / "procurement.md", "parts-and-ordering.md"),
             (ROOT / "hardware" / "pump-interface.md", "pump-interface.md"),

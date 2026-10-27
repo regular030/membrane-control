@@ -50,7 +50,7 @@ function Invoke-DryRunFlash {
         Write-Host 'This is a separate physical valve-test program, not dry run or the unloaded raw relay test. It has no sensor, DAC, pump or experiment controls.'
         Write-Host 'Disconnect every external wire from all relay COM, NO and NC contacts for this initial upload. Read docs/valve-test.md before preparing a reviewed valve profile or connecting loads.'
     } elseif ($Firmware -eq 'esp32-physical') {
-        Write-Host 'NORMAL CONTROLLER: six confirmed manual valves, V1-V6 = relay bits 0-5.'
+        Write-Host 'NORMAL CONTROLLER: V1,V2,V3,V4,V5,V7 = relay bits 0,1,2,3,5,6. No V6; bit4 unused.'
         Write-Host 'Dashboard valve ON/OFF controls do not need pressure, flow, scale, a DAC or the separate valve-test profile.'
         Write-Host 'Pump/experiment operation remains separate and requires its configured inputs and pump interface.'
     } else {
@@ -87,7 +87,7 @@ function Invoke-DryRunFlash {
             Write-Host 'Follow docs/valve-test.md in the installation folder. The shipped valve-test profile must report unverified and keep physical outputs locked.'
             Write-Host 'A reviewed valve profile and its commissioning checks are required before connecting loads. This target does not use sensors or control the pump, DAC or an experiment.'
         } elseif ($Firmware -eq 'esp32-physical') {
-            Write-Host 'Open the app, turn Simulation mode off, connect this controller port and use Dashboard V1-V6 ON/OFF. No sensor connection or extra profile form is required for manual valves.'
+            Write-Host 'Open the app, turn Simulation mode off, connect this controller port and use Dashboard V1-V5 and V7 ON/OFF. No sensor connection or extra profile form is required for manual valves.'
             Write-Host 'Finish the reviewed hardware profile, sensor calibration, pump interface and process-safe wiring before real operation. Uploading this target alone does not commission the rig.'
         } else {
             Write-Host 'Open the app, turn Simulation mode off and select this controller port. It must report Connected (dry run).'

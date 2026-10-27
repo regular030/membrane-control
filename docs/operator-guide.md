@@ -22,7 +22,8 @@ wait for the stopped state before exporting or changing the setup.
 
 ## Understand the screen
 
-The normal firmware supports the six confirmed valves **V1-V6 = bits 0-5**.
+Normal firmware **0.1.16** supports the six confirmed valves **V1-V5 and V7**,
+mapped to relay bits **0, 1, 2, 3, 5, 6**. There is no V6; bit 4 stays unused.
 Use their Dashboard ON/OFF buttons without sensors or a profile form. **Stop
 valves** turns them all off; this mode commands pump zero. See
 [normal valve controls](normal-valves.md) and [scale connection](scale-connection.md).
@@ -55,8 +56,8 @@ Use **Start here** or the **Help** tab if you need the first-use instructions.
 During a sequence, **Live readings** beneath the graphs adds one row whenever a
 sample is recorded, using the sequence's **Record every** interval. It includes
 the recorded timestamp, runtime, cycle/step, desired and measured flow, flow
-estimated from the scale, pressure, flux, mass, pump command/feedback, all six
-commanded valve states, operating mode and device/fault status.
+estimated from the scale, pressure, flux, mass, pump command/feedback, the six
+commanded valve states **V1-V5 and V7**, operating mode and device/fault status.
 
 Missing measurements display **Unavailable**. Valve and pump commands do not
 confirm actual movement. The table shows the latest 1,000 rows to keep memory
@@ -70,6 +71,10 @@ Open **Sequence editor**. Each row is one step with a duration, valve settings
 and a pump setting. Check every row before applying changes. The recording
 interval controls how often results are saved, not how quickly the controls
 respond. All time fields show their units.
+
+The six named valve settings are V1-V5 and V7. Saved arrays retain their seven
+physical-number slots: absent V6 at index 5 stays false and V7 stays at index 6.
+Do not shift V7 into V6 when correcting an old sequence.
 
 **Apply sequence** uses your edited sequence. **Save as** asks for a name and
 file location, then saves and applies that sequence as a custom preset.
@@ -99,11 +104,15 @@ operation before changing the target.
 
 ## Try manual controls
 
-With no sequence running, a valve button sends that valve command immediately.
-Typing a **New pump setting** does not send it until you click **Apply pump**.
-The **Sent** value shows the last command. Changing a valve keeps that sent pump
-setting. Click **Stop run** to leave manual control before starting a sequence.
-These are commands; the app cannot confirm physical valve movement.
+With no sequence running, the normal physical valve buttons send V1-V5/V7
+commands immediately. This valve-only mode needs no sensors or profile form,
+keeps pump command zero, and leaves unused bits 4 and 7-15 off. **Stop valves**
+turns all six off. These are coil commands, not measured valve positions.
+
+Separately configured pump controls use **New pump setting** and **Apply pump**;
+typing a value alone does not send it. The **Sent** value shows the last command.
+Stop the current manual mode before starting a sequence or switching between
+valve-only and pump operation.
 
 ## Use a commissioned rig
 

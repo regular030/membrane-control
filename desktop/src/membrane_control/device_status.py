@@ -10,18 +10,27 @@ import math
 SENSOR_KEYS = ("pressure", "flow", "pump_feedback")
 SENSOR_STATUS_CODES = frozenset(("simulated", "not_configured", "profile_locked",
     "hardware_unavailable", "uncalibrated", "out_of_range", "stale", "reading_received"))
+MANUAL_VALVE_IDS = (1, 2, 3, 4, 5, 7)
+MANUAL_VALVE_BITS = (0, 1, 2, 3, 5, 6)
 
 
 def checked_valve_control(packet: dict) -> dict:
-    """Authorize only the firmware's explicit six-valve capability and map."""
+    """Require the corrected installed IDs/map; v15's different map stays locked."""
     bits = packet.get("valve_bits")
+    ids = packet.get("manual_valve_ids")
     valid_map = (type(bits) is list and len(bits) == 6
-                 and all(type(bit) is int and 0 <= bit <= 15 for bit in bits)
-                 and len(set(bits)) == 6)
+                 and all(type(bit) is int for bit in bits) and tuple(bits) == MANUAL_VALVE_BITS)
+    valid_ids = (type(ids) is list and len(ids) == 6
+                 and all(type(valve) is int for valve in ids) and tuple(ids) == MANUAL_VALVE_IDS)
     valid_count = type(packet.get("manual_valve_count")) is int and packet["manual_valve_count"] == 6
-    return {"valve_control_ready": packet.get("valve_control_ready") is True and valid_count and valid_map,
-            "manual_valve_count": 6 if valid_count else 0,
-            "valve_bits": list(bits) if valid_map and valid_count else []}
+    compatible = valid_count and valid_map and valid_ids
+    ready = packet.get("valve_control_ready") is True and compatible
+    status = ("Valve-only controls ready" if ready else "Valve-only controller outputs are not ready"
+              if compatible else "Update controller firmware to 0.1.16 or later for the confirmed V1-V5 and V7 mapping")
+    return {"valve_control_ready": ready,
+            "manual_valve_count": 6 if compatible else 0,
+            "manual_valve_ids": list(ids) if compatible else [],
+            "valve_bits": list(bits) if compatible else [], "valve_control_status": status}
 
 
 def checked_controller_diagnostics(packet: dict) -> dict:
@@ -139,7 +148,7 @@ def device_statuses(snapshot: dict, desktop_simulation: bool) -> list[dict[str, 
     elif connected and checked_valve_control(snapshot)["valve_control_ready"]:
         add("outputs", "Valves / pump",
             "Valve commands active" if snapshot.get("state") == "manual_valves" else "Valve control ready",
-            "Six valve commands are available through the firmware's valve-only mode. Actual valve/contact position and pump-running state are not monitored.", "warning")
+            "V1-V5 and V7 commands are available through the firmware's valve-only mode; V6 is unused. Actual valve/contact position and pump-running state are not monitored.", "warning")
     else:
         add("outputs", "Valves / pump", "Not monitored", "Valve-position and pump-running feedback are not monitored. A command does not confirm physical operation.")
     return rows

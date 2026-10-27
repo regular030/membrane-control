@@ -30,8 +30,9 @@ or a checked recipe-review box does not make the real rig ready.
 
 ## Need help?
 
-The confirmed rig has **six valves, V1-V6 = bits 0-5**. With app/normal firmware
-0.1.15, uncheck **Simulation mode**, connect the ESP32 and use the six ON/OFF
+The confirmed rig has **six valves: V1-V5 and V7**, mapped to bits
+**0, 1, 2, 3, 5, 6**. V6 is not installed; bit 4 is unused. With app/normal firmware
+**0.1.16**, uncheck **Simulation mode**, connect the ESP32 and use the six ON/OFF
 buttons directly on Dashboard. No sensors, extra profile form or review boxes
 are needed for manual valves. [Install the normal firmware once](normal-valves.md)
 using **Flash normal controller**. Pump/experiment configuration is separate.

@@ -38,9 +38,11 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false) {
   if (error) document["error"] = error;
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.15";
+    document["firmware_version"] = "0.1.16";
     document["valve_control_ready"] = hardware.valveControlReady();
     document["manual_valve_count"] = basu::kManualValveCount;
+    JsonArray ids = document["manual_valve_ids"].to<JsonArray>();
+    for (int id : basu::kManualValveIds) ids.add(id);
     JsonArray bits = document["valve_bits"].to<JsonArray>();
     for (int bit : hardware.manualValveBits()) bits.add(bit);
     document["pump_command_source"] = basu::pumpCommandSourceName(board.pumpCommandSource);

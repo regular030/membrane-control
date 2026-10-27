@@ -293,7 +293,7 @@ def test_any_upload_can_be_cancelled_without_executing_the_fake_tool(payload, se
         assert "Dry-run firmware uses generated" not in result.stdout
     elif selected == "esp32-physical":
         assert "NORMAL CONTROLLER" in result.stdout
-        assert "V1-V6 = relay bits 0-5" in result.stdout
+        assert "V1,V2,V3,V4,V5,V7 = relay bits 0,1,2,3,5,6" in result.stdout
         assert "do not need pressure, flow, scale" in result.stdout
         assert "physical outputs are locked" not in result.stdout
         assert "Dry-run firmware uses generated" not in result.stdout

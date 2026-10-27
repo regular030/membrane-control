@@ -1,5 +1,10 @@
 # Srliya 16-channel board: proposed wiring
 
+**Current installed valve map, version 0.1.16:** V1, V2, V3, V4, V5 and V7
+use bits 0, 1, 2, 3, 5 and 6. There is no V6 and bit 4 is unused. The
+[normal valve guide](../docs/normal-valves.md) describes the current controls;
+the peripheral wiring below remains a planning reference.
+
 Source: the user's screenshots and the [Amazon B0DKC2L2NH listing](https://www.amazon.ca/dp/B0DKC2L2NH), inspected 25 October 2026. These are seller-documented GPIO assignments and proposed peripheral connections. They are not a verified schematic or a commissioned physical profile.
 
 ## Relay control already on the PCB

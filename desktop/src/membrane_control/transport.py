@@ -10,6 +10,25 @@ from .models import Recipe
 from . import __version__
 
 MAX_LINE = 8192
+_retired_lock = threading.RLock()
+_retired_transports = {}
+
+
+def recover_serial_port(port):
+    """Retry only this application's retired cleanup owner, never an active port."""
+    key = str(port).strip().casefold()
+    with _retired_lock:
+        previous = _retired_transports.get(key)
+    if previous is None:
+        return
+    try:
+        previous.close()
+    except Exception as exc:
+        if previous.cleanup_pending:
+            raise RuntimeError(f'Previous serial connection has not released {port}: {exc}') from exc
+        # An error after an already-closed handle is diagnostic, not a port lease.
+    if previous.cleanup_pending:
+        raise RuntimeError(f'Previous serial connection is still releasing {port}; try Recover connection again.')
 
 
 def close_transport(transport, stop_message=None):
@@ -35,6 +54,7 @@ class SerialTransport:
             raise ValueError('DTR must be true or false when specified.')
         if not raw and (serial_format != '8N1' or diagnostics or dtr is True):
             raise ValueError('Alternate serial formats and raw diagnostics are for the balance only.')
+        recover_serial_port(port)
         self.port, self.baud, self.raw = port, baud, raw
         self.serial_format, self.diagnostics = serial_format, bool(diagnostics)
         self.dtr = bool(raw) if dtr is None else dtr
@@ -46,7 +66,9 @@ class SerialTransport:
         self._terminated = threading.Event()
         self._state_lock = threading.RLock()
         self._connection_lock = threading.Lock()
+        self._handle_close_lock = threading.Lock()
         self._close_lock = threading.Lock()
+        self._close_thread = None
         self._connection = None
         self._opened = False
         self._final_stop_payload = None
@@ -123,6 +145,9 @@ class SerialTransport:
             self.incoming.put_nowait(packet)
         except queue.Full:
             self._stop.set()
+            with self._state_lock:
+                if self._terminal_error is None:
+                    self._terminal_error = 'Serial receive queue overflow; serial traffic stopped. Disconnect and reconnect.'
 
     def _run(self):
         connection = None
@@ -210,6 +235,7 @@ class SerialTransport:
                 self._discard_outgoing()
             self._record_disconnect("Serial connection closed")
             self._terminated.set()
+            self._remember_cleanup(worker_finished=True)
 
     @staticmethod
     def _cancel_io(connection, *, cancel_write=True):
@@ -224,17 +250,75 @@ class SerialTransport:
                 pass  # Closing the handle below is the fallback for an unsupported cancellation.
 
     def _close_connection(self, *, force=False):
-        with self._connection_lock:
-            if self._connection is None or (not self._opened and not force):
-                return
-            connection, self._connection = self._connection, None
-            self._opened = False
+        # The worker and UI can arrive here together. Do not close one handle
+        # concurrently, or forget its owner before a failed close can be retried.
+        if not self._handle_close_lock.acquire(blocking=False):
+            return
+        try:
+            with self._connection_lock:
+                if self._connection is None or (not self._opened and not force and not self._close_error):
+                    return
+                if self._close_thread is not None and self._close_thread.is_alive():
+                    return
+                connection = self._connection
+                self._opened = False
+                self._close_thread = threading.Thread(target=self._finish_connection_close,
+                    args=(connection,), daemon=True, name=f'serial-close-{self.port}')
+                self._close_thread.start()
+        finally:
+            self._handle_close_lock.release()
+
+    def _finish_connection_close(self, connection):
+        # Some drivers can block in close(). Keep one owned closer off the GUI
+        # thread and retain the resource until it actually finishes. A retry
+        # must wait for this same closer, never race another close/open against it.
         self._cancel_io(connection)
         try:
             connection.close()
         except Exception as error:
-            self._close_error = str(error) or "Serial handle close failed"
+            self._close_error = str(error) or 'Serial handle close failed'
+            if not self._connection_still_open(connection):
+                with self._connection_lock:
+                    if self._connection is connection:
+                        self._connection = None
             self._record_disconnect(self._close_error)
+        else:
+            with self._connection_lock:
+                if self._connection is connection:
+                    self._connection = None
+            self._close_error = None
+        finally:
+            self._remember_cleanup()
+
+    @staticmethod
+    def _connection_still_open(connection):
+        try:
+            state = getattr(connection, 'is_open', None)
+            if type(state) is bool:
+                return state
+            closed = getattr(connection, 'closed', None)
+            if type(closed) is bool:
+                return not closed
+        except Exception:
+            pass
+        return True  # Cannot prove that the driver's handle was released.
+
+    @property
+    def cleanup_pending(self):
+        with self._connection_lock:
+            has_connection = self._connection is not None
+        return has_connection or self._thread.is_alive()
+
+    def _remember_cleanup(self, *, worker_finished=False):
+        with self._connection_lock:
+            has_connection = self._connection is not None
+        pending = has_connection or (not worker_finished and self._thread.is_alive())
+        key = str(self.port).strip().casefold()
+        with _retired_lock:
+            if pending:
+                _retired_transports[key] = self
+            elif _retired_transports.get(key) is self:
+                _retired_transports.pop(key)
 
     def _record_disconnect(self, error):
         # Keep the first failure even if close() also fails or the incoming
@@ -256,9 +340,14 @@ class SerialTransport:
                     continue
                 self._terminal_reported = True
             result.append(packet)
-        if self._terminated.is_set() and not self._terminal_reported:
-            self._terminal_reported = True
-            result.append({"type": "disconnected", "error": self._terminal_error or "Serial worker stopped"})
+        if self._terminal_error is not None or self._terminated.is_set():
+            # Failure takes precedence over queued old acknowledgements/status.
+            # In particular, queue overflow must expose its reason rather than
+            # letting a partial stale packet hide it in the protocol consumer.
+            if not self._terminal_reported:
+                self._terminal_reported = True
+                return [{"type": "disconnected", "error": self._terminal_error or "Serial worker stopped"}]
+            return [packet for packet in result if packet.get('type') == 'disconnected']
         return result
 
     def close(self, stop_message=None, *, timeout=1.0):
@@ -277,7 +366,15 @@ class SerialTransport:
                 raise ValueError("Shutdown message must be a valid v1 STOP command")
             final_payload = self._encode(stop_message)
         deadline = time.monotonic() + max(0.0, min(float(timeout), 2.0))
-        with self._close_lock:
+        try:
+            self._close_impl(final_payload, deadline)
+        finally:
+            self._remember_cleanup()
+
+    def _close_impl(self, final_payload, deadline):
+        if not self._close_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            raise RuntimeError('Serial cleanup is already in progress; try Recover connection again.')
+        try:
             with self._connection_lock:
                 connection = self._connection
                 can_write_stop = self._opened
@@ -306,8 +403,19 @@ class SerialTransport:
                 self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
                 if self._thread.is_alive():
                     raise RuntimeError("Serial worker is still shutting down; its pending open will be closed when it returns")
+            with self._connection_lock:
+                closer = self._close_thread
+            if closer is not None and closer is not threading.current_thread():
+                closer.join(timeout=max(0.0, deadline - time.monotonic()))
+                if closer.is_alive():
+                    raise RuntimeError('Serial handle is still closing; try Recover connection again.')
             if self._close_error:
                 raise RuntimeError("Serial handle could not be closed: " + self._close_error)
+            with self._connection_lock:
+                if self._connection is not None:
+                    raise RuntimeError('Serial handle is still closing; try Recover connection again.')
+        finally:
+            self._close_lock.release()
 
     def close_with_stop(self, message):
         return self.close(stop_message=message)

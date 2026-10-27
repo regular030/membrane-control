@@ -23,6 +23,7 @@ def payload_sources(root: Path, executable: Path, firmware_archive: Path | None 
         "docs/valve-test.md", "protocol/valve-test.md",
         "docs/flow-sensor-troubleshooting.md",
         "docs/normal-valves.md", "docs/scale-connection.md",
+        "docs/serial-recovery.md",
         "docs/pwm-converter-setup.md", "hardware/procurement.md",
         "firmware/examples/PwmConverterProfile.example.h",
         "firmware/examples/pwm-converter-bench/README.md",

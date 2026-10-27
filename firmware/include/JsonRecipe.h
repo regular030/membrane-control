@@ -76,12 +76,12 @@ inline const char* parseManualValves(JsonVariantConst request, Outputs& destinat
   }
   const auto valves = request["valves"];
   if (!valves.is<JsonArrayConst>() || valves.size() != kValveCount)
-    return "valves must contain seven wire slots; the unused last slot is false";
+    return "valves must contain seven physical-label wire slots; V6 is false";
   Outputs candidate;
   for (std::size_t index = 0; index < kValveCount; ++index) {
     if (!valves[index].is<bool>()) return "valve states must be booleans";
     candidate.valves[index] = valves[index].as<bool>();
-    if (index >= kManualValveCount && candidate.valves[index]) return "unused valve slot must remain false";
+    if (!manualValveSlotAllowed(index) && candidate.valves[index]) return "V6 is not installed; its wire slot must remain false";
   }
   destination = candidate;  // Pump is always zero, never read from this command.
   return nullptr;

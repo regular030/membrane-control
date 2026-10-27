@@ -1,5 +1,10 @@
 # Hardware baseline
 
+**Current installed valve map, version 0.1.16:** V1, V2, V3, V4, V5 and V7
+use bits 0, 1, 2, 3, 5 and 6. There is no V6 and bit 4 is unused. Use the
+[normal valve guide](../docs/normal-valves.md) for sensor-independent ON/OFF
+controls. Earlier seven-valve planning below does not override this map.
+
 Planning baseline updated 26 October 2026. No complete physical wiring profile
 is commissioned yet.
 

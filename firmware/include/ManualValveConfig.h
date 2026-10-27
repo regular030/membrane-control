@@ -19,11 +19,11 @@ inline const char* validateManualValveConfig(const ManualValveConfig& config) {
 }
 
 inline ManualValveConfig confirmedRigManualValves() {
-  // User-confirmed rig: SIX physical valves, V1..V6 = bits0..5.
-  // All LOW is off, all HIGH energized. Bits6..15 remain LOW in this mode.
+  // User-confirmed labels V1,V2,V3,V4,V5,V7 map to bits0,1,2,3,5,6.
+  // There is no V6. All LOW is off; bit4 and bits7..15 stay LOW.
   ManualValveConfig config;
   config.confirmed = true;
-  config.bits = {{0, 1, 2, 3, 4, 5}};
+  config.bits = {{0, 1, 2, 3, 5, 6}};
   return config;
 }
 

@@ -8,7 +8,7 @@ using namespace basu;
 void setUp() { fake::resetGpio(); fake::resetLedc(); Wire.reset(); }
 void tearDown() {}
 
-std::array<bool, kValveCount> sixOn() { return {{true, true, true, true, true, true, false}}; }
+std::array<bool, kValveCount> sixOn() { return {{true, true, true, true, true, false, true}}; }
 
 Controller valveCore() {
   SafetyConfig safety;
@@ -42,7 +42,7 @@ BoardConfig fullFixture() {
   config.i2cSdaPin = 21; config.i2cSclPin = 22;
   config.shiftDataPin = 14; config.shiftClockPin = 13;
   config.shiftLatchPin = 12; config.shiftOePin = 5;
-  config.valveBits = {{0, 1, 2, 3, 4, 5, 6}};
+  config.valveBits = {{0, 1, 2, 3, 5, 4, 6}};  // Slot5 is unused V6; slot6 is V7.
   config.pressure.source = AnalogSource::NativeAdc1;
   config.pressure.pin = 34; config.pressure.calibrationVerified = true;
   return config;
@@ -53,8 +53,14 @@ void test_confirmed_profile_is_six_valves_and_invalid_profiles_cannot_initialize
   TEST_ASSERT_EQUAL(6, kManualValveCount);
   TEST_ASSERT_EQUAL(7, kValveCount);  // Wire compatibility only.
   TEST_ASSERT_NULL(validateManualValveConfig(confirmed));
-  for (std::size_t index = 0; index < kManualValveCount; ++index)
-    TEST_ASSERT_EQUAL(index, confirmed.bits[index]);
+  const int expectedBits[] = {0, 1, 2, 3, 5, 6};
+  const int expectedIds[] = {1, 2, 3, 4, 5, 7};
+  const std::size_t expectedSlots[] = {0, 1, 2, 3, 4, 6};
+  for (std::size_t index = 0; index < kManualValveCount; ++index) {
+    TEST_ASSERT_EQUAL(expectedBits[index], confirmed.bits[index]);
+    TEST_ASSERT_EQUAL(expectedIds[index], kManualValveIds[index]);
+    TEST_ASSERT_EQUAL(expectedSlots[index], kManualValveSlots[index]);
+  }
   Hardware hardware(BoardConfig{}, false);
   TEST_ASSERT_FALSE(hardware.beginManualValves(ManualValveConfig{}));
   auto duplicate = confirmed; duplicate.bits[5] = 0;
@@ -85,20 +91,38 @@ void test_factory_manual_initialization_only_touches_four_relay_pins_and_holds_o
   TEST_ASSERT_EQUAL_STRING("not_configured", hardware.sensorStatus(1, 1000));
 }
 
-void test_all_six_outputs_use_bits_zero_to_five_and_all_unused_bits_stay_off() {
+void test_all_six_outputs_use_confirmed_physical_labels_and_all_unused_bits_stay_off() {
   Hardware hardware(BoardConfig{}, false);
   TEST_ASSERT_TRUE(hardware.beginManualValves(confirmedRigManualValves()));
   for (std::size_t valve = 0; valve < kManualValveCount; ++valve) {
     fake::resetGpio();
-    std::array<bool, kValveCount> states{}; states[valve] = true;
+    std::array<bool, kValveCount> states{}; states[kManualValveSlots[valve]] = true;
     TEST_ASSERT_TRUE(hardware.applyManualValves(states));
-    TEST_ASSERT_EQUAL_HEX16(1U << valve, shiftedWord());
+    const int expectedBits[] = {0, 1, 2, 3, 5, 6};
+    TEST_ASSERT_EQUAL_HEX16(1U << expectedBits[valve], shiftedWord());
   }
   fake::resetGpio();
   TEST_ASSERT_TRUE(hardware.applyManualValves(sixOn()));
-  TEST_ASSERT_EQUAL_HEX16(0x003f, shiftedWord());
+  TEST_ASSERT_EQUAL_HEX16(0x006f, shiftedWord());
   TEST_ASSERT_EQUAL(0, Wire.transactionCount);
   TEST_ASSERT_EQUAL(0, fake::ledcCalls);
+}
+
+void test_v5_and_v7_keep_physical_wire_slots_and_nonconsecutive_relay_bits() {
+  Hardware hardware(BoardConfig{}, false);
+  hardware.beginManualValves(confirmedRigManualValves());
+  auto core = valveCore();
+  std::array<bool, kValveCount> v5{}; v5[4] = true;
+  TEST_ASSERT_NULL(core.manualValves(v5, 0));
+  fake::resetGpio(); hardware.applyManualValves(core.outputs().valves);
+  TEST_ASSERT_EQUAL_HEX16(0x0020, shiftedWord());  // V5 is bit5, NOT bit4.
+  const char* frame = R"({"v":1,"id":1,"cmd":"manual_valves","valves":[false,false,false,false,false,false,true]})";
+  JsonDocument document; TEST_ASSERT_NULL(decodeObject(frame, std::strlen(frame), document));
+  Outputs v7; TEST_ASSERT_NULL(parseManualValves(document.as<JsonVariantConst>(), v7));
+  TEST_ASSERT_TRUE(v7.valves[6]); TEST_ASSERT_FALSE(v7.valves[5]);
+  TEST_ASSERT_NULL(core.manualValves(v7.valves, 1));
+  fake::resetGpio(); hardware.applyManualValves(core.outputs().valves);
+  TEST_ASSERT_EQUAL_HEX16(0x0040, shiftedWord());  // V7 is wire slot6 and register bit6.
 }
 
 void test_held_command_is_not_a_pulse_and_stop_is_all_off_and_idempotent() {
@@ -118,12 +142,12 @@ void test_held_command_is_not_a_pulse_and_stop_is_all_off_and_idempotent() {
   TEST_ASSERT_EQUAL(stoppedCalls, fake::gpioCalls);
 }
 
-void test_unused_seventh_wire_slot_is_rejected_without_changing_outputs() {
+void test_unused_v6_wire_slot_is_rejected_without_changing_outputs() {
   Hardware hardware(BoardConfig{}, false);
   hardware.beginManualValves(confirmedRigManualValves());
   hardware.applyManualValves(sixOn());
   const unsigned calls = fake::gpioCalls;
-  auto invalid = sixOn(); invalid[6] = true;
+  auto invalid = sixOn(); invalid[5] = true;
   TEST_ASSERT_FALSE(hardware.applyManualValves(invalid));
   TEST_ASSERT_EQUAL(calls, fake::gpioCalls);
   auto core = valveCore();
@@ -260,6 +284,15 @@ void test_incompatible_full_driver_cannot_be_overwritten_by_second_relay_driver(
   TEST_ASSERT_TRUE(hardware.ready());
 }
 
+void test_old_sequential_full_mapping_cannot_claim_the_corrected_manual_capability() {
+  auto config = fullFixture(); config.valveBits = {{0, 1, 2, 3, 4, 5, 6}};
+  Hardware hardware(config, false); TEST_ASSERT_TRUE(hardware.begin());
+  const auto calls = fake::gpioCalls;
+  TEST_ASSERT_FALSE(hardware.beginManualValves(confirmedRigManualValves()));
+  TEST_ASSERT_FALSE(hardware.valveControlReady());
+  TEST_ASSERT_EQUAL(calls, fake::gpioCalls);
+}
+
 void test_watchdog_and_stop_restore_real_adapter_without_pump_or_adc_calls() {
   Hardware hardware(BoardConfig{}, false); hardware.beginManualValves(confirmedRigManualValves());
   auto core = valveCore(); core.manualValves(sixOn(), 0); hardware.applyManualValves(core.outputs().valves);
@@ -274,7 +307,7 @@ void test_json_manual_valves_is_strict_atomic_and_accepts_no_pump_field() {
   const char* invalid[] = {
     R"({"v":1,"id":1,"cmd":"manual_valves","valves":[true,false,false,false,false,false]})",
     R"({"v":1,"id":1,"cmd":"manual_valves","valves":[1,false,false,false,false,false,false]})",
-    R"({"v":1,"id":1,"cmd":"manual_valves","valves":[false,false,false,false,false,false,true]})",
+    R"({"v":1,"id":1,"cmd":"manual_valves","valves":[false,false,false,false,false,true,false]})",
     R"({"v":1,"id":1,"cmd":"manual_valves","valves":[false,false,false,false,false,false,false],"pump_percent":0})"
   };
   for (const char* frame : invalid) {
@@ -283,7 +316,7 @@ void test_json_manual_valves_is_strict_atomic_and_accepts_no_pump_field() {
     TEST_ASSERT_NOT_NULL(parseManualValves(document.as<JsonVariantConst>(), destination));
     TEST_ASSERT_EQUAL_DOUBLE(99, destination.pumpPercent);
   }
-  const char* frame = R"({"v":1,"id":9,"cmd":"manual_valves","valves":[true,true,true,true,true,true,false]})";
+  const char* frame = R"({"v":1,"id":9,"cmd":"manual_valves","valves":[true,true,true,true,true,false,true]})";
   JsonDocument document; TEST_ASSERT_NULL(decodeObject(frame, std::strlen(frame), document));
   Outputs destination; destination.pumpPercent = 99;
   TEST_ASSERT_NULL(parseManualValves(document.as<JsonVariantConst>(), destination));
@@ -311,9 +344,10 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_confirmed_profile_is_six_valves_and_invalid_profiles_cannot_initialize);
   RUN_TEST(test_factory_manual_initialization_only_touches_four_relay_pins_and_holds_off);
-  RUN_TEST(test_all_six_outputs_use_bits_zero_to_five_and_all_unused_bits_stay_off);
+  RUN_TEST(test_all_six_outputs_use_confirmed_physical_labels_and_all_unused_bits_stay_off);
+  RUN_TEST(test_v5_and_v7_keep_physical_wire_slots_and_nonconsecutive_relay_bits);
   RUN_TEST(test_held_command_is_not_a_pulse_and_stop_is_all_off_and_idempotent);
-  RUN_TEST(test_unused_seventh_wire_slot_is_rejected_without_changing_outputs);
+  RUN_TEST(test_unused_v6_wire_slot_is_rejected_without_changing_outputs);
   RUN_TEST(test_valve_core_needs_no_sensors_recipe_balance_or_pump_approval);
   RUN_TEST(test_watchdog_stops_held_valves_and_commands_do_not_extend_heartbeat);
   RUN_TEST(test_late_heartbeat_or_repeated_valve_command_cannot_conceal_expiry);
@@ -324,6 +358,7 @@ int main() {
   RUN_TEST(test_full_ready_driver_is_reused_without_extra_dac_or_pwm_actuation);
   RUN_TEST(test_optional_full_sensor_acquisition_works_without_pump_health_probe_in_valve_mode);
   RUN_TEST(test_incompatible_full_driver_cannot_be_overwritten_by_second_relay_driver);
+  RUN_TEST(test_old_sequential_full_mapping_cannot_claim_the_corrected_manual_capability);
   RUN_TEST(test_watchdog_and_stop_restore_real_adapter_without_pump_or_adc_calls);
   RUN_TEST(test_json_manual_valves_is_strict_atomic_and_accepts_no_pump_field);
   RUN_TEST(test_manual_watchdog_uses_unsigned_millis_rollover);

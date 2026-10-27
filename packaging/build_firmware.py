@@ -77,6 +77,7 @@ def source_files(root: Path) -> dict[str, bytes]:
                  "protocol/valve-test.md", "docs/valve-test.md",
                  "docs/flow-sensor-troubleshooting.md",
                  "docs/normal-valves.md", "docs/scale-connection.md",
+                 "docs/serial-recovery.md",
                  "docs/pwm-converter-setup.md", "hardware/procurement.md",
                  "docs/full-firmware.md", "hardware/README.md", "hardware/relay-board-pin-plan.md",
                  "hardware/pump-interface.md", "packaging/build_firmware.py", "LICENSE"):
@@ -204,8 +205,9 @@ Choose one target:
 - esp32-valve-test: one solenoid pulse at a time without sensors or a DAC.
   The factory profile is LOCKED. A reviewed valve-only profile is required;
   see docs/valve-test.md. Keep the pump physically isolated.
-- esp32-physical: NORMAL controller with the user-confirmed six manual valves
-  V1-V6 = bits0-5, all LOW off. Dashboard ON/OFF works without sensors or a
+- esp32-physical: NORMAL controller with six manual valves, IDs1,2,3,4,5,7
+  = bits0,1,2,3,5,6, all LOW off. V6 is absent; bit4 and7-15 stay LOW.
+  Dashboard ON/OFF works without sensors or a
   separate valve profile. Pump and experiment configuration remains incomplete.
 
 factory.bin contains the bootloader, partition table, boot_app0 and application,

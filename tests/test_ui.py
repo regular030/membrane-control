@@ -229,15 +229,32 @@ def test_readiness_gives_connection_action_and_explains_hardware_gate(screen):
     window.next_step_button.click()
     assert window.tabs.currentIndex() == 2
     controller.snapshot.update(controller_connected=True, simulation=False,
-                               hardware_verified=False, pressure_psi=0)
+                               hardware_verified=False, pressure_psi=0,
+                               valve_control_status='Update controller firmware to 0.1.16 for the confirmed valve mapping')
     controller.last_telemetry = now[0]
     window.recipe_approved.setChecked(True)
     window._update_view(dict(controller.snapshot))
-    assert "setup is unfinished" in window.readiness_label.text()
-    assert "cannot unlock" in window.readiness_label.text()
+    assert "Update controller firmware" in window.readiness_label.text()
+    assert "0.1.16" in window.readiness_label.text()
     assert not window.start_button.isEnabled()
     window.next_step_button.click()
-    assert window.tabs.currentIndex() == 4
+    assert window.tabs.currentIndex() == 2
+
+
+@pytest.mark.parametrize('dialog_field', ['_relay_bench_dialog', '_valve_test_dialog', '_balance_diagnostics_dialog'])
+def test_equipment_dialog_keeps_controller_polling_without_hidden_graph_refresh(screen, monkeypatch, dialog_field):
+    window, controller, _ = screen
+    ticks, renders = [], []
+    monkeypatch.setattr(controller, 'tick', lambda: ticks.append(True))
+    monkeypatch.setattr(window, '_update_view', lambda *_: renders.append(True))
+    setattr(window, dialog_field, object())
+    try:
+        window._on_tick()
+        assert ticks == [True] and renders == []
+    finally:
+        setattr(window, dialog_field, None)
+    window._on_tick()
+    assert len(ticks) == 2 and renders == [True]
 
 
 def test_invalid_edited_sequence_has_visible_next_step(screen):

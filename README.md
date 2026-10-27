@@ -43,7 +43,7 @@ the pump and flow-control calibration are established. See the
 
 The Dashboard's **Live readings** table shows recorded runtime values beneath
 the graphs, including time, cycle/step, flow target and measurements, pressure,
-flux, mass, pump values and all six commanded valve states. Complete run
+flux, mass, pump values and all six commanded valve states (V1-V5 and V7). Complete run
 records stay available for CSV export.
 
 ## Before using the real rig
@@ -73,7 +73,7 @@ See [automatic GitHub builds](docs/development.md#automatic-github-builds).
 - [ESP32 setup](firmware/README.md): USB detection, firmware upload and hardware verification.
 - [Full firmware release](docs/full-firmware.md): controller source, compiled images and the four upload choices.
 - [Real relay board test](docs/relay-board-test.md): test the unloaded relay board and record its channel mapping.
-- [Six valves with normal firmware](docs/normal-valves.md): confirmed V1-V6 = bits 0-5, normal ON/OFF controls with no sensors or extra profile form.
+- [Six valves with normal firmware](docs/normal-valves.md): version 0.1.16 uses V1-V5 and V7 = bits 0, 1, 2, 3, 5, 6, with normal ON/OFF controls and no sensors or extra profile form. V6 is absent.
 - [Scale connection and raw data](docs/scale-connection.md): COM6/9600, automatic weight requests and actual received-data diagnostics.
 - [Legacy valve pulse test](docs/valve-test.md): older separate firmware for short solenoid tests.
 - [Pump PWM wiring handoff](hardware/pump-interface.md#connecting-the-ec-buying-converter-when-it-arrives): selected Amazon module and connection steps for the lab maintainer.

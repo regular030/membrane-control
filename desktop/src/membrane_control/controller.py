@@ -69,7 +69,8 @@ class AppController:
             "balance_polling": False,
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
-            "valve_control_ready": False, "manual_valve_count": 0, "valve_bits": [],
+            "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
+            "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
@@ -222,8 +223,10 @@ class AppController:
                     self._reset_diagnostics()
 
     def _reset_diagnostics(self):
+        self._reported_valve_control_ready = None
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
-            valve_control_ready=False, manual_valve_count=0, valve_bits=[])
+            valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
+            valve_control_status="Valve-only controls unavailable")
 
     def connect_balance(self, port, baud=9600, serial_format="8N1", polling=True):
         if self.simulation:
@@ -370,12 +373,12 @@ class AppController:
             raise
 
     def set_manual_valves(self, valves):
-        """Command the six confirmed valves; the legacy seventh slot stays off."""
+        """Order six inputs as V1-V5,V7; keep legacy wire slot V6 off."""
         if type(valves) not in (list, tuple) or len(valves) not in (6, 7):
             raise ValueError("Specify six valve states")
-        valves = valve_states([*valves, False] if len(valves) == 6 else valves)
-        if valves[6]:
-            raise ValueError("Only six physical valves are available; the unused seventh slot must stay off")
+        valves = valve_states([*valves[:5], False, valves[5]] if len(valves) == 6 else valves)
+        if valves[5]:
+            raise ValueError("V6 is not installed; its unused wire slot must stay off (V7 is available)")
         if self.simulation:
             return self.set_manual(valves, 0)
         if (self.start_phase or self.manual_pending or self.stop_pending or self.local_fault
@@ -386,7 +389,8 @@ class AppController:
         if self.last_telemetry is None or self.clock() - self.last_telemetry > 2:
             raise ValueError("Controller telemetry is stale; wait for a fresh reading")
         if self.device.get("valve_control_ready") is not True:
-            raise ValueError("Valve-only controls are unavailable; install firmware with the confirmed six-valve map")
+            raise ValueError(self.snapshot.get("valve_control_status") or
+                "Update controller firmware to 0.1.16 or later for the confirmed V1-V5 and V7 mapping")
         self.manual_requested = (list(valves), 0.0)
         self.manual_pending = True
         self.snapshot["manual_pending"] = True
@@ -536,10 +540,13 @@ class AppController:
                 diagnostics = checked_controller_diagnostics(packet)
                 self.device = {key: value for key, value in packet.items()
                                if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
-                                              "valve_control_ready", "manual_valve_count", "valve_bits")}
+                                              "valve_control_ready", "manual_valve_count", "manual_valve_ids",
+                                              "valve_bits", "valve_control_status")}
                 self.device.update(diagnostics)
                 self.device.update(checked_valve_control(packet))
                 self._reset_diagnostics()
+                reported = packet.get("valve_control_ready")
+                self._reported_valve_control_ready = reported if type(reported) is bool else None
                 self.snapshot.update(copy.deepcopy(diagnostics))
                 self.snapshot.update(checked_valve_control(packet))
                 self.snapshot.update(controller_connected=True, controller_status="Connected",
@@ -588,7 +595,7 @@ class AppController:
             if state not in ("idle", "running", "manual", "manual_valves", "fault"):
                 raise ValueError("Invalid controller state")
             if state == "manual_valves" and (self.device.get("valve_control_ready") is not True
-                    or packet.get("valve_control_ready") is not True or pump != 0 or valves[6]):
+                    or packet.get("valve_control_ready") is not True or pump != 0 or valves[5]):
                 raise ValueError("Invalid valve-only telemetry or unavailable six-valve capability")
             if type(packet.get("simulation")) is not bool or type(packet.get("hardware_verified")) is not bool:
                 raise ValueError("Invalid controller mode or hardware status")
@@ -625,7 +632,8 @@ class AppController:
             if type(packet["valve_control_ready"]) is not bool:
                 self._log("Invalid valve-control capability telemetry")
                 return
-            if packet["valve_control_ready"] is not self.device.get("valve_control_ready", False):
+            if (self._reported_valve_control_ready is not None
+                    and packet["valve_control_ready"] is not self._reported_valve_control_ready):
                 self._disconnect_with_fault("Controller valve-control capability changed",
                     "Valve setup changed; reconnect before continuing")
                 return

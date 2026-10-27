@@ -10,8 +10,13 @@
 namespace basu {
 
 constexpr std::size_t kValveCount = 7;
-// Legacy wire/recipe arrays retain seven slots; the confirmed rig has six valves.
+// Legacy wire slots follow physical valve labels. The rig has no V6.
 constexpr std::size_t kManualValveCount = 6;
+constexpr std::array<std::size_t, kManualValveCount> kManualValveSlots{{0, 1, 2, 3, 4, 6}};
+constexpr std::array<int, kManualValveCount> kManualValveIds{{1, 2, 3, 4, 5, 7}};
+inline bool manualValveSlotAllowed(std::size_t slot) {
+  return std::find(kManualValveSlots.begin(), kManualValveSlots.end(), slot) != kManualValveSlots.end();
+}
 constexpr std::size_t kMaxSteps = 32;
 constexpr std::size_t kMaxLineBytes = 8192;
 constexpr uint32_t kHeartbeatTimeoutMs = 3000;
@@ -156,8 +161,8 @@ class Controller {
     if (state_ != State::Idle && state_ != State::ManualValves)
       return "stop before switching to valve-only manual control";
     if (!safety_.simulation && !safety_.valveControlReady) return "valve_control_not_ready";
-    for (std::size_t index = kManualValveCount; index < kValveCount; ++index)
-      if (valves[index]) return "unused valve slot must remain false";
+    for (std::size_t index = 0; index < kValveCount; ++index)
+      if (!manualValveSlotAllowed(index) && valves[index]) return "V6 is not installed; its wire slot must remain false";
     if (state_ == State::Idle) lastHeartbeatMs_ = now;
     state_ = State::ManualValves;
     valveOnlyOutputs_ = true;

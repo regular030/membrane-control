@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 import pyqtgraph as pg
 
 from .models import MAX_STEPS, Recipe
-from .device_status import device_statuses
+from .device_status import device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
 from .valve_test import ValveTestDialog
@@ -96,7 +96,7 @@ LIVE_TABLE_COLUMNS = (
     ("mass_g", "Mass (g)", 115), ("pump_percent", "Pump command (%)", 175),
     ("pump_feedback_v", "Pump feedback (V)", 175),
     ("balance_flow_ml_min", "Balance flow (mL/min)", 185),
-    *((f"valve_{index}", f"V{index + 1} command", 130) for index in range(6)),
+    *((f"valve_{valve_id - 1}", f"V{valve_id} command", 130) for valve_id in MANUAL_VALVE_IDS),
     ("_sample_sequence", "Sample seq.", 105), ("run_id", "Run ID", 85),
     ("state", "State", 115), ("step_index", "Step index", 110),
     ("controller_status", "Controller status", 200), ("balance_status", "Scale status", 190),
@@ -310,18 +310,18 @@ class MainWindow(QMainWindow):
             self._device_status_containers[key] = holder
             devices.addWidget(holder, 1)
         outer.addWidget(self.device_panel)
-        self.valve_controls = QGroupBox('Manual valves · V1–V6 · no sensors required')
+        self.valve_controls = QGroupBox('Manual valves · V1–V5 and V7 · no sensors required')
         valve_layout = QVBoxLayout(self.valve_controls)
-        self.valve_control_note = _label('Normal controller firmware: V1–V6 use relay bits 0–5. Click a valve to turn it ON or OFF; Stop turns all six OFF.', 'muted', True)
+        self.valve_control_note = _label('V1–V4 → bits 0–3; V5 → bit 5; V7 → bit 6. No V6. Click ON/OFF; Stop turns all six OFF.', 'muted', True)
         valve_layout.addWidget(self.valve_control_note)
         valve_row = QHBoxLayout()
         self.valve_buttons: list[QToolButton] = []
-        for index in range(6):
+        for valve_id, bit in zip(MANUAL_VALVE_IDS, MANUAL_VALVE_BITS):
             button = QToolButton()
-            button.setText(f'V{index + 1}\nOFF')
+            button.setText(f'V{valve_id}\nOFF')
             button.setCheckable(True)
-            button.setAccessibleName(f'Valve {index + 1} commanded state')
-            button.setToolTip(f'Toggle V{index + 1} through relay bit {index}. No pressure, flow or balance reading is needed.')
+            button.setAccessibleName(f'Valve {valve_id} commanded state')
+            button.setToolTip(f'Toggle V{valve_id} through relay bit {bit}. No pressure, flow or balance reading is needed.')
             button.clicked.connect(self._manual_valve_command)
             self.valve_buttons.append(button)
             valve_row.addWidget(button, 1)
@@ -584,7 +584,7 @@ class MainWindow(QMainWindow):
         self.valve_test_button = _button("2. Legacy valve pulse test", self._open_valve_test)
         self.valve_test_button.setToolTip("Older separate pulse-test firmware. For this six-valve rig, use the normal Dashboard toggles instead.")
         cform.addRow(self.valve_test_button)
-        cform.addRow(_label("This rig: six tested valves, V1–V6 = bits 0–5. Normal firmware supports Dashboard valve toggles without sensors. The separate tests below are optional tools.", "muted", True))
+        cform.addRow(_label("Installed: V1–V5 and V7; bits 0,1,2,3,5,6. No V6. Normal Dashboard toggles work without sensors; the separate tests below are optional.", "muted", True))
         devices.addWidget(controller_box)
         balance_box = QGroupBox("Balance")
         bform = QFormLayout(balance_box)
@@ -843,7 +843,8 @@ class MainWindow(QMainWindow):
     def _populate_steps(self, steps: list[dict]):
         self.steps_table.setRowCount(0)
         # Seven wire-format slots remain readable for old files; this rig has six.
-        self.steps_table.setColumnHidden(8, True)
+        self.steps_table.setColumnHidden(7, True)  # V6 is absent.
+        self.steps_table.setColumnHidden(8, False)  # V7 is installed.
         for row, step in enumerate(steps):
             self.steps_table.insertRow(row)
             self.steps_table.setItem(row, 0, QTableWidgetItem(str(step["name"])))
@@ -877,8 +878,8 @@ class MainWindow(QMainWindow):
     def _step_data(self) -> list[dict]:
         rows = []
         for row in range(self.steps_table.rowCount()):
-            if self.steps_table.cellWidget(row, 8).findChild(QCheckBox).isChecked():
-                raise ValueError('This sequence commands V7, but the current rig has only V1–V6. Remove the unused command before using this sequence.')
+            if self.steps_table.cellWidget(row, 7).findChild(QCheckBox).isChecked():
+                raise ValueError('This sequence commands V6, which is not installed. The rig uses V1–V5 and V7.')
             name_item = self.steps_table.item(row, 0)
             rows.append({
                 "name": name_item.text().strip() if name_item else "",
@@ -1017,7 +1018,13 @@ class MainWindow(QMainWindow):
     def _manual_command(self, *_):
         if self._updating:
             return
-        self._action(lambda: self.controller.set_manual([b.isChecked() for b in self.valve_buttons] + [False], self.manual_pump.value()), "Manual output command sent")
+        self._action(lambda: self.controller.set_manual(self._manual_wire_values(), self.manual_pump.value()), "Manual output command sent")
+
+    def _manual_wire_values(self):
+        states = [False] * 7
+        for valve_id, button in zip(MANUAL_VALVE_IDS, self.valve_buttons):
+            states[valve_id - 1] = button.isChecked()
+        return states
 
     def _manual_valve_command(self, *_):
         if self._updating:
@@ -1026,7 +1033,7 @@ class MainWindow(QMainWindow):
         if str(self.controller.snapshot.get('state')).lower() == 'manual':
             # Preserve an already running, fully configured pump manual session.
             pump = float(self.controller.snapshot.get('pump_percent') or 0)
-            self._action(lambda: self.controller.set_manual(valves + [False], pump), 'Valve command sent; current pump setting retained')
+            self._action(lambda: self.controller.set_manual(self._manual_wire_values(), pump), 'Valve command sent; current pump setting retained')
         else:
             self._action(lambda: self.controller.set_manual_valves(valves), 'Valve command sent; pump command is zero')
         self._update_view(dict(self.controller.snapshot))
@@ -1316,7 +1323,7 @@ class MainWindow(QMainWindow):
         if not simulation and snap.get('valve_control_ready') and not verified:
             return 'Six valve controls are ready without sensors. Pump and experiment setup is separate.', None, ''
         if not simulation and not verified:
-            return "Cannot start: equipment setup is unfinished. Ask the lab maintainer; the sequence review box cannot unlock it.", 4, "Read setup guide"
+            return str(snap.get('valve_control_status') or 'Connect normal firmware 0.1.16 for the confirmed valve mapping.'), 2, 'Open connections'
         if not simulation and snap.get("pressure_psi") is None:
             return "Cannot start: no pressure reading. Have the pressure sensor and its wiring checked.", 2, "Open connections"
         if needs_balance and not balanced:
@@ -1420,7 +1427,11 @@ class MainWindow(QMainWindow):
             return
         try:
             self.controller.tick()
-            self._update_view(dict(self.controller.snapshot))
+            # The equipment window has its own timer. Avoid expensive hidden
+            # graph/layout refreshes competing with its serial heartbeat.
+            if not any(dialog is not None for dialog in (self._relay_bench_dialog,
+                    self._valve_test_dialog, self._balance_diagnostics_dialog)):
+                self._update_view(dict(self.controller.snapshot))
         except Exception as exc:
             now = time.monotonic()
             message = f"Update failed: {exc}"
@@ -1485,7 +1496,7 @@ class MainWindow(QMainWindow):
             elif verified:
                 banner_text = "HARDWARE MODE  •  Device readings are live. Verify the selected recipe and installation before starting."
             elif snap.get('valve_control_ready'):
-                banner_text = 'VALVE CONTROLS READY  •  V1–V6 = bits 0–5. Sensors are optional for these toggles. Pump command stays zero.'
+                banner_text = 'VALVE CONTROLS READY  •  V1–V5 and V7. V5 → bit 5; V7 → bit 6. Sensors are optional; pump command stays zero.'
             else:
                 banner_text = "HARDWARE MODE  •  Equipment setup is unfinished. Ask the lab maintainer before using the rig."
             self.banner.setText(banner_text)
@@ -1512,11 +1523,17 @@ class MainWindow(QMainWindow):
                 and state.lower() in {'idle', 'manual_valves'} and not active and not fault)
             for index, button in enumerate(self.valve_buttons):
                 actual = list(snap.get("valves") or [False] * 7)
-                commanded = bool(actual[index]) if index < len(actual) else False
+                valve_id = MANUAL_VALVE_IDS[index]
+                slot = valve_id - 1
+                commanded = bool(actual[slot]) if slot < len(actual) else False
                 with QSignalBlocker(button):
                     button.setChecked(commanded)
-                button.setText(f"V{index + 1}\n{'ON' if commanded else 'OFF'}")
-                button.setEnabled(manual or valves_only_ready)
+                button.setText(f"V{valve_id}\n{'ON' if commanded else 'OFF'}")
+                button.setEnabled((manual and (simulation or bool(snap.get('valve_control_ready')))) or valves_only_ready)
+            if connected and not simulation and not snap.get('valve_control_ready'):
+                self.valve_control_note.setText(str(snap.get('valve_control_status') or 'Upload normal controller firmware 0.1.16 for the installed valve mapping.'))
+            else:
+                self.valve_control_note.setText('V1–V4 → bits 0–3; V5 → bit 5; V7 → bit 6. No V6. Click ON/OFF; Stop turns all six OFF.')
             self.manual_pump.setEnabled(manual and state.lower() != 'manual_valves')
             self.manual_apply.setEnabled(manual and state.lower() != 'manual_valves')
             self.manual_apply.setToolTip("Apply the reviewed sequence first in Sequence editor." if not simulation and verified and not applied_approved

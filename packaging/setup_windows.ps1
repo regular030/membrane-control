@@ -286,7 +286,7 @@ function Invoke-MembraneSetup {
         Copy-Item -LiteralPath (Join-Path $checked.SourceRoot 'setup-manifest.json') -Destination (Join-Path $checked.InstallRoot 'setup-manifest.json') -Force
         Write-SetupLog 'Setup complete. Open Membrane Control to use the app. Flash ESP32 dry run is the no-output test; Flash relay board test operates only unloaded relays. Upload separately when the board and COM port are ready.'
         Write-SetupLog 'Flash valve test (setup required) installs a separate sensor-free program with the valve outputs locked until a reviewed valve profile and commissioning checks are complete. Read docs/valve-test.md; keep loads disconnected for the initial upload.'
-        Write-SetupLog 'Flash normal controller installs the normal program with V1-V6 mapped to confirmed relay bits 0-5. Manual valve toggles work without sensors. Pump and experiments retain their separate configuration requirements.'
+        Write-SetupLog 'Flash normal controller installs V1,V2,V3,V4,V5,V7 mapped to bits 0,1,2,3,5,6. No V6. Manual valves work without sensors; pump and experiments retain separate configuration.'
         Write-SetupLog 'If Windows shows no controller COM port, use the optional USB driver help shortcut for the official driver instructions.'
     } catch {
         Write-SetupLog ("SETUP FAILED: " + $_.Exception.Message)

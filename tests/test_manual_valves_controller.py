@@ -38,7 +38,8 @@ def identify(controller, clock, **changes):
               "device": "basu-membrane-control", "protocol_version": 1,
               "firmware_version": "valve-test", "valve_count": 7,
               "simulation": False, "hardware_verified": False,
-              "valve_control_ready": True, "manual_valve_count": 6, "valve_bits": list(range(6)),
+              "valve_control_ready": True, "manual_valve_count": 6,
+              "manual_valve_ids": [1, 2, 3, 4, 5, 7], "valve_bits": [0, 1, 2, 3, 5, 6],
               **changes}
     controller._handle_packet(packet, clock())
 
@@ -70,14 +71,14 @@ def acknowledge(controller, clock, *, ok=True):
                               "ok": ok, "error": "Rejected test command"}, clock())
 
 
-def test_six_valve_command_pads_unused_slot_and_waits_for_ack_without_sensors(app):
+def test_six_valve_command_inserts_unused_v6_slot_and_waits_for_ack_without_sensors(app):
     controller, clock = app
     controller.recipe.require_balance = True
     controller.settings["require_balance"] = True
     requested = [True, False, True, False, False, True]
     controller.set_manual_valves(requested)
     packet = controller.driver.sent[-1]
-    assert packet["cmd"] == "manual_valves" and packet["valves"] == requested + [False]
+    assert packet["cmd"] == "manual_valves" and packet["valves"] == [True, False, True, False, False, False, True]
     assert "pump_percent" not in packet
     assert controller.manual_pending and controller.snapshot["state"] == "idle"
     assert not any(controller.snapshot["valves"])
@@ -86,7 +87,7 @@ def test_six_valve_command_pads_unused_slot_and_waits_for_ack_without_sensors(ap
     acknowledge(controller, clock)
     assert controller.snapshot["state"] == "manual_valves"
     assert controller.snapshot["pump_percent"] == 0
-    assert controller.snapshot["valves"] == requested + [False]
+    assert controller.snapshot["valves"] == [True, False, True, False, False, False, True]
     controller.tick()
     assert controller.local_fault is None
     assert not controller.snapshot["hardware_verified"]
@@ -98,7 +99,7 @@ def test_valve_only_telemetry_needs_no_pressure_or_balance_and_remains_active(ap
     controller.settings["require_balance"] = True
     controller.set_manual_valves([True] * 6)
     acknowledge(controller, clock)
-    telemetry(controller, clock, state="manual_valves", valves=[True] * 6 + [False])
+    telemetry(controller, clock, state="manual_valves", valves=[True] * 5 + [False, True])
     controller.tick()
     assert controller._active() and controller.local_fault is None
     with pytest.raises(ValueError, match="active"):
@@ -137,13 +138,17 @@ def test_only_six_exact_boolean_valves_can_be_commanded(app, values):
     {"manual_valve_count": 7, "valve_bits": list(range(7))},
     {"manual_valve_count": True}, {"valve_bits": [0, 1, 2, 3, 4, 4]},
     {"valve_bits": [0, 1, 2, 3, 4, True]}, {"valve_bits": [0, 1, 2, 3, 4, 16]},
+    {"manual_valve_ids": [1, 2, 3, 4, 5, 6]},
+    {"manual_valve_ids": [True, 2, 3, 4, 5, 7]},
+    {"manual_valve_ids": [1, 2, 3, 4, 7, 5]},
+    {"valve_bits": [0, 1, 2, 3, 4, 5]},
 ])
 def test_bad_capability_cannot_unlock_valves(app, changes):
     controller, clock = app
     identify(controller, clock, **changes)
     assert controller.snapshot["valve_control_ready"] is False
     before = len(controller.driver.sent)
-    with pytest.raises(ValueError, match="install firmware"):
+    with pytest.raises(ValueError):
         controller.set_manual_valves([False] * 6)
     assert len(controller.driver.sent) == before
     assert controller.local_fault is None
@@ -151,7 +156,56 @@ def test_bad_capability_cannot_unlock_valves(app, changes):
 
 def test_older_firmware_defaults_to_no_valve_only_capability():
     assert checked_valve_control({}) == {"valve_control_ready": False,
-                                         "manual_valve_count": 0, "valve_bits": []}
+        "manual_valve_count": 0, "manual_valve_ids": [], "valve_bits": [],
+        "valve_control_status": "Update controller firmware to 0.1.16 or later for the confirmed V1-V5 and V7 mapping"}
+
+
+def test_v15_without_ids_stays_connected_but_cannot_misroute_valve_commands(app):
+    controller, clock = app
+    identify(controller, clock, manual_valve_ids=None, valve_bits=[0, 1, 2, 3, 4, 5],
+             firmware_version="0.1.15")
+    telemetry(controller, clock)  # v15's own advertised readiness is still True.
+    assert controller.snapshot["controller_connected"] and controller.local_fault is None
+    assert not controller.snapshot["valve_control_ready"]
+    assert controller.snapshot["manual_valve_ids"] == []
+    assert "0.1.16" in controller.snapshot["valve_control_status"]
+    before = len(controller.driver.sent)
+    with pytest.raises(ValueError, match="Update controller firmware to 0.1.16"):
+        controller.set_manual_valves([False, False, False, False, False, True])
+    assert len(controller.driver.sent) == before
+
+
+@pytest.mark.parametrize("ui_index,wire_index", [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 6)])
+def test_each_installed_physical_id_uses_its_own_legacy_wire_slot(app, ui_index, wire_index):
+    controller, _ = app
+    requested = [False] * 6
+    requested[ui_index] = True
+    controller.set_manual_valves(requested)
+    actual = controller.driver.sent[-1]["valves"]
+    assert actual[wire_index] is True
+    assert sum(actual) == 1
+    assert actual[5] is False
+
+
+def test_seven_slot_input_and_telemetry_allow_v7_but_not_unused_v6(app):
+    controller, clock = app
+    requested = [False, False, False, False, False, False, True]
+    controller.set_manual_valves(requested)
+    assert controller.driver.sent[-1]["valves"] == requested
+    acknowledge(controller, clock)
+    clock.now += 0.25
+    telemetry(controller, clock, state="manual_valves", valves=requested, uptime_ms=1250)
+    assert controller.snapshot["state"] == "manual_valves"
+    assert controller.snapshot["valves"] == requested
+    assert controller.last_telemetry == clock()
+    assert controller.local_fault is None
+    invalid = [False, False, False, False, False, True, False]
+    with pytest.raises(ValueError, match="V6 is not installed"):
+        controller.set_manual_valves(invalid)
+    clock.now += 0.25
+    telemetry(controller, clock, state="manual_valves", valves=invalid, uptime_ms=1500)
+    assert controller.snapshot["valves"] == requested
+    assert controller.last_telemetry == clock() - 0.25
 
 
 @pytest.mark.parametrize("gate", ["disconnected", "stale", "pending", "stopping", "manual", "running", "fault"])
@@ -234,15 +288,15 @@ def test_valve_only_telemetry_staleness_faults_and_disconnection_clears_capabili
     assert controller.snapshot["valve_bits"] == []
 
 
-def test_simulation_uses_existing_simulator_but_never_seventh_slot(tmp_path):
+def test_simulation_uses_existing_simulator_with_v7_available_and_v6_off(tmp_path):
     controller = AppController(tmp_path, Clock())
     try:
         controller.tick()
         controller.set_manual_valves([True] * 6)
         controller.tick()
-        assert controller.snapshot["valves"] == [True] * 6 + [False]
+        assert controller.snapshot["valves"] == [True] * 5 + [False, True]
         assert controller.snapshot["pump_percent"] == 0
-        with pytest.raises(ValueError, match="unused seventh"):
+        with pytest.raises(ValueError, match="V6 is not installed"):
             controller.set_manual_valves([True] * 7)
     finally:
         controller.close()

@@ -8,17 +8,20 @@ Nothing in this repository establishes that the physical rig is commissioned.
 
 ## Normal manual control of the six confirmed valves
 
-Full-controller firmware **0.1.15**, target **esp32-physical**, supports the
+Full-controller firmware **0.1.16**, target **esp32-physical**, supports the
 normal Dashboard's six valve toggles without pressure, flow, balance or pump
-interfaces. The user confirmed **V1..V6 = register bits0..5**, active HIGH with
-all LOW off. `ManualValveConfig.h` records that mapping. Bits6..15 stay LOW in
-this mode; there is no seventh physical valve. The ordinary valve controls do
+interfaces. The six installed labels are **V1,V2,V3,V4,V5,V7**, with confirmed
+register bits **0,1,2,3,5,6** respectively, active HIGH with all LOW off.
+There is **no V6**. `ManualValveConfig.h` records the mapping; bit4 and bits7..15
+stay LOW in this mode. V7 keeps its physical label rather than becoming V6.
+The ordinary valve controls do
 not require the older commissioning dialog's checks or a custom C++ header.
 
 This is a separate `valve_control_ready` capability, not full
 `hardware_verified` approval. The factory pump/recipe and sensor profile stays
-unverified. `manual_valves` accepts the legacy seven-boolean wire array with its
-unused last slot false, never a pump field. It enters state `manual_valves`,
+unverified. `manual_valves` accepts a legacy seven-boolean wire array in physical
+label order **[V1,V2,V3,V4,V5,false,V7]**: slot5/V6 must be false, while slot6/V7
+is allowed. It never accepts a pump field. It enters state `manual_valves`,
 holds the requested six valve states until changed or stopped, and always
 commands pump0. It is not limited to a 500 ms pulse. Stop, a new HELLO session,
 reset or three-second heartbeat loss returns the manual valves to all LOW;
@@ -34,8 +37,10 @@ recipes retain their pressure, hardware and recipe gates. A connected flow
 sensor still needs a correctly configured protected input and calibration; the
 valve capability does not add sensor acquisition.
 
-HELLO advertises `manual_valve_count: 6`, `valve_bits: [0,1,2,3,4,5]`, and
-`valve_control_ready`. Telemetry repeats the readiness flag. `valve_count: 7`
+HELLO advertises `manual_valve_count: 6`, `manual_valve_ids: [1,2,3,4,5,7]`,
+`valve_bits: [0,1,2,3,5,6]`, and `valve_control_ready`. Clients must verify the
+IDs and mapping before enabling this capability; v0.1.15's sequential mapping
+is superseded. Telemetry repeats the readiness flag. `valve_count: 7`
 and seven-slot arrays remain for protocol compatibility, not physical count.
 
 For the connected but unloaded relay board, the separate **esp32-relay-bench**

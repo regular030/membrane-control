@@ -23,12 +23,14 @@ def test_six_controls_live_on_dashboard_without_sensor_or_review_boxes(screen, q
     window.show()
     qt_app.processEvents()
     assert len(window.valve_buttons) == 6
+    assert [button.text().splitlines()[0] for button in window.valve_buttons] == ['V1', 'V2', 'V3', 'V4', 'V5', 'V7']
     assert all(button.isEnabled() for button in window.valve_buttons)
     assert not window.valve_controls.findChildren(QCheckBox)
     assert not window.manual_apply.isEnabled() and not window.start_button.isEnabled()
     assert 'VALVE CONTROLS READY' in window.banner.text()
     assert 'without sensors' in window.readiness_label.text()
-    assert window.steps_table.isColumnHidden(8)
+    assert window.steps_table.isColumnHidden(7)
+    assert not window.steps_table.isColumnHidden(8)
     assert controller.snapshot['pressure_psi'] is None and controller.snapshot['flow_ml_min'] is None
 
 
@@ -39,7 +41,7 @@ def test_normal_toggle_routes_new_command_and_all_off_slot7(screen):
     window.valve_buttons[5].click()
     command = controller.driver.sent[-1]
     assert command['cmd'] == 'manual_valves'
-    assert command['valves'] == [False] * 5 + [True, False]
+    assert command['valves'] == [False] * 6 + [True]
     assert 'pump_percent' not in command
     assert not any(button.isEnabled() for button in window.valve_buttons)
     acknowledge(controller, lambda: now[0])
@@ -50,6 +52,24 @@ def test_normal_toggle_routes_new_command_and_all_off_slot7(screen):
     assert not window.manual_apply.isEnabled()
     window.stop_button.click()
     assert controller.driver.sent[-1]['cmd'] == 'stop'
+
+
+def test_v5_label_uses_physical_wire_slot_and_bit5_tooltip(screen):
+    window, controller, now = screen
+    physical_valves(controller, now)
+    window._update_view(dict(controller.snapshot))
+    window.valve_buttons[4].click()
+    assert controller.driver.sent[-1]['valves'] == [False] * 4 + [True, False, False]
+    assert 'bit 5' in window.valve_buttons[4].toolTip()
+    assert 'bit 6' in window.valve_buttons[5].toolTip()
+
+
+def test_builtin_demos_do_not_command_absent_v6(screen):
+    window, controller, _ = screen
+    for recipe in controller.presets.values():
+        assert all(not step.valves[5] for step in recipe.steps)
+        window._populate_recipe(recipe)
+        assert window._collect_recipe().to_dict() == recipe.to_dict()
 
 
 def test_old_firmware_does_not_offer_unknown_new_commands(screen):

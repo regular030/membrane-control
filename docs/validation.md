@@ -11,6 +11,45 @@ manufacturer-authored manual and DB15 diagram confirm 0-10 V command 1(+)/3(-),
 continuity, conditioning and calibration remain unverified. No physical outputs
 were operated to establish these documentation findings.
 
+## Corrected physical IDs and COM recovery, version 0.1.16
+
+The latest user-confirmed map supersedes the earlier sequential assumption:
+**V1,V2,V3,V4,V5,V7 -> bits0,1,2,3,5,6**. No V6 is installed; bit4 is unused.
+Control/telemetry arrays retain physical numbering, with V6/index5 false and
+V7/index6 active. Old firmware stays identifiable while the app requests its
+mapping update instead of silently relabelling V7.
+
+Checked locally on Windows x64, 26 October 2026:
+
+- **686 desktop/packaging tests passed**, with four real-symlink privilege skips.
+  Mapping regressions check literal IDs/bits, six-to-seven expansion, V7 status,
+  V5/bit5, absent-V6 rejection, old firmware diagnostics, UI labels, editor/live
+  columns and demo compatibility. Pump/recipe and sensor gates remain unchanged.
+- **100 native firmware tests and all four ESP32 builds passed.** Literal mask
+  checks prove V5 uses0x20, V7 uses0x40, all six use0x006f, and bit4/7-15 remain
+  off. The full-driver compatibility path uses physical slots and rejects the
+  old sequential mapping.
+- Twelve new fake-driver recovery regressions reproduce and check retained
+  failed-close ownership, bounded blocking closes, concurrent lock deadlines,
+  already-closed errors, pending open, recovery after dialog destruction,
+  cleared pulse/confirmation state, no command replay, receive overflow and
+  preservation of an active balance. Two independent read-only code reviews
+  checked lock ordering, one closer per handle and retired-owner isolation.
+- Corrected Dashboard labels and the Recover connection button were visually
+  inspected with fake ports. Background controller polling continues while
+  equipment dialogs are open, but hidden graph/layout refreshes pause.
+- The final Windows EXE launched in isolated Demo mode, produced a 1360 x 940
+  screenshot and exited cleanly. The Setup EXE passed its embedded-payload plan
+  check without installing tools or accessing USB. Setup and portable payloads
+  match the final source/docs and include the four-target firmware archive.
+  All firmware manifest hashes and five release artifact SHA256 checksums
+  passed. Both GitHub workflow files passed actionlint.
+
+The physical COM5 failure was reported while the port remained listed in Device
+Manager. Failed/blocked closes are demonstrated software defects, not proof of
+the actual lab driver's failure. No lab port, physical relay or firmware upload
+was operated during this update. Nimbus scale changes from0.1.15 remain intact.
+
 ## Normal six-valve controls and scale communication, version 0.1.15
 
 The user clarified that the rig has **six**, not seven, valves and confirmed

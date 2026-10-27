@@ -122,8 +122,11 @@ class Hardware {
 
   bool applyManualValves(const std::array<bool, kValveCount>& valves) {
     if (!manualValvesReady_) return false;
-    for (std::size_t index = kManualValveCount; index < kValveCount; ++index)
-      if (valves[index]) { valveError_ = "unused valve slot must remain false"; return false; }
+    for (std::size_t index = 0; index < kValveCount; ++index)
+      if (!manualValveSlotAllowed(index) && valves[index]) {
+        valveError_ = "V6 is not installed; its wire slot must remain false";
+        return false;
+      }
     if (simulation_) return true;
     // Normally the core requires Stop before changing modes. Also handle the
     // narrow case of a just-completed recipe whose last output is not applied yet.
@@ -132,7 +135,7 @@ class Hardware {
     pumpRunPending_ = false;
     uint16_t word = 0;
     for (std::size_t index = 0; index < kManualValveCount; ++index)
-      if (valves[index]) word |= static_cast<uint16_t>(1U << manualConfig_.bits[index]);
+      if (valves[kManualValveSlots[index]]) word |= static_cast<uint16_t>(1U << manualConfig_.bits[index]);
     if (!manualWordKnown_ || word != manualWord_) writeManualWord(word);
     manualModeActive_ = true;
     applied_.valves = valves;
@@ -248,8 +251,9 @@ class Hardware {
         !config_.shiftOeActiveLow || !config_.shiftMsbFirst || config_.shiftUnusedLevels != 0) return false;
     for (std::size_t index = 0; index < kValveCount; ++index) {
       if (config_.safeValves[index] || !config_.valveActiveHigh[index]) return false;
-      if (index < kManualValveCount && config_.valveBits[index] != manual.bits[index]) return false;
     }
+    for (std::size_t index = 0; index < kManualValveCount; ++index)
+      if (config_.valveBits[kManualValveSlots[index]] != manual.bits[index]) return false;
     return true;
   }
   void writeManualWord(uint16_t word) {

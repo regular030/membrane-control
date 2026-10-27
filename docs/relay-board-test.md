@@ -1,5 +1,10 @@
 # Test the real relay board
 
+If the adapter remains listed but the firmware no longer connects, app 0.1.16
+adds **Recover connection** in this window. It retries app-owned port cleanup
+before a fresh HELLO and never resumes an old test. See
+[COM-port recovery](serial-recovery.md).
+
 Use this when only the ESP32 relay board and its USB-to-UART adapter are
 connected. This firmware operates real relay outputs. Keep every relay contact
 terminal disconnected from pumps, valves and other loads throughout this test.
@@ -10,7 +15,7 @@ Confirm the board's rated supply and polarity before powering it.
 1. Close Membrane Control and any serial monitor. Install the latest
    **MembraneControl-Setup** release if this computer does not have the new tools.
 2. Open the **Flash relay board test** shortcut. Enter the controller's COM port,
-   currently COM4 on the lab laptop, and follow the upload prompt.
+   currently COM5 on the lab laptop, and follow the upload prompt.
 3. At `Connecting...`, hold **IO0**, briefly press **EN**, and release IO0 when
    writing starts. After a successful upload, release IO0 and press EN again.
 
@@ -23,7 +28,7 @@ For a source checkout instead, update the source and run from its root:
 
 ```powershell
 $env:PLATFORMIO_CORE_DIR = Join-Path (Get-Location) 'work/platformio'
-.\.venv\Scripts\python.exe -m platformio run -d firmware -e esp32-relay-bench -t upload --upload-port COM4
+.\.venv\Scripts\python.exe -m platformio run -d firmware -e esp32-relay-bench -t upload --upload-port COM5
 ```
 
 The existing `esp32-dry-run` target remains available for a communication-only
