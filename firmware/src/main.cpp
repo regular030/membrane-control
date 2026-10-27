@@ -38,7 +38,11 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false) {
   if (error) document["error"] = error;
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.14";
+    document["firmware_version"] = "0.1.15";
+    document["valve_control_ready"] = hardware.valveControlReady();
+    document["manual_valve_count"] = basu::kManualValveCount;
+    JsonArray bits = document["valve_bits"].to<JsonArray>();
+    for (int bit : hardware.manualValveBits()) bits.add(bit);
     document["pump_command_source"] = basu::pumpCommandSourceName(board.pumpCommandSource);
     document["controller_mode"] = kSimulation ? "dry_run" : "physical";
     if (kSimulation || hardware.ready()) document["hardware_status"] = nullptr;
@@ -63,6 +67,9 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false) {
 }
 
 void handleLine(uint32_t now) {
+  now = millis();
+  controller.tick(now);
+  if (controller.state() == basu::State::Fault) hardware.safeStop();
   JsonDocument request;
   if (const char* decodeError = basu::decodeObject(line, lineLength, request)) { reply(0, decodeError); return; }
   uint32_t id = 0;
@@ -71,7 +78,10 @@ void handleLine(uint32_t now) {
     reply(id, envelopeError); return;
   }
   const char* error = nullptr;
-  if (command == "hello") { reply(id, nullptr, true); return; }
+  if (command == "hello") {
+    if (controller.state() == basu::State::ManualValves) { controller.onHello(); hardware.safeStop(); }
+    reply(id, nullptr, true); return;
+  }
   if (command == "heartbeat") controller.heartbeat(now);
   else if (command == "stop") { controller.stop(); hardware.safeStop(); }
   else if (command == "clear_fault") error = controller.clearFault();
@@ -84,6 +94,10 @@ void handleLine(uint32_t now) {
     basu::Outputs candidate;
     error = basu::parseOutputs(request["valves"], request["pump_percent"], candidate);
     if (!error) error = controller.manual(candidate, now);
+  } else if (command == "manual_valves") {
+    basu::Outputs candidate;
+    error = basu::parseManualValves(request.as<JsonVariantConst>(), candidate);
+    if (!error) error = controller.manualValves(candidate.valves, now);
   } else error = "unknown command";
   // Apply before acknowledging an actuator command. Failure is a latched fault.
   // A serial batch can take time: do not backdate a newly written PWM command's
@@ -92,6 +106,11 @@ void handleLine(uint32_t now) {
     controller.latchFault(hardware.error());
     hardware.safeStop();
     error = hardware.error();
+  }
+  if (!error && command == "manual_valves" && !hardware.applyManualValves(controller.outputs().valves)) {
+    controller.latchFault(hardware.valveError());
+    hardware.safeStop();
+    error = hardware.valveError();
   }
   reply(id, error);
 }
@@ -115,10 +134,12 @@ void readSerial(uint32_t now) {
 
 void updateMeasurements(uint32_t now) {
   if (!kSimulation) {
-    hardware.sample(now);
+    // Optional already-configured inputs may update, but valve-only operation
+    // neither requires them nor probes the stopped pump DAC for health.
+    hardware.sample(now, controller.state() == basu::State::ManualValves);
     controller.setHardwareReady(hardware.ready());
     controller.setMeasurements(hardware.measurements());
-    if (!hardware.ready() && controller.active()) {
+    if (!hardware.ready() && controller.active() && controller.state() != basu::State::ManualValves) {
       controller.setHardwareReady(false);
       controller.latchFault(hardware.error());
     }
@@ -140,6 +161,7 @@ void writeTelemetry(uint32_t now) {
   document["type"] = "telemetry";
   document["uptime_ms"] = now;
   document["state"] = basu::stateName(controller.state());
+  document["valve_control_ready"] = hardware.valveControlReady();
   document["step_index"] = controller.stepIndex();
   document["cycle"] = controller.cycle();
   document["remaining_s"] = controller.remainingSeconds(now);
@@ -170,7 +192,9 @@ void setup() {
   Serial.begin(115200);
   const bool initialized = hardware.begin();
   controller.setHardwareReady(initialized && !kSimulation);
-  // Unverified physical builds remain idle and refuse actuation; no GPIO was used.
+  hardware.beginManualValves(basu::confirmedRigManualValves());
+  controller.setValveControlReady(hardware.valveControlReady());
+  // Pump/sensor setup remains separate from the confirmed six-valve capability.
   if (!initialized && board.verifiedBoardConfig) controller.latchFault(hardware.error());
 }
 
@@ -182,9 +206,12 @@ void loop() {
   readSerial(now);
   now = millis();
   controller.tick(now);
-  if (!hardware.apply(controller.outputs(), now, true) && controller.active()) {
+  const bool valveOnly = controller.state() == basu::State::ManualValves;
+  const bool applied = valveOnly ? hardware.applyManualValves(controller.outputs().valves) :
+      (hardware.ready() ? hardware.apply(controller.outputs(), now, true) : true);
+  if (!applied && controller.active()) {
     controller.setHardwareReady(false);
-    controller.latchFault(hardware.error());
+    controller.latchFault(valveOnly ? hardware.valveError() : hardware.error());
     hardware.safeStop();
   }
   if (static_cast<uint32_t>(now - lastTelemetryMs) >= basu::kTelemetryIntervalMs) {

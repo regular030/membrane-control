@@ -29,7 +29,9 @@ function Get-DryRunFlashPlan {
         arguments=@('-I', '-m', 'platformio', '--no-ansi', 'run', '-d', $firmwareRoot, '-e', $Firmware, '-t', 'upload', '--upload-port', $name);
         environment=$Firmware; selected_firmware=$Firmware; replaces_existing_firmware=$true;
         commissioning_required=($Firmware -in @('esp32-valve-test', 'esp32-physical'));
-        physical_outputs_locked_by_default=($Firmware -in @('esp32-valve-test', 'esp32-physical')) }
+        physical_outputs_locked_by_default=($Firmware -eq 'esp32-valve-test');
+        manual_valve_count=$(if ($Firmware -eq 'esp32-physical') { 6 } else { 0 });
+        manual_valve_control_ready_by_default=($Firmware -eq 'esp32-physical') }
 }
 
 function Invoke-DryRunFlash {
@@ -48,13 +50,13 @@ function Invoke-DryRunFlash {
         Write-Host 'This is a separate physical valve-test program, not dry run or the unloaded raw relay test. It has no sensor, DAC, pump or experiment controls.'
         Write-Host 'Disconnect every external wire from all relay COM, NO and NC contacts for this initial upload. Read docs/valve-test.md before preparing a reviewed valve profile or connecting loads.'
     } elseif ($Firmware -eq 'esp32-physical') {
-        Write-Host 'FULL CONTROLLER (SETUP REQUIRED): the shipped hardware profile is unverified and physical outputs are locked.' -ForegroundColor Yellow
-        Write-Host 'This is the full controller program, not dry run. Do not run an experiment until the wiring, sensor interfaces and a compiled hardware profile have been reviewed and commissioned.'
-        Write-Host 'An app checkbox cannot unlock the shipped profile. Keep the rig loads disconnected for this initial upload.'
+        Write-Host 'NORMAL CONTROLLER: six confirmed manual valves, V1-V6 = relay bits 0-5.'
+        Write-Host 'Dashboard valve ON/OFF controls do not need pressure, flow, scale, a DAC or the separate valve-test profile.'
+        Write-Host 'Pump/experiment operation remains separate and requires its configured inputs and pump interface.'
     } else {
         Write-Host 'Dry-run firmware uses generated measurements and does not operate relay GPIO.'
     }
-    Write-Host 'Keep the pump and valve loads disconnected. Confirm the actual board supply rating before powering it.'
+    if ($Firmware -ne 'esp32-physical') { Write-Host 'Keep the pump and valve loads disconnected. Confirm the actual board supply rating before powering it.' }
     Write-Host 'Close Arduino Serial Monitor/Plotter, the app''s controller connection and any other program using this COM port.'
     Write-Host 'For an external-UART board without automatic reset: hold IO0, press and release EN/RESET, then release IO0 before continuing.'
     if ([string]::IsNullOrWhiteSpace($ComPort)) { $ComPort = Read-Host 'Controller COM port from Windows Device Manager (for example COM3)' }
@@ -85,7 +87,7 @@ function Invoke-DryRunFlash {
             Write-Host 'Follow docs/valve-test.md in the installation folder. The shipped valve-test profile must report unverified and keep physical outputs locked.'
             Write-Host 'A reviewed valve profile and its commissioning checks are required before connecting loads. This target does not use sensors or control the pump, DAC or an experiment.'
         } elseif ($Firmware -eq 'esp32-physical') {
-            Write-Host 'Open the app, turn Simulation mode off and select this controller port. The shipped full controller must report an unverified installation with physical controls locked.'
+            Write-Host 'Open the app, turn Simulation mode off, connect this controller port and use Dashboard V1-V6 ON/OFF. No sensor connection or extra profile form is required for manual valves.'
             Write-Host 'Finish the reviewed hardware profile, sensor calibration, pump interface and process-safe wiring before real operation. Uploading this target alone does not commission the rig.'
         } else {
             Write-Host 'Open the app, turn Simulation mode off and select this controller port. It must report Connected (dry run).'

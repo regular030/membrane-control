@@ -96,7 +96,7 @@ def test_missing_readings_are_unavailable_and_valid_zero_is_retained(screen, mon
                    valves=[False, None], simulation=True)
     monkeypatch.setattr(controller, 'recorded_samples_after', lambda seq: [event] if seq == 0 else [])
     window._update_view(dict(controller.snapshot))
-    for key in ('flow_ml_min', 'balance_flow_ml_min', 'pressure_psi', 'pump_feedback_v', 'valve_1', 'valve_6'):
+    for key in ('flow_ml_min', 'balance_flow_ml_min', 'pressure_psi', 'pump_feedback_v', 'valve_1', 'valve_5'):
         assert cell(window, 0, key) == 'Unavailable'
     assert cell(window, 0, 'mass_g') == cell(window, 0, 'desired_flow_ml_min') == '0'
     assert cell(window, 0, 'valve_0') == 'OFF'

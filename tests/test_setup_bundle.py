@@ -25,6 +25,7 @@ def fake_source(tmp_path):
         "docs/relay-board-test.md", "protocol/relay-bench.md",
         "docs/valve-test.md", "protocol/valve-test.md",
         "docs/flow-sensor-troubleshooting.md",
+        "docs/normal-valves.md", "docs/scale-connection.md",
         "docs/pwm-converter-setup.md", "hardware/procurement.md",
         "firmware/examples/PwmConverterProfile.example.h",
         "firmware/examples/pwm-converter-bench/README.md",

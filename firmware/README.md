@@ -6,6 +6,38 @@ relay GPIO, sensor GPIO or I2C. Measurements are explicitly simulated and every
 hello/telemetry message reports `simulation: true` and `hardware_verified: false`.
 Nothing in this repository establishes that the physical rig is commissioned.
 
+## Normal manual control of the six confirmed valves
+
+Full-controller firmware **0.1.15**, target **esp32-physical**, supports the
+normal Dashboard's six valve toggles without pressure, flow, balance or pump
+interfaces. The user confirmed **V1..V6 = register bits0..5**, active HIGH with
+all LOW off. `ManualValveConfig.h` records that mapping. Bits6..15 stay LOW in
+this mode; there is no seventh physical valve. The ordinary valve controls do
+not require the older commissioning dialog's checks or a custom C++ header.
+
+This is a separate `valve_control_ready` capability, not full
+`hardware_verified` approval. The factory pump/recipe and sensor profile stays
+unverified. `manual_valves` accepts the legacy seven-boolean wire array with its
+unused last slot false, never a pump field. It enters state `manual_valves`,
+holds the requested six valve states until changed or stopped, and always
+commands pump0. It is not limited to a 500 ms pulse. Stop, a new HELLO session,
+reset or three-second heartbeat loss returns the manual valves to all LOW;
+there is no automatic restoration after reconnect. Stop before switching from
+a running experiment or ordinary pump-manual mode to valve-only control.
+
+One Hardware object owns the relay interface. With the unverified full profile,
+only data GPIO14, clock GPIO13, latch GPIO12 and active-low OE GPIO5 initialize;
+no ADC, I2C, DAC, PWM or pump-contact GPIO is touched. If a full reviewed driver
+already owns I/O, its relay interface must match before manual control reuses
+it. Sensor/pump failures do not grant full readiness. Full pump control and
+recipes retain their pressure, hardware and recipe gates. A connected flow
+sensor still needs a correctly configured protected input and calibration; the
+valve capability does not add sensor acquisition.
+
+HELLO advertises `manual_valve_count: 6`, `valve_bits: [0,1,2,3,4,5]`, and
+`valve_control_ready`. Telemetry repeats the readiness flag. `valve_count: 7`
+and seven-slot arrays remain for protocol compatibility, not physical count.
+
 For the connected but unloaded relay board, the separate **esp32-relay-bench**
 firmware operates real 74HC595 outputs in bounded test pulses. Use the app's
 **Relay board test** window, not the ordinary experiment connection. Follow the
@@ -13,9 +45,9 @@ firmware operates real 74HC595 outputs in bounded test pulses. Use the app's
 record the physical channel mapping. No pump or sensor interface is needed for
 this unloaded test, and it cannot run experiments.
 
-## Sensor-free solenoid valve commissioning
+## Legacy separate solenoid valve commissioning
 
-The separate **esp32-valve-test** target supports one named solenoid at a time
+The older separate **esp32-valve-test** target supports one named solenoid at a time
 without ADC, DAC, pump, pressure, flow or balance interfaces. It is distinct from
 both unloaded raw-bit testing and production experiment control. The shipped
 profile is **UNVERIFIED / LOCKED** and performs no GPIO operations. Merely
@@ -24,7 +56,9 @@ flashing this target does not enable a valve or approve 120 VAC load wiring.
 A separate reviewed header, selected with `BASU_VALVE_PROFILE_HEADER`, must
 provide `basu::compiledValveTestConfig()`. See
 [`examples/ValveTestProfile.example.h`](examples/ValveTestProfile.example.h).
-The template deliberately contains false review flags and unknown mapping bits.
+This legacy target has seven configurable wire slots; it is not the normal
+six-valve Dashboard control described above. Its template deliberately contains
+false review flags and unknown mapping bits.
 It must remain locked until the actual seven single-coil solenoid circuits,
 raw-bit mapping, all-off sixteen-bit rest word, unused outputs, safe reset/OE
 response, and pump exclusion have been established. Candidate serial-register
@@ -100,8 +134,9 @@ $env:PLATFORMIO_CORE_DIR = Join-Path (Get-Location) 'work/platformio'
 .\.venv\Scripts\python.exe -m platformio test -d firmware -e native
 ```
 
-The physical environment also compiles, but the shipped unverified profile
-refuses all physical actuation. These commands do **not** upload firmware.
+The physical environment supports the confirmed six-valve manual capability,
+while its unverified pump/recipe profile refuses full process operation.
+These commands do **not** upload firmware.
 Native tests require a C++ compiler. The helper uses an existing GNU compiler or
 Windows LLVM installation, or `BASU_HOST_CXX`; it does not install a compiler.
 The ESP32 platform and ArduinoJson
@@ -210,7 +245,8 @@ References: [Freenove camera pins](https://github.com/Freenove/Freenove_ESP32_WR
 
 ## Commissioning gates
 
-All GPIO assignments, shift-register valve bits and ADC channels start at `-1`.
+In the full pump/sensor `BoardConfig`, GPIO assignments, valve bits and ADC
+channels start at `-1`. The independent normal manual mapping is explicit above.
 The candidate Srliya 16-channel board is represented by a 16-bit 74HC595 driver.
 The seller's sample now identifies data GPIO14, clock GPIO13, latch GPIO12 and
 enable GPIO5; these are recorded in the [proposed pin plan](../hardware/relay-board-pin-plan.md).

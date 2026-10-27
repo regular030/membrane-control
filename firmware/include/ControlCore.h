@@ -10,6 +10,8 @@
 namespace basu {
 
 constexpr std::size_t kValveCount = 7;
+// Legacy wire/recipe arrays retain seven slots; the confirmed rig has six valves.
+constexpr std::size_t kManualValveCount = 6;
 constexpr std::size_t kMaxSteps = 32;
 constexpr std::size_t kMaxLineBytes = 8192;
 constexpr uint32_t kHeartbeatTimeoutMs = 3000;
@@ -88,18 +90,20 @@ struct Measurements {
 struct SafetyConfig {
   bool simulation = true;
   bool hardwareReady = false;
+  bool valveControlReady = false;
   bool safeProfileVerified = false;
   double pressureLimitPsi = NAN;
   uint32_t sensorMaxAgeMs = 1000;
   std::array<bool, kValveCount> safeValves{};
 };
 
-enum class State { Idle, Running, Manual, Fault };
+enum class State { Idle, Running, Manual, ManualValves, Fault };
 
 inline const char* stateName(State state) {
   switch (state) {
     case State::Running: return "running";
     case State::Manual: return "manual";
+    case State::ManualValves: return "manual_valves";
     case State::Fault: return "fault";
     default: return "idle";
   }
@@ -123,6 +127,7 @@ class Controller {
     if (!loaded_) return "no recipe loaded";
     if (!safety_.simulation && !recipe_.hardwareApproved) return "recipe is not hardware approved";
     if (const char* error = readiness(now)) return error;
+    valveOnlyOutputs_ = false;
     state_ = State::Running;
     stepIndex_ = 0;
     cycle_ = 1;
@@ -137,12 +142,35 @@ class Controller {
       return "manual control requires idle or manual state";
     if (!validOutputs(requested)) return "pump_percent must be finite and 0-100";
     if (const char* error = readiness(now)) return error;
+    valveOnlyOutputs_ = false;
     if (state_ == State::Idle) lastHeartbeatMs_ = now;
     state_ = State::Manual;
     stepIndex_ = -1;
     cycle_ = 0;
     outputs_ = requested;
     return nullptr;
+  }
+
+  const char* manualValves(const std::array<bool, kValveCount>& valves, uint32_t now) {
+    if (state_ == State::ManualValves) tick(now);
+    if (state_ != State::Idle && state_ != State::ManualValves)
+      return "stop before switching to valve-only manual control";
+    if (!safety_.simulation && !safety_.valveControlReady) return "valve_control_not_ready";
+    for (std::size_t index = kManualValveCount; index < kValveCount; ++index)
+      if (valves[index]) return "unused valve slot must remain false";
+    if (state_ == State::Idle) lastHeartbeatMs_ = now;
+    state_ = State::ManualValves;
+    valveOnlyOutputs_ = true;
+    stepIndex_ = -1;
+    cycle_ = 0;
+    outputs_.valves = valves;
+    outputs_.pumpPercent = 0;
+    return nullptr;
+  }
+
+  void onHello() {
+    // A new client cannot inherit an old valve-only session by supplying HBs.
+    if (state_ == State::ManualValves) stop();
   }
 
   // A stop never clears a latched fault and is valid in every state.
@@ -168,9 +196,13 @@ class Controller {
     return nullptr;
   }
 
-  void heartbeat(uint32_t now) { lastHeartbeatMs_ = now; }
+  void heartbeat(uint32_t now) {
+    if (state_ == State::ManualValves) tick(now);
+    lastHeartbeatMs_ = now;
+  }
   void setMeasurements(const Measurements& readings) { measurements_ = readings; }
   void setHardwareReady(bool ready) { safety_.hardwareReady = ready; }
+  void setValveControlReady(bool ready) { safety_.valveControlReady = ready; }
 
   void tick(uint32_t now) {
     if (!active()) return;
@@ -178,6 +210,10 @@ class Controller {
     if (static_cast<uint32_t>(now - lastHeartbeatMs_) >= kHeartbeatTimeoutMs) {
       latchFault("heartbeat_timeout");
       return;
+    }
+    if (state_ == State::ManualValves) {
+      if (!safety_.simulation && !safety_.valveControlReady) latchFault("valve_control_not_ready");
+      return;  // Pump is zero; physical pressure/pump readiness applies to other modes.
     }
     if (!safety_.simulation) {
       if (const char* error = readiness(now)) {
@@ -204,7 +240,7 @@ class Controller {
     }
   }
 
-  bool active() const { return state_ == State::Running || state_ == State::Manual; }
+  bool active() const { return state_ == State::Running || state_ == State::Manual || state_ == State::ManualValves; }
   State state() const { return state_; }
   const Outputs& outputs() const { return outputs_; }
   const Measurements& measurements() const { return measurements_; }
@@ -238,7 +274,11 @@ class Controller {
     // Round configured durations upward to the millisecond clock resolution.
     return std::max<uint32_t>(1, static_cast<uint32_t>(std::ceil(recipe_.steps[index].durationSeconds * 1000.0)));
   }
-  void resetOutputs() { outputs_.valves = safety_.safeValves; outputs_.pumpPercent = 0; }
+  void resetOutputs() {
+    if (valveOnlyOutputs_) outputs_.valves.fill(false);
+    else outputs_.valves = safety_.safeValves;
+    outputs_.pumpPercent = 0;
+  }
 
   SafetyConfig safety_;
   State state_ = State::Idle;
@@ -251,6 +291,7 @@ class Controller {
   uint32_t stepStartedMs_ = 0;
   uint32_t lastHeartbeatMs_ = 0;
   std::string fault_;
+  bool valveOnlyOutputs_ = false;
 };
 
 }  // namespace basu

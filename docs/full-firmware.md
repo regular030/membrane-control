@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.14 includes the complete controller source and compiled ESP32 images,
+Version 0.1.15 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.14-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.15-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -13,7 +13,7 @@ The portable application ZIP also contains it. Setup installs it in
 | `esp32-dry-run` | Full recipe/communications logic with generated readings and no relay or pump output. Use for connection and app checks. |
 | `esp32-relay-bench` | Real unloaded relay pulses through the board's candidate shift-register interface. Separate test window; no sensors, pump or experiments. |
 | `esp32-valve-test` | Sensor-free, one-at-a-time solenoid pulses using a separate reviewed valve profile. No pump or sensor protection; the supplied factory profile stays locked. |
-| `esp32-physical` | Full controller with recipe timing, relay outputs, protected/calibrated input acquisition, PWM-converter or GP8403 pump command, telemetry, pressure protection and watchdog. The shipped hardware profile is unverified, so physical operation remains locked. |
+| `esp32-physical` | Normal controller. The six confirmed manual valve toggles work without sensors. Full pump/experiment operation still needs its configured interfaces and inputs. |
 
 All targets are for the ESP32-WROOM/classic ESP32 profile used by this project.
 The full controller source is `firmware/src/main.cpp`; its I/O implementation is
@@ -37,6 +37,9 @@ The full controller source is `firmware/src/main.cpp`; its I/O implementation is
    physical target reports that its profile has not been verified.
 
 Setup prepares all four build targets without opening a COM port or uploading.
+For this rig, use **Flash normal controller** (`esp32-physical`), then the six
+Dashboard ON/OFF buttons. No separate pulse-test program/profile is required.
+See [six valves with normal firmware](normal-valves.md).
 App 0.1.14 adds **Set up valve mapping and firmware** in the valve-test window.
 It builds a private reviewed valve profile without editing the shared source;
 see [Valve test](valve-test.md). The factory image remains locked.

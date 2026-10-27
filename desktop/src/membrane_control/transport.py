@@ -28,8 +28,16 @@ def close_transport(transport, stop_message=None):
 
 
 class SerialTransport:
-    def __init__(self, port, baud=115200, raw=False):
+    def __init__(self, port, baud=115200, raw=False, *, serial_format='8N1', diagnostics=False, dtr=None):
+        if serial_format not in ('8N1', '7E1', '7O1'):
+            raise ValueError('Serial format must be 8N1, 7E1 or 7O1.')
+        if dtr is not None and type(dtr) is not bool:
+            raise ValueError('DTR must be true or false when specified.')
+        if not raw and (serial_format != '8N1' or diagnostics or dtr is True):
+            raise ValueError('Alternate serial formats and raw diagnostics are for the balance only.')
         self.port, self.baud, self.raw = port, baud, raw
+        self.serial_format, self.diagnostics = serial_format, bool(diagnostics)
+        self.dtr = bool(raw) if dtr is None else dtr
         self.incoming = queue.Queue(maxsize=512)
         self.outgoing = queue.PriorityQueue(maxsize=64)
         self._counter = 0
@@ -50,15 +58,27 @@ class SerialTransport:
         self._thread.start()
 
     def send(self, message):
-        payload = self._encode(message)
+        self._enqueue(self._encode(message), message.get('cmd'))
+
+    def request_reading(self):
+        """Nimbus Print only (manual section 11.3); no tare or configuration."""
+        if not self.raw:
+            raise ValueError('A reading request is only supported on a balance transport.')
+        with self._connection_lock:
+            opened = self._opened and self._connection is not None
+        if not opened:
+            raise RuntimeError(self._terminal_error or 'Balance port is not open; reconnect or wait for it to open.')
+        self._enqueue(b'!KP\r')
+
+    def _enqueue(self, payload, command=None):
         overflow = False
         with self._state_lock:
             if self._closing.is_set() or self._stop.is_set() or self._terminated.is_set() or self._terminal_error is not None:
                 raise RuntimeError(self._terminal_error or "Serial connection is closed; reconnect the controller")
             self._counter += 1
-            if message.get("cmd") == "stop":
+            if command == "stop":
                 self._discard_outgoing()
-            priority = 0 if message.get("cmd") == "stop" else 2 if message.get("cmd") == "heartbeat" else 1
+            priority = 0 if command == "stop" else 2 if command == "heartbeat" else 1
             try:
                 self.outgoing.put_nowait((priority, self._counter, payload))
             except queue.Full:
@@ -109,12 +129,19 @@ class SerialTransport:
         try:
             import serial
             # Configure control lines before opening to avoid intentional boot/reset toggles.
-            connection = serial.Serial(port=None, baudrate=self.baud, timeout=0.05, write_timeout=0.25)
+            settings = dict(port=None, baudrate=self.baud, timeout=0.05, write_timeout=0.25)
+            if self.raw:
+                settings.update(bytesize=8 if self.serial_format == '8N1' else 7,
+                                parity={'8N1': 'N', '7E1': 'E', '7O1': 'O'}[self.serial_format],
+                                stopbits=1, xonxoff=False, rtscts=False, dsrdtr=False)
+            connection = serial.Serial(**settings)
             with self._connection_lock:
                 self._connection = connection
             if self._closing.is_set():
                 return
-            connection.dtr = False
+            # Controller UARTs keep reset-related lines inactive. A raw USB
+            # balance uses normal DTR readiness, with no RTS/CTS handshaking.
+            connection.dtr = self.dtr
             connection.rts = False
             connection.port = self.port
             connection.open()
@@ -125,6 +152,7 @@ class SerialTransport:
             self._emit({"type": "port_open"})
             buffer = bytearray()
             discarding = False
+            raw_cr = False
             while not self._stop.is_set():
                 for _ in range(4):
                     item = self._next_write()
@@ -147,8 +175,13 @@ class SerialTransport:
                 chunk = connection.read(min(max(connection.in_waiting, 1), 1024))
                 if self._closing.is_set() or self._stop.is_set():
                     continue
+                if chunk and self.diagnostics:
+                    self._emit({'type': 'serial_raw', 'data': bytes(chunk)})
                 for byte in chunk:
-                    if byte == 10:
+                    if byte == 10 or (self.raw and byte == 13):
+                        if self.raw and byte == 10 and raw_cr:
+                            raw_cr = False  # A split CRLF pair is one line.
+                            continue
                         if not discarding and buffer:
                             try:
                                 line = buffer.decode("utf-8").strip()
@@ -159,7 +192,9 @@ class SerialTransport:
                                 self._emit({"type": "parse_error", "error": "Malformed serial data"})
                         buffer.clear()
                         discarding = False
+                        raw_cr = self.raw and byte == 13
                     elif not discarding:
+                        raw_cr = False
                         buffer.append(byte)
                         if len(buffer) > (256 if self.raw else MAX_LINE):
                             buffer.clear()

@@ -12,6 +12,18 @@ SENSOR_STATUS_CODES = frozenset(("simulated", "not_configured", "profile_locked"
     "hardware_unavailable", "uncalibrated", "out_of_range", "stale", "reading_received"))
 
 
+def checked_valve_control(packet: dict) -> dict:
+    """Authorize only the firmware's explicit six-valve capability and map."""
+    bits = packet.get("valve_bits")
+    valid_map = (type(bits) is list and len(bits) == 6
+                 and all(type(bit) is int and 0 <= bit <= 15 for bit in bits)
+                 and len(set(bits)) == 6)
+    valid_count = type(packet.get("manual_valve_count")) is int and packet["manual_valve_count"] == 6
+    return {"valve_control_ready": packet.get("valve_control_ready") is True and valid_count and valid_map,
+            "manual_valve_count": 6 if valid_count else 0,
+            "valve_bits": list(bits) if valid_map and valid_count else []}
+
+
 def checked_controller_diagnostics(packet: dict) -> dict:
     """Copy only bounded, known optional HELLO diagnostics; never control flags."""
     result = {}
@@ -124,6 +136,10 @@ def device_statuses(snapshot: dict, desktop_simulation: bool) -> list[dict[str, 
 
     if dry_run:
         add("outputs", "Valves / pump", "Simulated", "Dry-run firmware does not operate the physical outputs.", "warning")
+    elif connected and checked_valve_control(snapshot)["valve_control_ready"]:
+        add("outputs", "Valves / pump",
+            "Valve commands active" if snapshot.get("state") == "manual_valves" else "Valve control ready",
+            "Six valve commands are available through the firmware's valve-only mode. Actual valve/contact position and pump-running state are not monitored.", "warning")
     else:
         add("outputs", "Valves / pump", "Not monitored", "Valve-position and pump-running feedback are not monitored. A command does not confirm physical operation.")
     return rows

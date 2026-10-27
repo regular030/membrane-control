@@ -22,6 +22,11 @@ wait for the stopped state before exporting or changing the setup.
 
 ## Understand the screen
 
+The normal firmware supports the six confirmed valves **V1-V6 = bits 0-5**.
+Use their Dashboard ON/OFF buttons without sensors or a profile form. **Stop
+valves** turns them all off; this mode commands pump zero. See
+[normal valve controls](normal-valves.md) and [scale connection](scale-connection.md).
+
 Resize the whole interface with **Ctrl + -** (smaller) or **Ctrl + +** / **Ctrl + =**
 (larger). **Ctrl + 0** resets it to 100%. The percentage appears at the bottom
 right. Zoom changes in 10% steps from 60% to 150%; each launch starts at 100%.
@@ -50,7 +55,7 @@ Use **Start here** or the **Help** tab if you need the first-use instructions.
 During a sequence, **Live readings** beneath the graphs adds one row whenever a
 sample is recorded, using the sequence's **Record every** interval. It includes
 the recorded timestamp, runtime, cycle/step, desired and measured flow, flow
-estimated from the scale, pressure, flux, mass, pump command/feedback, all seven
+estimated from the scale, pressure, flux, mass, pump command/feedback, all six
 commanded valve states, operating mode and device/fault status.
 
 Missing measurements display **Unavailable**. Valve and pump commands do not

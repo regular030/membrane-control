@@ -1,25 +1,29 @@
-Membrane Control 0.1.14 makes the sensor-free valve test easier to prepare and use.
+Membrane Control 0.1.15 adds normal-firmware control for the six confirmed valves and improves Adam Nimbus scale communication.
 
-Developed for membrane research in **Dr. Onita Basu's lab at Carleton University**.
+Developed for **Dr. Onita Basu's lab at Carleton University**.
 
-## Download and use
+## Download and update
 
-Download **MembraneControl-Setup-0.1.14-windows-x64.exe**. Setup updates the app and installs the valve-profile preparation helper, complete firmware source and guides. The app-only EXE does not include the build tools. Close the old app before updating.
+Install **MembraneControl-Setup-0.1.15-windows-x64.exe**. Close the app's controller connection, use the installed **Flash normal controller** shortcut to upload `esp32-physical`, then reconnect with Simulation mode off. Updating only the app does not update the ESP32.
 
-With **Simulation mode off**, choose **Valve test (no sensors)** directly on Dashboard, or **2. Valve test (no sensors)** in Connections and settings. Disconnect in that window and choose **Set up valve mapping and firmware**. The form records the measured V1-V7 raw-bit map, full all-off pattern and installation reviews, then prepares a private valve-only build without editing C++ or the shared PlatformIO configuration.
+## Six valves in normal firmware
 
-The separate helper opens a visible console, builds first and requires the exact typed phrase **UPLOAD VALVE TEST** before accessing the selected COM port. Keep pump power/control isolated and relay contact loads disconnected for the initial upload. Reconnect after the installation checks, complete the session checks, arm, and request one **500 ms** valve pulse at a time. No pressure, flow, balance or PWM converter is required for this test. The prepared setup ID must match the board's reply; no pulse is sent automatically.
+The user confirmed **six valves: V1-V6 = relay bits 0-5, LOW off and HIGH energized**. Dashboard now shows six ON/OFF controls above the measurements. They work with normal firmware without pressure, flow, balance, DAC, a valve-profile form or extra approval checkboxes. The states persist until changed or stopped, replacing the need to use the old 500 ms test program for this task.
 
-**All LOW off / All HIGH on confirms polarity, not the individual valve map.** Unknown mappings start blank. Drafts retain recorded values but do not restore review flags. Private build/profile files stay outside the shared factory firmware, whose valve and production profiles remain locked. This tool does not run the pump or an experiment and does not certify mains wiring, valve motion or hydraulic safety. Follow the [valve test guide](https://github.com/regular030/membrane-control/blob/v0.1.14/docs/valve-test.md).
+The dedicated valve-only command holds pump_percent at zero. Stop turns all six off; reconnect, reset and the existing three-second communication watchdog do not resume an old valve state. Bits6-15 stay LOW, and the unused seventh legacy wire slot is rejected if true. Pump/manual and automatic experiment configuration requirements remain separate. The six-valve capability does not claim that missing sensor channels are configured.
 
-## Missing sensor values
+Follow [normal valve controls](https://github.com/regular030/membrane-control/blob/v0.1.15/docs/normal-valves.md). Older pulse/relay tools remain optional under Connections and settings.
 
-The full controller now reports optional per-input configuration and status. The app distinguishes a disabled channel, locked profile, unavailable hardware, missing calibration, invalid range and stale acquisition instead of showing only **No reading**. Valid zero readings remain valid. Diagnostics do not acquire unconfigured inputs, generate missing measurements or unlock physical outputs. See [flow sensor troubleshooting](https://github.com/regular030/membrane-control/blob/v0.1.14/docs/flow-sensor-troubleshooting.md).
+## Adam Nimbus scale
 
-Balance behavior is unchanged. Scale troubleshooting is deferred at the user's request.
+The main scale connection can request weights automatically at most once per second when data is not streaming, using the documented fixed Print command. It can also request a reading explicitly. Formats NONE8N1 / EVEN7E1 / ODD7O1 and4800 baud are supported; raw balances accept CR, LF and CRLF. The parser accepts documented Net fields, decimal comma and form boundaries without treating Gross/Tare/ID as net mass.
 
-## Validation and scope
+Raw-balance USB DTR readiness now defaults on; ESP32 reset/control lines retain their previous behavior. No tare, zero, reset or scale-settings commands are sent. A request does not count as a received weight. The separate **Test scale / raw data** window shows actual received bytes, escaped text/hex, decoded lines, valid masses and errors, and releases the normal scale port first.
 
-**550 desktop/packaging tests passed**, with four real-symlink checks skipped for missing Windows privilege. **79 native firmware tests**, all four factory target builds, a separate synthetic generated-profile build, the packaged app and the Setup payload checks passed. The final Dashboard UI changes also passed 57 focused tests. The [validation record](https://github.com/regular030/membrane-control/blob/v0.1.14/docs/validation.md) gives details.
+The lab's current settings are **COM6 /9600**, USB-B I/O. The physical display works, but a live response is not yet verified because COM6 is on the separate lab PC. Use the [scale connection guide](https://github.com/regular030/membrane-control/blob/v0.1.15/docs/scale-connection.md) if it still reports no weight. DTR is a compatibility improvement, not a confirmed diagnosis of this particular unit.
 
-The firmware ZIP still contains the four factory targets plus complete source. No physical rig, serial port or connected valve was operated while preparing this release. Hosted Actions remain blocked by the existing account billing lock; release files were built and checked locally.
+## Validation
+
+**657 desktop/packaging tests passed**, with four real-symlink cases skipped for unavailable Windows privilege. **98 native firmware tests and all four ESP32 target builds passed.** Serial tests use fake streams and include actual byte framing, fixed Print requests, format/DTR handling, bounded polling, no invented weight evidence and cleanup. The packaged app launched and exited cleanly; Setup verified its payload without installation or USB access. Release checksums and actionlint passed. See [validation](https://github.com/regular030/membrane-control/blob/v0.1.15/docs/validation.md).
+
+No physical valves or lab serial ports were operated while preparing this release. Hosted Actions retain the existing account billing lock; these binaries are built and verified locally.

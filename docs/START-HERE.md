@@ -30,13 +30,15 @@ or a checked recipe-review box does not make the real rig ready.
 
 ## Need help?
 
-To test equipment without sensors, uncheck **Simulation mode** and open
-**Connections and settings**. Choose **1. Bare relay board test** for an unloaded
-board, or **2. Valve test (no sensors)** after the maintainer has completed the
-separate reviewed valve profile. The factory valve-test image stays locked.
-See [the valve test guide](valve-test.md). The pump is not operated by either tool.
-The valve-test window has **Set up valve mapping and firmware** to prepare its
-private valve-only build without editing C++. For missing real flow values, use
+The confirmed rig has **six valves, V1-V6 = bits 0-5**. With app/normal firmware
+0.1.15, uncheck **Simulation mode**, connect the ESP32 and use the six ON/OFF
+buttons directly on Dashboard. No sensors, extra profile form or review boxes
+are needed for manual valves. [Install the normal firmware once](normal-valves.md)
+using **Flash normal controller**. Pump/experiment configuration is separate.
+
+The [scale guide](scale-connection.md) covers COM6/9600, weight requests and the
+raw-data test. The old unloaded relay and separate pulse-test tools remain
+optional under Connections and settings. For missing flow values, use
 [flow sensor troubleshooting](flow-sensor-troubleshooting.md).
 
 For the selected pump PWM converter, give the maintainer the

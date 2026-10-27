@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 
 from .balance import MassFlow, parse_mass
-from .device_status import checked_controller_diagnostics, checked_sensor_status
+from .device_status import checked_controller_diagnostics, checked_sensor_status, checked_valve_control
 from .models import Recipe, number, valve_states
 from .recipes import built_in_recipes, read_recipe, write_recipe
 from .storage import RunStore
@@ -39,6 +39,9 @@ class AppController:
         self.recipe = copy.deepcopy(next(iter(self.presets.values())))
         self.driver = None
         self.balance = None
+        self.balance_polling = False
+        self.balance_port_open = False
+        self.last_balance_request = None
         self.simulation = True
         self.device = {}
         self.pending = {}
@@ -63,8 +66,10 @@ class AppController:
         self.closed = False
         self.snapshot = {"state": "idle", "simulation": True, "controller_connected": False,
             "controller_status": "Not connected", "balance_connected": False,
+            "balance_polling": False,
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
+            "valve_control_ready": False, "manual_valve_count": 0, "valve_bits": [],
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
@@ -89,7 +94,11 @@ class AppController:
         self.log.append(time.strftime("%H:%M:%S") + "  " + str(message))
 
     def _active(self):
-        return self.start_phase is not None or self.manual_pending or self.stop_pending or self.snapshot["state"] in ("running", "manual")
+        return self.start_phase is not None or self.manual_pending or self.stop_pending or self.snapshot["state"] in ("running", "manual", "manual_valves")
+
+    def _valves_only(self):
+        return self.snapshot["state"] == "manual_valves" or (self.manual_pending and
+            any(command == "manual_valves" for command, _ in self.pending.values()))
 
     def _request(self, command, **values):
         if self.driver is None:
@@ -213,29 +222,81 @@ class AppController:
                     self._reset_diagnostics()
 
     def _reset_diagnostics(self):
-        self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={})
+        self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
+            valve_control_ready=False, manual_valve_count=0, valve_bits=[])
 
-    def connect_balance(self, port, baud=9600):
+    def connect_balance(self, port, baud=9600, serial_format="8N1", polling=True):
         if self.simulation:
             raise ValueError("Turn Demo mode off before connecting the balance")
         if self._active():
             raise ValueError("Stop before reconnecting a balance")
+        if (not isinstance(port, str) or not port.strip() or len(port) > 256
+                or any(ord(char) < 32 for char in port)):
+            raise ValueError("Select a balance serial port")
+        if type(baud) is not int or not 300 <= baud <= 115200:
+            raise ValueError("Balance baud rate must be an integer from 300 to 115200")
+        if type(serial_format) is not str or serial_format not in ("8N1", "7E1", "7O1"):
+            raise ValueError("Balance serial format must be 8N1, 7E1 or 7O1")
+        if type(polling) is not bool:
+            raise ValueError("Balance polling must be an explicit boolean")
+        port = port.strip()
         if self.driver is not None and self.driver.port == port:
             raise ValueError("Balance and controller need different ports")
         self.disconnect_balance()
-        self.balance = SerialTransport(port, baud, raw=True)
+        options = {"raw": True}
+        if serial_format != "8N1":
+            options["serial_format"] = serial_format
+        self.balance = SerialTransport(port, baud, **options)
+        self.balance_polling = polling
+        self.snapshot["balance_polling"] = polling
         self.snapshot["balance_status"] = "Waiting for a weight reading"
-        self._log(f"Opening balance {port} at {baud} baud, 8N1")
+        self._log(f"Opening balance {port} at {baud} baud, {serial_format}")
+
+    def request_balance_reading(self):
+        """Return True if queued, False if throttled; never tare or configure it."""
+        return self._request_balance_reading(log=True)
+
+    def _request_balance_reading(self, *, log):
+        if self.closed or self.simulation or self.balance is None or not self.balance_port_open:
+            raise ValueError("Connect a real balance and wait for its serial port to open first")
+        request = getattr(self.balance, "request_reading", None)
+        if not callable(request):
+            raise ValueError("This balance connection does not support reading requests; reconnect with the updated application")
+        now = self.clock()
+        if self.last_balance_request is not None and now - self.last_balance_request < 1:
+            return False
+        try:
+            request()  # The transport permits only its fixed, read-only Print command.
+        except Exception as error:
+            self._balance_connection_failed(str(error))
+            raise
+        self.last_balance_request = now
+        if log:
+            self._log("Requested the current balance weight; waiting for a valid response")
+        return True
+
+    def _balance_connection_failed(self, reason):
+        reason = str(reason)[:512]
+        try:
+            self.disconnect_balance()
+        except Exception as error:
+            self._log("Could not close balance connection: " + str(error))
+        self.snapshot["balance_status"] = reason or "Balance disconnected"
+        self._log("Balance disconnected: " + (reason or "connection closed"))
 
     def disconnect_balance(self):
         balance, self.balance = self.balance, None
         try:
             close_transport(balance)
         finally:
+            self.balance_port_open = False
+            self.balance_polling = False
+            self.last_balance_request = None
             self.last_mass = None
             self.mass_flow.reset()
             if hasattr(self, "snapshot"):
-                self.snapshot.update(balance_connected=False, balance_status="Disconnected", mass_g=None, balance_flow_ml_min=None)
+                self.snapshot.update(balance_connected=False, balance_status="Disconnected", mass_g=None,
+                    balance_flow_ml_min=None, balance_polling=False)
 
     def start_run(self):
         if self._active():
@@ -302,6 +363,35 @@ class AppController:
         self.snapshot["manual_pending"] = True
         try:
             self._request("manual", valves=list(valves), pump_percent=pump_percent)
+        except Exception:
+            self.manual_requested = None
+            self.manual_pending = False
+            self.snapshot["manual_pending"] = False
+            raise
+
+    def set_manual_valves(self, valves):
+        """Command the six confirmed valves; the legacy seventh slot stays off."""
+        if type(valves) not in (list, tuple) or len(valves) not in (6, 7):
+            raise ValueError("Specify six valve states")
+        valves = valve_states([*valves, False] if len(valves) == 6 else valves)
+        if valves[6]:
+            raise ValueError("Only six physical valves are available; the unused seventh slot must stay off")
+        if self.simulation:
+            return self.set_manual(valves, 0)
+        if (self.start_phase or self.manual_pending or self.stop_pending or self.local_fault
+                or self.snapshot["state"] not in ("idle", "manual_valves")):
+            raise ValueError("Stop the current operation or clear the fault before using valve-only controls")
+        if not self.snapshot["controller_connected"]:
+            raise ValueError("Controller is not responding")
+        if self.last_telemetry is None or self.clock() - self.last_telemetry > 2:
+            raise ValueError("Controller telemetry is stale; wait for a fresh reading")
+        if self.device.get("valve_control_ready") is not True:
+            raise ValueError("Valve-only controls are unavailable; install firmware with the confirmed six-valve map")
+        self.manual_requested = (list(valves), 0.0)
+        self.manual_pending = True
+        self.snapshot["manual_pending"] = True
+        try:
+            self._request("manual_valves", valves=list(valves))
         except Exception:
             self.manual_requested = None
             self.manual_pending = False
@@ -422,7 +512,7 @@ class AppController:
                 self._log(f"Controller rejected {command}: {packet.get('error', 'unknown error')}")
                 if command == "stop":
                     self._stop_failed("Controller rejected stop: " + str(packet.get("error", "unknown error")))
-                elif command in ("load_recipe", "start", "manual"):
+                elif command in ("load_recipe", "start", "manual", "manual_valves"):
                     self._abort(str(packet.get("error", "Command rejected")))
                 return
             if command == "hello":
@@ -445,10 +535,13 @@ class AppController:
                     return
                 diagnostics = checked_controller_diagnostics(packet)
                 self.device = {key: value for key, value in packet.items()
-                               if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status")}
+                               if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
+                                              "valve_control_ready", "manual_valve_count", "valve_bits")}
                 self.device.update(diagnostics)
+                self.device.update(checked_valve_control(packet))
                 self._reset_diagnostics()
                 self.snapshot.update(copy.deepcopy(diagnostics))
+                self.snapshot.update(checked_valve_control(packet))
                 self.snapshot.update(controller_connected=True, controller_status="Connected",
                                      hardware_verified=packet["hardware_verified"], simulation=packet["simulation"])
                 self._log("Controller identified: " + str(packet.get("firmware_version", "unknown")))
@@ -465,11 +558,12 @@ class AppController:
                 self.run_id = self.store.start(self.recipe, self.settings, self.device)
                 self.snapshot["run_id"] = self.run_id
                 self._log(f"Started run {self.run_id}: {self.recipe.name}")
-            elif command == "manual" and self.manual_pending:
+            elif command in ("manual", "manual_valves") and self.manual_pending:
                 valves, pump = self.manual_requested
                 self.manual_pending = False
                 self.manual_requested = None
-                self.snapshot.update(manual_pending=False, state="manual", valves=valves,
+                self.snapshot.update(manual_pending=False,
+                    state="manual_valves" if command == "manual_valves" else "manual", valves=valves,
                     pump_percent=pump, step_index=-1, cycle=0, remaining_s=0)
             elif command == "stop":
                 self.stop_pending = False
@@ -491,8 +585,11 @@ class AppController:
             valves = valve_states(packet.get("valves"))
             pump = number(packet.get("pump_percent"), "Pump telemetry", 0, 100)
             state = packet.get("state")
-            if state not in ("idle", "running", "manual", "fault"):
+            if state not in ("idle", "running", "manual", "manual_valves", "fault"):
                 raise ValueError("Invalid controller state")
+            if state == "manual_valves" and (self.device.get("valve_control_ready") is not True
+                    or packet.get("valve_control_ready") is not True or pump != 0 or valves[6]):
+                raise ValueError("Invalid valve-only telemetry or unavailable six-valve capability")
             if type(packet.get("simulation")) is not bool or type(packet.get("hardware_verified")) is not bool:
                 raise ValueError("Invalid controller mode or hardware status")
             values = {}
@@ -524,6 +621,14 @@ class AppController:
             self._disconnect_with_fault("Controller mode or hardware verification changed",
                 "Controller setup changed; reconnect before continuing")
             return
+        if "valve_control_ready" in packet:
+            if type(packet["valve_control_ready"]) is not bool:
+                self._log("Invalid valve-control capability telemetry")
+                return
+            if packet["valve_control_ready"] is not self.device.get("valve_control_ready", False):
+                self._disconnect_with_fault("Controller valve-control capability changed",
+                    "Valve setup changed; reconnect before continuing")
+                return
         self.last_telemetry = now
         self.last_controller_uptime = uptime
         self.snapshot.update(values)
@@ -624,21 +729,36 @@ class AppController:
             self._accept_mass(now, self.driver.mass)
             self.snapshot["balance_status"] = "Connected (simulated)"
         elif self.balance is not None:
-            for packet in self.balance.poll(now):
-                if packet.get("type") == "mass_line":
+            balance = self.balance
+            for packet in balance.poll(now):
+                if self.balance is not balance:
+                    break
+                if packet.get("type") == "port_open":
+                    self.balance_port_open = True
+                    self.snapshot["balance_status"] = "Port open; waiting for a weight reading"
+                elif packet.get("type") == "mass_line":
                     try:
                         self._accept_mass(now, parse_mass(packet["line"]))
                     except ValueError:
                         self._log("Ignored balance line: " + packet["line"][:80])
                 elif packet.get("type") == "disconnected":
-                    self.last_mass = None
-                    self.mass_flow.reset()
-                    self.snapshot.update(balance_status=packet.get("error", "Disconnected"),
-                        balance_connected=False, mass_g=None, balance_flow_ml_min=None)
+                    self._balance_connection_failed(packet.get("error") or "Balance disconnected")
+            if (self.balance is not None and self.balance_port_open and self.balance_polling
+                    and callable(getattr(self.balance, "request_reading", None))
+                    and (self.last_balance_request is None or now - self.last_balance_request >= 1)
+                    and (self.last_mass is None or now - self.last_mass >= 1)):
+                try:
+                    self._request_balance_reading(log=False)
+                except Exception as error:
+                    # A failed request must not retain a dead worker or invent a mass.
+                    if self.balance is not None:
+                        self._balance_connection_failed(str(error))
         if self.last_mass is not None and now-self.last_mass > 3:
             self.snapshot.update(balance_connected=False, balance_status="Weight data stale", mass_g=None, balance_flow_ml_min=None)
             self.mass_flow.reset()
-        if self._active() and (self.recipe.require_balance or self.settings["require_balance"]) and not self.snapshot["balance_connected"]:
+        if (self._active() and not self._valves_only()
+                and (self.recipe.require_balance or self.settings["require_balance"])
+                and not self.snapshot["balance_connected"]):
             self._abort("Required balance reading is unavailable")
         flow = self.snapshot["flow_ml_min"]
         self.snapshot["flux_lmh"] = None if flow is None else flow * 0.06 / self.settings["membrane_area_m2"]

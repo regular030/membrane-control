@@ -203,6 +203,7 @@ function Get-SetupShortcutSpecs {
         @{Name='Flash relay board test'; Script='flash_dry_run.ps1'; Firmware='esp32-relay-bench'},
         @{Name='Flash valve test (setup required)'; Script='flash_dry_run.ps1'; Firmware='esp32-valve-test'},
         @{Name='Flash full controller (setup required)'; Script='flash_dry_run.ps1'; Firmware='esp32-physical'},
+        @{Name='Flash normal controller'; Script='flash_dry_run.ps1'; Firmware='esp32-physical'},
         @{Name='USB driver help'; Script='install_cp210x.ps1'; Firmware=$null})) {
         $scriptPath = if ($item.Script) { Join-Path $Destination ('packaging/' + $item.Script) } else { $null }
         $arguments = ''
@@ -249,9 +250,9 @@ function Invoke-MembraneSetup {
             files=$checked.Files.Count; flashes_board=$false; installs_drivers=$false;
             firmware_targets=@('esp32-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical');
             valve_test=[PSCustomObject]@{environment='esp32-valve-test';commissioning_required=$true;physical_outputs_locked_by_default=$true;shipped_profile_verified=$false};
-            full_controller=[PSCustomObject]@{environment='esp32-physical';commissioning_required=$true;physical_outputs_locked_by_default=$true;shipped_profile_verified=$false};
+            full_controller=[PSCustomObject]@{environment='esp32-physical';commissioning_required=$true;physical_outputs_locked_by_default=$false;shipped_profile_verified=$false;manual_valve_count=6;manual_valve_control_ready_by_default=$true};
             steps=@('Verify payload hashes', 'Copy application and firmware', 'Prepare dedicated Python and virtual environment',
-                'Install PlatformIO 6.2.0 and pyserial 3.5', 'Build dry-run, relay-board test, locked valve test and locked full controller firmware without uploading', 'Create shortcuts') } | ConvertTo-Json -Depth 5
+                'Install PlatformIO 6.2.0 and pyserial 3.5', 'Build dry-run, relay-board test, legacy valve test and normal six-valve controller firmware without uploading', 'Create shortcuts') } | ConvertTo-Json -Depth 5
         return
     }
     New-Item -ItemType Directory -Path $checked.InstallRoot -Force | Out-Null
@@ -285,7 +286,7 @@ function Invoke-MembraneSetup {
         Copy-Item -LiteralPath (Join-Path $checked.SourceRoot 'setup-manifest.json') -Destination (Join-Path $checked.InstallRoot 'setup-manifest.json') -Force
         Write-SetupLog 'Setup complete. Open Membrane Control to use the app. Flash ESP32 dry run is the no-output test; Flash relay board test operates only unloaded relays. Upload separately when the board and COM port are ready.'
         Write-SetupLog 'Flash valve test (setup required) installs a separate sensor-free program with the valve outputs locked until a reviewed valve profile and commissioning checks are complete. Read docs/valve-test.md; keep loads disconnected for the initial upload.'
-        Write-SetupLog 'Flash full controller (setup required) installs the full program with an unverified hardware profile. Physical outputs stay locked until a reviewed profile and rig commissioning are complete.'
+        Write-SetupLog 'Flash normal controller installs the normal program with V1-V6 mapped to confirmed relay bits 0-5. Manual valve toggles work without sensors. Pump and experiments retain their separate configuration requirements.'
         Write-SetupLog 'If Windows shows no controller COM port, use the optional USB driver help shortcut for the official driver instructions.'
     } catch {
         Write-SetupLog ("SETUP FAILED: " + $_.Exception.Message)

@@ -4,6 +4,7 @@
 #include <Wire.h>
 #include <driver/ledc.h>
 #include "BoardConfig.h"
+#include "ManualValveConfig.h"
 
 namespace basu {
 
@@ -33,8 +34,8 @@ inline const char* classifySensorStatus(const BoardConfig& board, const AnalogCo
   return reading.fresh(now, board.sensorMaxAgeMs) ? "reading_received" : "stale";
 }
 
-// This entire adapter is dormant in the default simulation build. There are no
-// GPIO/I2C accesses before validateBoardConfig() and the compiled approval gate.
+// Simulation never accesses I/O. Full pump/sensor I/O requires BoardConfig;
+// the independent confirmed manual mapping initializes only the 595 relay pins.
 class Hardware {
  public:
   Hardware(BoardConfig config, bool simulation) : config_(config), simulation_(simulation) {}
@@ -93,6 +94,53 @@ class Hardware {
     return true;
   }
 
+  bool beginManualValves(const ManualValveConfig& config) {
+    if (const char* error = validateManualValveConfig(config)) { valveError_ = error; return false; }
+    // If a full driver already owns GPIO, reuse it only when its relay interface
+    // agrees with the confirmed rig. Never initialize a second competing driver.
+    if (!simulation_ && ioInitialized_ && !manualInterfaceCompatible(config)) {
+      valveError_ = "full relay interface differs from confirmed manual mapping";
+      return false;
+    }
+    manualConfig_ = config;
+    if (!simulation_) {
+      if (!ioInitialized_) {
+        digitalWrite(kManualOePin, HIGH);
+        pinMode(kManualOePin, OUTPUT);
+        for (int pin : {kManualDataPin, kManualClockPin, kManualLatchPin}) {
+          digitalWrite(pin, LOW);
+          pinMode(pin, OUTPUT);
+        }
+      }
+      manualRelayInitialized_ = true;
+      writeManualWord(0);
+    }
+    manualValvesReady_ = true;
+    valveError_ = nullptr;
+    return true;
+  }
+
+  bool applyManualValves(const std::array<bool, kValveCount>& valves) {
+    if (!manualValvesReady_) return false;
+    for (std::size_t index = kManualValveCount; index < kValveCount; ++index)
+      if (valves[index]) { valveError_ = "unused valve slot must remain false"; return false; }
+    if (simulation_) return true;
+    // Normally the core requires Stop before changing modes. Also handle the
+    // narrow case of a just-completed recipe whose last output is not applied yet.
+    if (ioInitialized_ && (applied_.pumpPercent > 0 || pumpRunPending_)) safeStop();
+    if (ioInitialized_) digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
+    pumpRunPending_ = false;
+    uint16_t word = 0;
+    for (std::size_t index = 0; index < kManualValveCount; ++index)
+      if (valves[index]) word |= static_cast<uint16_t>(1U << manualConfig_.bits[index]);
+    if (!manualWordKnown_ || word != manualWord_) writeManualWord(word);
+    manualModeActive_ = true;
+    applied_.valves = valves;
+    applied_.pumpPercent = 0;
+    safeStopIssued_ = word == 0;
+    return true;
+  }
+
   bool apply(const Outputs& requested, uint32_t now = 0, bool allowPumpRun = false) {
     if (simulation_) return true;
     if (!ready_) return false;
@@ -111,6 +159,8 @@ class Hardware {
     // required hydraulic settling delays as explicit steps.
     digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
     pumpRunPending_ = false;
+    manualModeActive_ = false;
+    manualWordKnown_ = false;
     safeStopIssued_ = false;
     writeValves(requested);
     if (!writePumpCommand(requested.pumpPercent))
@@ -130,22 +180,30 @@ class Hardware {
   // prevent the software issuing STOP. Hardware must independently fail safe.
   void safeStop() {
     pumpRunPending_ = false;
-    if (simulation_ || !ioInitialized_) return;
-    digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
+    if (simulation_ || (!ioInitialized_ && !manualRelayInitialized_)) return;
+    if (ioInitialized_) digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
     if (pwmInitialized_ && !writePumpPwmDuty(0) && ready_) {
       ready_ = false;
       error_ = "pwm_stop_failed";
     }
+    if (manualRelayInitialized_ && (!ioInitialized_ || manualModeActive_)) {
+      if (!manualWordKnown_ || manualWord_ != 0) writeManualWord(0);
+      manualModeActive_ = false;
+      safeStopIssued_ = true;
+      applied_ = Outputs{};  // Manual rest is all LOW, independent of the full process profile.
+      return;
+    }
     if (safeStopIssued_) return;
     safeStopIssued_ = true;
     writeValves(safeOutputs());
+    manualWordKnown_ = false;
     if (config_.pumpCommandSource == PumpCommandSource::Gp8403 && i2cInitialized_) writePumpCommand(0);
     applied_ = safeOutputs();
   }
 
-  void sample(uint32_t now) {
+  void sample(uint32_t now, bool valveOnly = false) {
     if (simulation_ || !ready_) return;
-    if (config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
+    if (!valveOnly && config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
         static_cast<uint32_t>(now - lastHealthMs_) >= 1000) {
       lastHealthMs_ = now;
       if (!probe(config_.gp8403Address)) { fail("gp8403_disconnected"); return; }
@@ -165,6 +223,9 @@ class Hardware {
   }
 
   bool ready() const { return ready_; }
+  bool valveControlReady() const { return manualValvesReady_; }
+  const std::array<int, kManualValveCount>& manualValveBits() const { return manualConfig_.bits; }
+  const char* valveError() const { return valveError_ ? valveError_ : "valve_control_not_ready"; }
   const char* error() const { return error_; }
   const Measurements& measurements() const { return measurements_; }
   const char* sensorStatus(std::size_t index, uint32_t now) const {
@@ -176,6 +237,34 @@ class Hardware {
   }
 
  private:
+  static constexpr int kManualDataPin = 14;
+  static constexpr int kManualClockPin = 13;
+  static constexpr int kManualLatchPin = 12;
+  static constexpr int kManualOePin = 5;
+  bool manualInterfaceCompatible(const ManualValveConfig& manual) const {
+    if (config_.relayKind != RelayKind::ShiftRegister595 || config_.shiftBitCount != 16 ||
+        config_.shiftDataPin != kManualDataPin || config_.shiftClockPin != kManualClockPin ||
+        config_.shiftLatchPin != kManualLatchPin || config_.shiftOePin != kManualOePin ||
+        !config_.shiftOeActiveLow || !config_.shiftMsbFirst || config_.shiftUnusedLevels != 0) return false;
+    for (std::size_t index = 0; index < kValveCount; ++index) {
+      if (config_.safeValves[index] || !config_.valveActiveHigh[index]) return false;
+      if (index < kManualValveCount && config_.valveBits[index] != manual.bits[index]) return false;
+    }
+    return true;
+  }
+  void writeManualWord(uint16_t word) {
+    digitalWrite(kManualOePin, HIGH);
+    digitalWrite(kManualLatchPin, LOW);
+    for (int bit = 15; bit >= 0; --bit) {
+      digitalWrite(kManualClockPin, LOW);
+      digitalWrite(kManualDataPin, (word >> bit) & 1U);
+      digitalWrite(kManualClockPin, HIGH);
+    }
+    digitalWrite(kManualLatchPin, HIGH);
+    digitalWrite(kManualOePin, LOW);  // Hold the commanded levels, including all-off LOW.
+    manualWord_ = word;
+    manualWordKnown_ = true;
+  }
   std::array<const AnalogConfig*, 3> inputs() const {
     return {{&config_.pressure, &config_.flow, &config_.pumpFeedback}};
   }
@@ -329,6 +418,13 @@ class Hardware {
 
   BoardConfig config_;
   bool simulation_;
+  ManualValveConfig manualConfig_;
+  bool manualValvesReady_ = false;
+  bool manualRelayInitialized_ = false;
+  bool manualModeActive_ = false;
+  bool manualWordKnown_ = false;
+  uint16_t manualWord_ = 0;
+  const char* valveError_ = "valve_control_not_ready";
   bool profileValidated_ = false;
   bool ioInitialized_ = false;
   bool i2cInitialized_ = false;

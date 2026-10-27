@@ -4,14 +4,17 @@ from collections import deque
 import math
 import re
 
-_MASS = re.compile(r"^\s*(?:(?:ST|US|S|U)\s*[, :]+)?([+-]?\s*\d+(?:\.\d+)?)\s*(kg|mg|g)\s*$", re.IGNORECASE)
+_MASS = re.compile(r"^\s*(?:(?:ST|US|S|U)\s*[, :]+)?(?:Net:\s*)?([+-]?\s*\d+(?:[.,]\d+)?)\s*(kg|mg|g)\s*$", re.IGNORECASE)
 
 
 def parse_mass(line: str) -> float:
-    match = _MASS.fullmatch(line.strip())
+    # Nimbus custom forms use SOH/EOT framing and may label the net mass.
+    # COMMA is a documented decimal separator, not a thousands separator.
+    # Gross, tare and reference/report numbers must never become measured mass.
+    match = _MASS.fullmatch(line.strip(" \t\r\n\x01\x04"))
     if not match:
         raise ValueError("Expected one balance reading with g, kg or mg units")
-    value = float(match[1].replace(" ", ""))
+    value = float(re.sub(r"\s", "", match[1]).replace(",", "."))
     value *= {"g": 1.0, "kg": 1000.0, "mg": 0.001}[match[2].lower()]
     if not math.isfinite(value) or abs(value) > 1e7:
         raise ValueError("Balance reading is out of range")

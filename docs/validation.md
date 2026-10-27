@@ -11,6 +11,50 @@ manufacturer-authored manual and DB15 diagram confirm 0-10 V command 1(+)/3(-),
 continuity, conditioning and calibration remain unverified. No physical outputs
 were operated to establish these documentation findings.
 
+## Normal six-valve controls and scale communication, version 0.1.15
+
+The user clarified that the rig has **six**, not seven, valves and confirmed
+V1-V6 = bits0-5, LOW/off and HIGH/on, after testing the physical valves.
+Those results are recorded in the compiled normal manual-valve configuration;
+the operator does not need to repeat the old profile-form review workflow.
+
+Checked locally on Windows x64, 26 October 2026:
+
+- **657 desktop/packaging tests passed** in one clean process. Four real-symlink
+  creation tests skipped for missing OS privilege; simulated reparse/junction
+  checks pass. New checks cover six visible normal controls, sensor-independent
+  command/ACK state, zero pump, reserved-slot rejection, Stop/freshness, legacy
+  compatibility, mode transitions, and unchanged pump/recipe gates.
+- **98 native firmware tests and all four ESP32 builds passed.** Nineteen new
+  normal-valve cases verify six-bit words, unused outputs LOW, all-off Stop,
+  persistent command state, reset/reconnect, heartbeat and late-frame expiry,
+  rejection of a seventh valve/pump field, one I/O owner and no pump/ADC/I2C
+  initialization in the default relay-only path. An already configured input
+  path may still acquire real readings without polling the stopped DAC.
+- Scale tests cover fixed `!KP\r` requests, explicit/automatic one-second
+  throttling, no pre-open or closed-worker requests, actual CR/LF/CRLF framing,
+  raw bytes/hex diagnostics, formats8N1/7E1/7O1, and raw-only DTR readiness with
+  unchanged controller control lines. Net/decimal-comma/form-boundary parsing
+  preserves rejection of Gross/Tare/ID fields. Requests never create weight
+  evidence; failed workers detach, and every close path releases its port.
+- The six normal toggles and status messages were visually checked at1360x940
+  and1080x760. The scale diagnostic window was inspected with a fake port and
+  zero actual bytes, without creating a connection or a weight.
+- The final packaged app launched in isolated demo mode, produced a1360x940
+  screenshot and exited cleanly. Setup verified its embedded payload in its
+  read-only plan without installation, downloads or serial access. The normal
+  six-bit configuration, flasher and new guides match their payload hashes;
+  the diagnostic module is included in the app. Release SHA256 checks and both
+  workflows' local actionlint checks passed. Hosted Actions retain the existing
+  billing lock, so the release was built and checked locally.
+
+The local device inventory contains no COM ports, so the separate lab PC's
+COM6/9600 scale connection could not be physically tested here. Its changing
+display and missing app weight remain user-reported facts. These changes address
+identified software limitations; only a live response can establish which
+change resolves the physical connection. No lab valves, pump or serial port
+was operated or flashed during preparation.
+
 ## Guided sensor-free valve setup, version 0.1.14
 
 Checked locally on Windows x64, 26 October 2026:

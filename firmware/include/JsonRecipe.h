@@ -67,6 +67,26 @@ inline const char* parseOutputs(JsonVariantConst valves, JsonVariantConst pump, 
   return nullptr;
 }
 
+inline const char* parseManualValves(JsonVariantConst request, Outputs& destination) {
+  if (!request.is<JsonObjectConst>()) return "invalid manual_valves request";
+  for (JsonPairConst field : request.as<JsonObjectConst>()) {
+    const std::string key = field.key().c_str();
+    if (key != "v" && key != "id" && key != "cmd" && key != "valves")
+      return "manual_valves accepts no pump or other output fields";
+  }
+  const auto valves = request["valves"];
+  if (!valves.is<JsonArrayConst>() || valves.size() != kValveCount)
+    return "valves must contain seven wire slots; the unused last slot is false";
+  Outputs candidate;
+  for (std::size_t index = 0; index < kValveCount; ++index) {
+    if (!valves[index].is<bool>()) return "valve states must be booleans";
+    candidate.valves[index] = valves[index].as<bool>();
+    if (index >= kManualValveCount && candidate.valves[index]) return "unused valve slot must remain false";
+  }
+  destination = candidate;  // Pump is always zero, never read from this command.
+  return nullptr;
+}
+
 // Strongly typed parse into a temporary. Failure never changes the destination.
 inline const char* parseRecipe(JsonVariantConst value, Recipe& destination) {
   if (!value.is<JsonObjectConst>()) return "recipe must be an object";

@@ -76,7 +76,7 @@ def test_valve_entry_is_discoverable_but_cannot_open_in_simulation(screen, monke
                         lambda *_args, **_kwargs: pytest.fail('Simulation must not open the tool'))
     window.tabs.setCurrentIndex(window.connections_tab_index)
     buttons = [button for button in window.findChildren(QPushButton)
-               if 'Valve test' in button.text()]
+               if 'Legacy valve pulse test' in button.text()]
     assert buttons == [window.valve_test_button]
     assert not window.valve_test_button.isEnabled()
     driver = controller.driver

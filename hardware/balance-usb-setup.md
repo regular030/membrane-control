@@ -4,10 +4,15 @@ Current connection, confirmed by the user on 26 October 2026:
 **balance USB-B I/O -> USB data cable -> computer USB**. Use the Nimbus native-USB
 driver if required. The user now confirms that Windows exposes a second COM
 port on this USB-B connection. The user reports that the port appears but no
-weight arrives; the balance-side serial settings will be checked later. Its
-COM number is not yet reported. The model is **Adam Nimbus NBL 8201e**.
+weight arrives. The user now reports **COM6 at 9600 baud**, with a changing
+physical display but no app weight. The model is **Adam Nimbus NBL 8201e**.
 The scale connects independently of the ESP32's USB-to-UART adapter, with a
 different COM port for each device.
+
+App 0.1.15 adds automatic Print requests, matching8N1/7E1/7O1 options, raw
+CR/LF framing and actual byte diagnostics. Raw balance USB readiness (DTR) is
+enabled independently of ESP32 reset lines. See the current
+[COM6 connection and diagnostic steps](../docs/scale-connection.md).
 
 ## Choose one connection path
 

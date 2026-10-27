@@ -81,8 +81,9 @@ def test_plan_validates_hashes_and_has_no_install_or_environment_side_effects(pa
         "commissioning_required": True, "physical_outputs_locked_by_default": True,
         "shipped_profile_verified": False}
     assert plan["full_controller"] == {"environment": "esp32-physical",
-        "commissioning_required": True, "physical_outputs_locked_by_default": True,
-        "shipped_profile_verified": False}
+        "commissioning_required": True, "physical_outputs_locked_by_default": False,
+        "shipped_profile_verified": False, "manual_valve_count": 6,
+        "manual_valve_control_ready_by_default": True}
     assert not target.exists()
 
 
@@ -238,7 +239,9 @@ def test_flash_plan_selects_only_allowed_target_and_preserves_paths_as_arguments
     assert plan["arguments"][-3:] == ["upload", "--upload-port", "COM4"]
     assert str(target / "firmware") in plan["arguments"]
     assert plan["commissioning_required"] is (expected in {"esp32-valve-test", "esp32-physical"})
-    assert plan["physical_outputs_locked_by_default"] is (expected in {"esp32-valve-test", "esp32-physical"})
+    assert plan["physical_outputs_locked_by_default"] is (expected == "esp32-valve-test")
+    assert plan['manual_valve_control_ready_by_default'] is (expected == 'esp32-physical')
+    assert plan['manual_valve_count'] == (6 if expected == 'esp32-physical' else 0)
     assert "--no-ansi" in plan["arguments"]
     assert not (target / "logs").exists()
 
@@ -289,9 +292,10 @@ def test_any_upload_can_be_cancelled_without_executing_the_fake_tool(payload, se
         assert "docs/valve-test.md" in result.stdout
         assert "Dry-run firmware uses generated" not in result.stdout
     elif selected == "esp32-physical":
-        assert "FULL CONTROLLER (SETUP REQUIRED)" in result.stdout
-        assert "physical outputs are locked" in result.stdout
-        assert "not dry run" in result.stdout
+        assert "NORMAL CONTROLLER" in result.stdout
+        assert "V1-V6 = relay bits 0-5" in result.stdout
+        assert "do not need pressure, flow, scale" in result.stdout
+        assert "physical outputs are locked" not in result.stdout
         assert "Dry-run firmware uses generated" not in result.stdout
 
 
@@ -300,7 +304,7 @@ def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(p
     result = run_ps(definitions() + f"@(Get-SetupShortcutSpecs -Destination {ps_quote(destination)}) | ConvertTo-Json -Depth 4")
     shortcuts = {item["Name"]: item for item in json.loads(result.stdout)}
     assert set(shortcuts) == {"Membrane Control", "Flash ESP32 dry run", "Flash relay board test",
-        "Flash valve test (setup required)", "Flash full controller (setup required)", "USB driver help"}
+        "Flash valve test (setup required)", "Flash full controller (setup required)", "Flash normal controller", "USB driver help"}
     assert shortcuts["Membrane Control"]["Target"] == str(destination / "MembraneControl.exe")
     assert shortcuts["Membrane Control"]["Arguments"] == ""
     for name, target in [("Flash ESP32 dry run", "esp32-dry-run"), ("Flash relay board test", "esp32-relay-bench"),
@@ -311,6 +315,7 @@ def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(p
         assert f'-File "{destination / "packaging/flash_dry_run.ps1"}"' in spec["Arguments"]
         assert f'-InstallRoot "{destination}"' in spec["Arguments"]
         assert spec["Arguments"].endswith("-Firmware " + target)
+    assert shortcuts['Flash normal controller']['Arguments'].endswith('-Firmware esp32-physical')
     assert "-Firmware" not in shortcuts["USB driver help"]["Arguments"]
     assert f'-Root "{destination}"' in shortcuts["USB driver help"]["Arguments"]
     assert not destination.exists()  # Metadata inspection creates no actual shortcuts.

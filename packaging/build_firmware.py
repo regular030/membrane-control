@@ -21,12 +21,13 @@ PURPOSES = {
     "esp32-dry-run": "Protocol test with simulated measurements; no relay or sensor GPIO access.",
     "esp32-relay-bench": "Real relay pulses on an unloaded board only; no pump or sensor control.",
     "esp32-valve-test": "Sensor-free solenoid valve commissioning; reviewed valve-only profile required, factory profile locked.",
-    "esp32-physical": "Unverified factory profile: physical experiment operation remains locked.",
+    "esp32-physical": "Normal controller: six confirmed manual valve toggles without sensors; pump/experiments require full configuration.",
 }
 REQUIRED_SOURCES = (
     "firmware/README.md", "firmware/platformio.ini", "firmware/compact_paths.py",
     "firmware/native_compiler.py", "firmware/src/main.cpp", "firmware/src/relay_bench_main.cpp",
     "firmware/include/BoardProfile.h", "firmware/include/BoardConfig.h",
+    "firmware/include/ManualValveConfig.h",
     "firmware/src/valve_test_main.cpp", "firmware/include/ValveTestCore.h",
     "firmware/include/ValveTestProfile.h", "firmware/include/ValveTestConfig.h",
     "firmware/examples/PwmConverterProfile.example.h",
@@ -75,6 +76,7 @@ def source_files(root: Path) -> dict[str, bytes]:
     for name in ("protocol/v1.md", "protocol/relay-bench.md", "docs/relay-board-test.md",
                  "protocol/valve-test.md", "docs/valve-test.md",
                  "docs/flow-sensor-troubleshooting.md",
+                 "docs/normal-valves.md", "docs/scale-connection.md",
                  "docs/pwm-converter-setup.md", "hardware/procurement.md",
                  "docs/full-firmware.md", "hardware/README.md", "hardware/relay-board-pin-plan.md",
                  "hardware/pump-interface.md", "packaging/build_firmware.py", "LICENSE"):
@@ -202,8 +204,9 @@ Choose one target:
 - esp32-valve-test: one solenoid pulse at a time without sensors or a DAC.
   The factory profile is LOCKED. A reviewed valve-only profile is required;
   see docs/valve-test.md. Keep the pump physically isolated.
-- esp32-physical: the shipped profile is UNVERIFIED and physical operation stays
-  LOCKED. This image is included for development completeness, not commissioning.
+- esp32-physical: NORMAL controller with the user-confirmed six manual valves
+  V1-V6 = bits0-5, all LOW off. Dashboard ON/OFF works without sensors or a
+  separate valve profile. Pump and experiment configuration remains incomplete.
 
 factory.bin contains the bootloader, partition table, boot_app0 and application,
 and is written at offset 0x0. Individual firmware.bin is only the application;

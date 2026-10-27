@@ -1,5 +1,10 @@
 # Test one valve without sensors
 
+**Current rig update, 0.1.15:** the user confirmed **six** valves, V1-V6 = bits
+0-5, LOW off. Use [normal firmware and Dashboard ON/OFF](normal-valves.md);
+no separate valve-test profile or the reviews described below are required for
+that workflow. This page retains the older standalone pulse-test tool.
+
 This tool is for the rig's seven single-coil solenoid valves. It does not need
 the pressure sensor, flow sensor, balance or pump DAC. The pump must be
 physically isolated, and no experiment or automatic sequence runs here.
