@@ -9,6 +9,11 @@ sequences and saving results. **Start with the demo. No USB devices are needed.*
 
 Open the [short Start here guide](docs/START-HERE.md).
 
+For the ordered HiLetgo dividers and EC Buying PWM converter, use the
+[current wiring guide](docs/ordered-parts-wiring.md). It explains the fixed
+5:1 scaling, the GPIO34/36/39 input map avoiding GPIO35, and what remains to
+configure before sensor readings and pump operation are available.
+
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and download the Windows `.exe` under **Assets**. For a fresh PC including
    Python and ESP32 firmware tools, choose **MembraneControl-Setup**.

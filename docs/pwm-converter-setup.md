@@ -3,6 +3,13 @@
 For membrane research in **Dr. Onita Basu's lab at Carleton University**.
 This is the handoff for Raj and the person preparing the electronics.
 
+The [3 November ordered-parts guide](ordered-parts-wiring.md) combines the
+HiLetgo dividers, GPIO34/36/39 measurements, GPIO25 PWM and separate GPIO26
+contact interface. It supersedes older analog pin proposals, explains the
+fixed divider ratio, and makes the unfinished factory configuration explicit.
+It also identifies that sharing ESP32 GND between pump analog returns 3 and 5
+requires confirmation; the two purchased modules do not provide isolation.
+
 ## What to order
 
 Order **one [EC Buying PWM-to-voltage converter, B0CPJGFCGR](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR)**.
@@ -130,7 +137,7 @@ the existing board program. Keep pump/valve loads disconnected during the initia
 upload. The shortcut builds the installed copy, so profile edits must be in
 that copy if using the installed tools.
 
-**The shipped factory physical profile remains locked.** It cannot infer the
+**The shipped full pump/sensor profile remains locked.** It cannot infer the
 relay map, approve the input conditioning, supply calibration or create a pump
 stop circuit. GUI checkboxes cannot enable an unverified compiled profile.
 
@@ -158,7 +165,8 @@ controller's pressure checks to make a converter bench measurement.
 5. Complete the approved physical profile and repeat the rig's acceptance checks
    before connecting and operating the pump. Select its verified **V** control mode.
 
-To test the seven solenoid valves before sensors are ready, use the separate
-[Valve test (no sensors)](valve-test.md) with its own reviewed valve-only profile.
-That tool cannot operate the pump or this converter. The balance is a separate
-USB-B connection; its [serial setup](../hardware/balance-usb-setup.md) is unchanged.
+To operate the six installed valves before sensors are ready, use the normal
+[Dashboard valve controls](normal-valves.md), which require no sensor or extra
+profile form. Those controls keep the pump command at zero. The balance is a
+separate USB-B connection; its [serial setup](../hardware/balance-usb-setup.md)
+is unchanged.

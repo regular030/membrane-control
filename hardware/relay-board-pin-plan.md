@@ -1,5 +1,9 @@
 # Srliya 16-channel board: proposed wiring
 
+For the ordered HiLetgo dividers and EC Buying converter, use the updated
+[3 November wiring guide](../docs/ordered-parts-wiring.md). It avoids GPIO35,
+explains the fixed 5:1 divider and identifies the unfinished sensor/pump setup.
+
 **Current installed valve map, version 0.1.16:** V1, V2, V3, V4, V5 and V7
 use bits 0, 1, 2, 3, 5 and 6. There is no V6 and bit 4 is unused. The
 [normal valve guide](../docs/normal-valves.md) describes the current controls;
@@ -18,7 +22,12 @@ The seller's `ESP32_X16_TEST.ino` screenshot defines:
 | `HC595_RCK_PIN` | 12 | Storage-register latch clock |
 | `HC595_G_PIN` | 5 | Output-enable control |
 
-These traces already exist. Do not connect sensors or new jumper wires to these GPIOs. The repository's shift-register driver supports these four functions, but the factory profile remains unassigned. The user has observed LOW = relay off and HIGH = relay on; record that result without treating it as proof of bit order, reset/OE defaults or safe valve states. Do not assume physical relay 1 equals bit 0 or physical relay 8 equals bit 7.
+These traces already exist. Do not connect sensors or new jumper wires to these
+GPIOs. The normal manual-valve driver already uses them with the confirmed
+six-valve mapping above. The factory full pump/sensor profile remains
+unassigned. LOW off / HIGH on and the recorded valve bits do not establish
+reset/OE defaults or the process's fault-state valve routing. Do not infer
+additional physical relay mappings from the confirmed six alone.
 
 The separate [real relay board test](../docs/relay-board-test.md) firmware now uses
 these candidate pins to pulse unloaded outputs and establish their mapping.
@@ -76,7 +85,12 @@ This is one external-ADC acquisition plan supported by the firmware:
 
 Use the flow sensor's analog output for this plan. Its pulse output is a different interface. For a 3.3 V-powered ADS1115, keep normal analog pin voltage within 0-3.3 V; selecting a larger ADC gain range does not make it 5 V or 10 V tolerant. Connect each pump signal's specified return according to the exact drive manual. Do not assume every cable tag called GROUND is the right analog return.
 
-If using the ESP32's native ADC instead, reserve GPIO34 for conditioned pressure, GPIO35 for conditioned flow and GPIO36/SENSOR_VP for conditioned pump feedback. This is an alternative to the ADS1115, not extra duplicate wiring. It still requires scaling, protection and calibration. The firmware supports ADC1, but the installed board must expose those GPIOs.
+For the selected native-ADC plan, use GPIO34 for conditioned pressure,
+GPIO36/SVP for conditioned flow and GPIO39/SVN for conditioned pump feedback.
+Leave GPIO35 unused following the possible overvoltage report. This supersedes
+the older 34/35/36 proposal. It is an alternative to ADS1115 wiring and still
+requires scaling, protection, calibration and an updated firmware profile.
+See the ordered-parts guide for the unresolved pump-reference arrangement.
 
 ### Pump remote start/stop
 
