@@ -64,6 +64,9 @@ between pulses. Reconnecting never restores a previous confirmation or pulse.
 
 ## Find the pump's spare relay
 
+The lab confirmed **raw bit 15** on the installed board, with LOW for STOP and
+HIGH for RUN. Use this procedure to recheck the mapping if the board changes.
+
 1. With all power disconnected, label the physical relay where the pump wires
    land, then remove the pump and every valve load wire from the relay contacts.
    Check that this spare relay's COM and NO are independent of the AC valve bus.

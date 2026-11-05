@@ -26,8 +26,8 @@ their specified terminals. See the [grounding and harness review](../hardware/pu
 before adding the pump voltage output and divider.
 
 On the selected spare relay, use **COM to DB25 15** and **NO to DB25 17**.
-Identify its 74HC595 bit and verify that the contact pair is isolated from the
-mains valve distribution. Leave the bit unassigned until checked. A separate
+The lab confirmed **74HC595 bit 15**, LOW for STOP and HIGH for RUN. Verify
+that the contact pair is isolated from the mains valve distribution. A separate
 3.3 V-compatible contact driver on GPIO26 is an alternative if a spare
 onboard relay cannot be used. Both options require a reviewed compiled profile.
 
@@ -78,7 +78,7 @@ The PWM-specific fields are `pumpPwmPin`, `pumpPwmChannel`,
 the measured reviewed value must be between 10 and 5000 ms. The source selection
 and verification flags do not substitute for those physical measurements.
 
-For the onboard contact, assign the measured `pumpContactBit` in a
+For the onboard contact, keep the template setting `pumpContactBit = 15` in a
 `ShiftRegister595` profile, leave `pumpContactPin = -1`, and use
 `pumpContactActiveHigh = true`. The selected bit must be separate from all
 valve bits and LOW in `shiftUnusedLevels`. The template leaves V6 absent with

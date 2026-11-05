@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <esp_system.h>
 #include "BoardProfile.h"
 #include "Hardware.h"
 #include "JsonRecipe.h"
@@ -35,6 +36,29 @@ bool discardingOversize = false;
 uint32_t lastTelemetryMs = 0;
 uint32_t lastSimulationSampleMs = 0;
 
+const char* resetReasonName(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON: return "power_on";
+    case ESP_RST_EXT: return "external";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep_sleep";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_SDIO: return "sdio";
+    default: return "unknown";
+  }
+}
+
+void addAdcPinMillivolts(JsonDocument& document, const basu::SensorTestMillivolts& reading) {
+  JsonObject values = document["adc_pin_mv"].to<JsonObject>();
+  values["pressure"] = reading.pressure;
+  values["flow"] = reading.flow;
+  values["pump_feedback"] = reading.pumpFeedback;
+}
+
 void reply(uint32_t id, const char* error = nullptr, bool hello = false,
            const basu::SensorTestMillivolts* sensorTest = nullptr) {
   JsonDocument document;
@@ -43,15 +67,11 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
   document["type"] = error ? "error" : (hello ? "hello" : "ack");
   document["ok"] = error == nullptr;
   if (error) document["error"] = error;
-  if (sensorTest && !error) {
-    JsonObject values = document["adc_pin_mv"].to<JsonObject>();
-    values["pressure"] = sensorTest->pressure;
-    values["flow"] = sensorTest->flow;
-    values["pump_feedback"] = sensorTest->pumpFeedback;
-  }
+  if (sensorTest && !error) addAdcPinMillivolts(document, *sensorTest);
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.18";
+    document["firmware_version"] = "0.1.19";
+    document["reset_reason"] = resetReasonName(esp_reset_reason());
     document["sensor_test_available"] = hardware.sensorTestAvailable(kFactoryProfile);
     document["valve_control_ready"] = hardware.valveControlReady();
     document["manual_valve_count"] = basu::kManualValveCount;
@@ -196,6 +216,10 @@ void writeTelemetry(uint32_t now) {
   addReading("pressure_psi", controller.measurements().pressure);
   addReading("flow_ml_min", controller.measurements().flow);
   addReading("pump_feedback_v", controller.measurements().pumpFeedback);
+  basu::SensorTestMillivolts rawInputs;
+  if (!hardware.readSensorTestInputs(kFactoryProfile, controller.state(), rawInputs,
+                                    basu::SensorTestScope::IdleOrManualValves))
+    addAdcPinMillivolts(document, rawInputs);
   JsonObject sensorStatus = document["sensor_status"].to<JsonObject>();
   sensorStatus["pressure"] = hardware.sensorStatus(0, now);
   sensorStatus["flow"] = hardware.sensorStatus(1, now);

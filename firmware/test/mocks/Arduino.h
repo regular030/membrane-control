@@ -8,12 +8,14 @@ constexpr int LOW = 0;
 constexpr int HIGH = 1;
 constexpr int INPUT = 0;
 constexpr int OUTPUT = 1;
+constexpr int ADC_2_5db = 1;
 constexpr int ADC_11db = 3;
 namespace fake {
 struct GpioEvent { bool write; int pin; int value; unsigned sequence; };
 struct LedcEvent { const char* operation; int channel; int pin; uint32_t value; unsigned sequence; };
 inline std::array<int, 40> levels{};
 inline std::array<uint32_t, 40> adcMillivolts{};
+inline std::array<int, 40> adcAttenuation{};
 inline std::vector<int> adcReadPins;
 inline unsigned gpioCalls = 0;
 inline std::vector<GpioEvent> gpioEvents;
@@ -31,6 +33,7 @@ inline std::vector<LedcEvent> ledcEvents;
 inline void resetGpio() {
   levels.fill(0);
   adcMillivolts.fill(1000);
+  adcAttenuation.fill(-1);
   adcReadPins.clear();
   gpioCalls = 0;
   gpioEvents.clear();
@@ -53,7 +56,10 @@ inline void digitalWrite(int pin, int level) {
 inline void pinMode(int pin, int mode) {
   ++fake::gpioCalls; fake::gpioEvents.push_back({false, pin, mode, ++fake::operationSequence});
 }
-inline void analogSetPinAttenuation(int, int) { ++fake::gpioCalls; }
+inline void analogSetPinAttenuation(int pin, int attenuation) {
+  ++fake::gpioCalls;
+  fake::adcAttenuation.at(pin) = attenuation;
+}
 inline uint32_t analogReadMilliVolts(int pin) {
   ++fake::gpioCalls;
   fake::adcReadPins.push_back(pin);

@@ -73,6 +73,9 @@ void test_uncalibrated_channel_is_explained_without_initializing_other_inputs() 
 void test_configured_waiting_fresh_and_stale_native_readings_are_reported() {
   const auto config = sensorFixture(); Hardware hardware(config, false);
   TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_EQUAL(ADC_11db, fake::adcAttenuation[config.pressure.pin]);
+  TEST_ASSERT_EQUAL(ADC_11db, fake::adcAttenuation[config.flow.pin]);
+  TEST_ASSERT_EQUAL(ADC_11db, fake::adcAttenuation[config.pumpFeedback.pin]);
   for (std::size_t index = 0; index < 3; ++index)
     TEST_ASSERT_EQUAL_STRING("stale", hardware.sensorStatus(index, 0));
   hardware.sample(100);
@@ -184,6 +187,9 @@ void test_factory_sensor_test_reads_three_input_pins_without_creating_process_re
   TEST_ASSERT_EQUAL_UINT32(735, result.pressure);
   TEST_ASSERT_EQUAL_UINT32(0, result.flow);
   TEST_ASSERT_EQUAL_UINT32(1821, result.pumpFeedback);
+  TEST_ASSERT_EQUAL(ADC_2_5db, fake::adcAttenuation[34]);
+  TEST_ASSERT_EQUAL(ADC_2_5db, fake::adcAttenuation[36]);
+  TEST_ASSERT_EQUAL(ADC_11db, fake::adcAttenuation[39]);
   const int expectedPins[] = {34, 36, 39};
   TEST_ASSERT_EQUAL(3, fake::adcReadPins.size());
   TEST_ASSERT_EQUAL_INT_ARRAY(expectedPins, fake::adcReadPins.data(), 3);
@@ -209,17 +215,52 @@ void test_sensor_test_rejects_nonidle_simulated_and_custom_profiles_without_adc_
   TEST_ASSERT_FALSE(factory.begin());
   for (State state : {State::Running, State::Manual, State::ManualValves, State::Fault})
     TEST_ASSERT_NOT_NULL(factory.readSensorTestInputs(true, state, result));
+  constexpr auto live = SensorTestScope::IdleOrManualValves;
+  for (State state : {State::Running, State::Manual, State::Fault})
+    TEST_ASSERT_NOT_NULL(factory.readSensorTestInputs(true, state, result, live));
   TEST_ASSERT_FALSE(factory.sensorTestAvailable(false));
-  TEST_ASSERT_NOT_NULL(factory.readSensorTestInputs(false, State::Idle, result));
+  TEST_ASSERT_NOT_NULL(factory.readSensorTestInputs(false, State::Idle, result, live));
 
   Hardware simulation(BoardConfig{}, true);
   TEST_ASSERT_FALSE(simulation.sensorTestAvailable(true));
-  TEST_ASSERT_NOT_NULL(simulation.readSensorTestInputs(true, State::Idle, result));
+  TEST_ASSERT_NOT_NULL(simulation.readSensorTestInputs(true, State::Idle, result, live));
   TEST_ASSERT_EQUAL(0, fake::gpioCalls);
   TEST_ASSERT_TRUE(fake::adcReadPins.empty());
   TEST_ASSERT_EQUAL_UINT32(1, result.pressure);
   TEST_ASSERT_EQUAL_UINT32(2, result.flow);
   TEST_ASSERT_EQUAL_UINT32(3, result.pumpFeedback);
+}
+
+void test_live_sensor_test_while_valves_are_active_leaves_outputs_and_measurements_unchanged() {
+  Hardware hardware(BoardConfig{}, false);
+  TEST_ASSERT_FALSE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.beginManualValves(confirmedRigManualValves()));
+  SensorTestMillivolts result;
+  constexpr auto live = SensorTestScope::IdleOrManualValves;
+  TEST_ASSERT_NULL(hardware.readSensorTestInputs(true, State::Idle, result, live));
+  TEST_ASSERT_TRUE(hardware.applyManualValves({{true, false, false, false, false, false, true}}));
+
+  const auto heldLevels = fake::levels;
+  fake::gpioEvents.clear();
+  fake::adcReadPins.clear();
+  fake::adcMillivolts[34] = 610;
+  fake::adcMillivolts[36] = 900;
+  fake::adcMillivolts[39] = 1700;
+  TEST_ASSERT_NULL(hardware.readSensorTestInputs(true, State::ManualValves, result, live));
+  TEST_ASSERT_EQUAL_UINT32(610, result.pressure);
+  TEST_ASSERT_EQUAL_UINT32(900, result.flow);
+  TEST_ASSERT_EQUAL_UINT32(1700, result.pumpFeedback);
+  TEST_ASSERT_EQUAL(3, fake::adcReadPins.size());
+  const int expectedPins[] = {34, 36, 39};
+  TEST_ASSERT_EQUAL_INT_ARRAY(expectedPins, fake::adcReadPins.data(), 3);
+  TEST_ASSERT_TRUE(fake::gpioEvents.empty());  // The firmware does not repeat pin setup or write outputs.
+  TEST_ASSERT_TRUE(fake::levels == heldLevels);
+  TEST_ASSERT_FALSE(hardware.ready());
+  TEST_ASSERT_FALSE(hardware.measurements().pressure.valid);
+  TEST_ASSERT_FALSE(hardware.measurements().flow.valid);
+  TEST_ASSERT_FALSE(hardware.measurements().pumpFeedback.valid);
+  TEST_ASSERT_EQUAL(0, Wire.transactionCount);
+  TEST_ASSERT_EQUAL(0, fake::ledcCalls);
 }
 
 int main() {
@@ -238,5 +279,6 @@ int main() {
   RUN_TEST(test_source_names_are_fixed_diagnostic_codes);
   RUN_TEST(test_factory_sensor_test_reads_three_input_pins_without_creating_process_readings);
   RUN_TEST(test_sensor_test_rejects_nonidle_simulated_and_custom_profiles_without_adc_access);
+  RUN_TEST(test_live_sensor_test_while_valves_are_active_leaves_outputs_and_measurements_unchanged);
   return UNITY_END();
 }

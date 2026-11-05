@@ -81,10 +81,9 @@ status and actual flow require their own signals.
 
 ## Spare onboard relay for start/stop
 
-Select a physically unused channel on the relay board. Identify its COM and NO
-and its exact 74HC595 bit with the [unloaded relay test](../docs/relay-board-test.md).
-The bit must be separate from the six valve bits. Keep the pump wires
-disconnected during mapping. The chosen contact pair must remain separate from the mains valve COM bus
+The lab confirmed **74HC595 raw bit 15** for pump start/stop, LOW for STOP
+and HIGH for RUN. Use the COM and NO of that relay. Keep the pump wires
+disconnected when repeating the [unloaded relay test](../docs/relay-board-test.md). The chosen contact pair must remain separate from the mains valve COM bus
 and supply wiring. Verify the contact at the pump input's typical 1 mA.
 When mapped and verified,
 put DB25 pin 15 on COM and pin 17 on NO. Closing that dry contact pulls the
@@ -122,7 +121,7 @@ backend. Values below are proposed assignments, not a ready-to-flash profile:
 | `pumpPwmFrequencyHz` | `1000` | Within the selected module's stated input range; verify actual output |
 | `pumpPwmResolutionBits` | `12` | Duty-code resolution, not a claim of 12-bit analog accuracy |
 | `pwmSettleMs` | `0` until measured | Invalid placeholder; review an actual 10-5000 ms settling interval before permitting RUN |
-| `pumpContactBit` | Unassigned | Select a tested spare shift-register bit and leave `pumpContactPin` unassigned |
+| `pumpContactBit` | **15**, confirmed by the lab | Leave `pumpContactPin = -1` for the onboard relay |
 | `pumpContactPin` | GPIO26 only for the external driver alternative | Leave unassigned for the onboard contact path |
 
 The PWM branch initializes at zero duty. Its software STOP path commands the

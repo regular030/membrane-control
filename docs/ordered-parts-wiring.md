@@ -8,7 +8,8 @@ For Dr. Onita Basu's lab at Carleton University. The current plan uses the
 The factory controller can operate the six confirmed valves manually. Pump
 control and analog acquisition need a reviewed full hardware profile with
 calibrated inputs, a verified spare pump relay and measured converter settling.
-The pump relay bit remains unassigned.
+The lab confirmed pump start/stop on **raw bit 15**, LOW for STOP and HIGH
+for RUN. The factory controller keeps this output off.
 
 ## Board pins
 
@@ -22,7 +23,7 @@ possible overvoltage; the health of the other inputs still needs checking.
 | Flow analog measurement | **SVP / VP / GPIO36** | Divider 2 S output |
 | Pump speed feedback measurement | **SVN / VN / GPIO39** | Divider 3 S output, after resolving pump analog references |
 | Pump speed command PWM | **IO25 / GPIO25** | Garosa PWM+ |
-| Pump start/stop | **Spare onboard relay**, bit to be verified | GPIO26 is reserved only for the external contact-driver alternative |
+| Pump start/stop | **Spare onboard relay**, raw bit 15 | GPIO26 is reserved only for the external contact-driver alternative |
 | Low-voltage reference | **GND** | Sensor/divider references; pump references need the review below |
 
 GPIO34, GPIO36 and GPIO39 are ADC1 inputs. They are input-only. The onboard

@@ -36,7 +36,7 @@ whether an input was damaged. Check wiring and voltages before replacing parts.
 | Dry-run controller | None. It generates practice values and ignores the sensor. |
 | Bare relay board test | None. Sensors are intentionally unavailable. |
 | Valve test (no sensors) | None. Only the reviewed valve circuits are tested. |
-| Factory physical controller | Manual valves and a separate sensor voltage check. Calibrated pressure, flow, and pump feedback require a reviewed profile. |
+| Factory physical controller | Live diagnostic voltages while idle or using manual valves. Calibrated pressure, flow, and pump feedback require a reviewed profile. |
 | Reviewed physical controller | Only its configured ADC channel, protected voltage range and calibration. |
 
 Unchecking **Simulation mode** chooses a real serial connection. It does not
@@ -45,19 +45,35 @@ the board. Simply attaching the flow cable cannot create a configured reading.
 
 ## Test the connected sensors
 
-With app and normal firmware 0.1.18, click **Stop valves** or **Stop run**,
-then open **Connections and settings → Read sensor inputs**. Each click samples the protected ADC pins once. The result shows millivolts at
+With app and normal firmware 0.1.19, **Dashboard → Live sensor check** updates
+automatically while idle or using manual valves. **Connections and settings →
+Read sensor inputs** still performs a one-time check while idle. Both show millivolts at
 **IO34** for pressure, **SVP / GPIO36** for flow, and **SVN / GPIO39** for optional
 pump feedback. Compare it with a meter across the corresponding divider's
 **S** and **−**. A verified 5:1 divider gives roughly 1000 mV at the pin for a
 5 V signal. An unwired pin can float, and a zero can be a valid signal, so the
 voltage alone cannot identify a cable or confirm a good sensor.
 
-The test leaves the Dashboard's calibrated PSI and mL/min values empty on
-factory firmware. It makes no valve or pump command and supplies no pressure
-interlock measurement. If **Read sensor inputs** is missing, verify that the
-controller is connected and running **Flash normal controller** from the
-0.1.18 installer.
+The live check also shows nominal estimates for the documented 5:1 wiring.
+The Omega PX309-100G5V and McMillan 101 range 3 use 0–5 V spans with 100 psig and
+100 mL/min full scale. The app shows a pressure estimate from 100–1000 mV and a
+flow estimate from 130–1000 mV. Optional pump feedback displays the estimated
+pre-divider voltage from 150–2000 mV. These estimates assume the documented
+models and divider ratio and need a meter, known pressure, and timed flow check.
+[Omega exact model](https://www.dwyeromega.com/en-gb/general-purpose-stainless-steel-pressure-transducers/PX309/p/PX309-100G5V)
+· [McMillan operation manual](https://www.mcmflow.com/wp-content/uploads/2015/02/101-M002.pdf)
+
+In 0.1.18 the three inputs used the ESP32's 11 dB range. Its recommended lower
+limit is about 150 mV, and ESP32 ADC1 calibration can return 142 mV for a raw
+zero. In 0.1.19, GPIO34 and GPIO36 use the lower 2.5 dB range (100–1250 mV).
+GPIO39 keeps the wider range for pump feedback. Treat values near or outside
+these ranges as diagnostic and compare with a meter before interpreting them.
+[Espressif ADC ranges](https://docs.espressif.com/projects/esp-idf/en/v4.4.8/esp32/api-reference/peripherals/adc.html)
+· [ADC1 calibration source](https://github.com/espressif/esp-idf/blob/v4.4.8/components/esp_adc_cal/esp32/esp_adc_cal.c#L69-L76)
+
+The calibrated Dashboard metrics, charts, and pressure interlock still require
+a reviewed hardware profile. If the live check is missing, verify that the
+controller is connected and running **Flash normal controller** from 0.1.19.
 
 ## Read the connection status
 

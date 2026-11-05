@@ -111,6 +111,34 @@ def test_sensor_test_shows_pin_voltage_without_using_calibrated_metrics(screen):
     assert not window.sensor_test_button.isEnabled()
 
 
+def test_live_sensor_estimates_stay_separate_and_hide_on_disconnect(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    controller.snapshot.update(controller_connected=True, sensor_test_available=True,
+                               live_sensor_voltages={"pressure": 180, "flow": 142, "pump_feedback": 142})
+    window._update_view(dict(controller.snapshot))
+    assert not window.live_sensor_detail.isHidden()
+    text = window.live_sensor_detail.text()
+    assert "nominal estimates" in text
+    assert "18.0 psi" in text
+    assert "14.2 mL/min" in text
+    assert "Pump feedback 142 mV (outside estimate range)" in text
+    assert controller.snapshot["pressure_psi"] is None
+    assert controller.snapshot["flow_ml_min"] is None
+    controller.disconnect_controller(request_stop=False)
+    window._update_view(dict(controller.snapshot))
+    assert window.live_sensor_detail.isHidden()
+    assert not window.live_sensor_detail.text()
+
+
+def test_copy_esp32_log_copies_persistent_diagnostics(screen, monkeypatch):
+    window, controller, _ = screen
+    monkeypatch.setattr(controller, "esp32_log_text", lambda: '{"event":"telemetry_stale"}')
+    window.copy_esp32_log_button.click()
+    assert QApplication.clipboard().text() == '{"event":"telemetry_stale"}'
+
+
 def test_timer_failure_requests_stop_once_and_blocks_start(screen, monkeypatch):
     window, controller, _ = screen
     requests = []

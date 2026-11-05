@@ -9,7 +9,8 @@ from pathlib import Path
 import time
 
 from .balance import MassFlow, parse_mass
-from .device_status import SENSOR_KEYS, checked_controller_diagnostics, checked_sensor_status, checked_valve_control
+from .device_status import MANUAL_VALVE_IDS, SENSOR_KEYS, checked_controller_diagnostics, checked_sensor_status, checked_valve_control
+from .esp32_link_log import Esp32LinkLog
 from .models import Recipe, number, valve_states
 from .recipes import built_in_recipes, read_recipe, write_recipe
 from .storage import RunStore
@@ -18,6 +19,15 @@ from .transport import SerialTransport, Simulator, close_transport
 DEFAULT_SETTINGS = {"membrane_area_m2": 0.01, "density_g_ml": 1.0,
                     "record_interval_s": 1.0, "require_balance": False,
                     "max_pressure_psi": 20.0}
+REQUEST_TIMEOUT_S = 3.0
+
+
+def _adc_pin_mv(value):
+    """Accept a complete set of three raw pin readings without calibration."""
+    if type(value) is dict and all(type(value.get(key)) is int and 0 <= value[key] <= 3300
+                                   for key in SENSOR_KEYS):
+        return {key: value[key] for key in SENSOR_KEYS}
+    return {}
 
 
 class AppController:
@@ -28,6 +38,10 @@ class AppController:
         self.store = RunStore(self.data_dir)
         self.settings = dict(DEFAULT_SETTINGS)
         self.log = deque(maxlen=100)
+        self._esp32_log = Esp32LinkLog(self.data_dir / "logs" / "esp32-link.jsonl")
+        self._esp32_port = None
+        self._esp32_connection_id = 0
+        self._esp32_parse_log_at = None
         self.settings_path = self.data_dir / "settings.json"
         if self.settings_path.exists():
             try:
@@ -71,6 +85,7 @@ class AppController:
             "balance_polling": False,
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
+            "live_sensor_voltages": {},
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
             "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
@@ -96,6 +111,28 @@ class AppController:
     def _log(self, message):
         self.log.append(time.strftime("%H:%M:%S") + "  " + str(message))
 
+    @property
+    def esp32_log_path(self):
+        return self._esp32_log.path
+
+    def esp32_log_text(self):
+        return self._esp32_log.recent_text()
+
+    def _esp32_event(self, event, *, port=None, **fields):
+        if self.simulation:
+            return
+        try:
+            port = port or self._esp32_port or getattr(self.driver, "port", None)
+            if not port:
+                return
+            now = self.clock()
+            age = None if self.last_telemetry is None else max(0, round((now - self.last_telemetry) * 1000))
+            self._esp32_log.record(event, port=str(port)[:256], connection_id=self._esp32_connection_id,
+                host_monotonic_ms=round(now * 1000), state=self.snapshot["state"],
+                telemetry_age_ms=age, controller_uptime_ms=self.last_controller_uptime, **fields)
+        except Exception:
+            pass  # Diagnostics must never interrupt controller operations.
+
     def _active(self):
         return self.start_phase is not None or self.manual_pending or self.stop_pending or self.snapshot["state"] in ("running", "manual", "manual_valves")
 
@@ -108,9 +145,19 @@ class AppController:
             raise ValueError("Connect a controller first")
         self.next_id += 1
         packet = {"v": 1, "id": self.next_id, "cmd": command, **values}
-        self.driver.send(packet)
+        details = {"request_id": self.next_id, "command": command}
+        valves = values.get("valves")
+        if command in ("manual", "manual_valves") and type(valves) in (list, tuple) and len(valves) == 7:
+            details["commanded_valves"] = {f"V{valve}": "ON" if valves[valve - 1] else "OFF"
+                                           for valve in MANUAL_VALVE_IDS}
+        try:
+            self.driver.send(packet)
+        except Exception as error:
+            self._esp32_event("send_error", reason=str(error)[:512], **details)
+            raise
         if command != "heartbeat":
-            self.pending[self.next_id] = (command, self.clock() + 3.0)
+            self.pending[self.next_id] = (command, self.clock() + REQUEST_TIMEOUT_S)
+            self._esp32_event("request_queued", **details)
         return self.next_id
 
     def list_presets(self):
@@ -194,7 +241,16 @@ class AppController:
         if self.balance is not None and self.balance.port == port:
             raise ValueError("Controller and balance need different ports")
         self.disconnect_controller()
-        self.driver = SerialTransport(port)
+        self._esp32_port = port
+        self._esp32_connection_id += 1
+        self._esp32_parse_log_at = None
+        self._esp32_event("connect_requested", baud=115200)
+        try:
+            self.driver = SerialTransport(port)
+        except Exception as error:
+            self._esp32_event("port_open_error", reason=str(error)[:512])
+            self._esp32_port = None
+            raise
         self.connect_started = self.clock()
         self.last_hello = -100.0
         self.last_heartbeat = -100.0
@@ -203,10 +259,20 @@ class AppController:
 
     def disconnect_controller(self, *, request_stop=True):
         driver, self.driver = self.driver, None
+        port = getattr(driver, "port", None)
         try:
             stop = {"v": 1, "id": 2147483647, "cmd": "stop"} if request_stop else None
+            if driver is not None and stop is not None:
+                self._esp32_event("stop_on_close_attempt", port=port, request_id=stop["id"])
             close_transport(driver, stop)
+        except Exception as error:
+            self._esp32_event("port_close_error", port=port, reason=str(error)[:512])
+            raise
+        else:
+            if driver is not None:
+                self._esp32_event("transport_closed", port=port)
         finally:
+            self._esp32_port = None
             self.pending.clear()
             self.start_phase = None
             self.manual_pending = False
@@ -236,7 +302,7 @@ class AppController:
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
             valve_control_status="Valve-only controls unavailable", sensor_test_available=False,
-            sensor_test_voltages={}, sensor_test_status="")
+            sensor_test_voltages={}, sensor_test_status="", live_sensor_voltages={})
 
     def connect_balance(self, port, baud=9600, serial_format="8N1", polling=True):
         if self.simulation:
@@ -443,17 +509,24 @@ class AppController:
         Continuing heartbeat traffic after a failed stop would prevent the
         controller watchdog from protecting a still-active output.
         """
+        self._esp32_event("stop_unconfirmed", reason=reason[:512])
         self._disconnect_with_fault(reason, "Stop unconfirmed; heartbeats stopped for the controller watchdog")
 
     def _disconnect_with_fault(self, reason, status):
         if self.local_fault and self.local_fault not in reason:
             reason = self.local_fault + "; " + reason
+        self._esp32_event("fault_disconnect", reason=reason[:512], status=status[:512])
         driver, self.driver = self.driver, None
+        port = getattr(driver, "port", None)
         if driver is not None:
             try:
                 driver.close()
             except Exception as error:
                 self._log("Serial close failed after unconfirmed stop: " + str(error))
+                self._esp32_event("port_close_error", port=port, reason=str(error)[:512])
+            else:
+                self._esp32_event("transport_closed", port=port)
+        self._esp32_port = None
         self.pending.clear()
         self.device = {}
         self.connect_started = None
@@ -497,6 +570,8 @@ class AppController:
     def _abort(self, reason):
         if self.local_fault == reason:
             return
+        if self.local_fault is None:
+            self._esp32_event("fault_latched", reason=reason[:512])
         valves_only = self._valves_only()
         self.local_fault = self.local_fault or reason
         self.start_phase = None
@@ -525,11 +600,16 @@ class AppController:
         kind = packet.get("type")
         if kind == "port_open":
             self.controller_port_open = True
+            self._esp32_event("port_opened")
             if not self.device:
                 self.snapshot["controller_status"] = "Port open; waiting for controller firmware"
             return
         if kind == "parse_error":
-            self._log(packet.get("error", "Invalid serial message"))
+            reason = str(packet.get("error", "Invalid serial message"))
+            self._log(reason)
+            if self._esp32_parse_log_at is None or now - self._esp32_parse_log_at >= 1:
+                self._esp32_parse_log_at = now
+                self._esp32_event("parse_error", reason=reason[:512])
             return
         if kind == "disconnected":
             self._controller_disconnected(packet.get("error") or "Controller disconnected")
@@ -541,18 +621,27 @@ class AppController:
             if type(request_id) is not int or not 0 < request_id <= 0xffffffff:
                 return
             pending = self.pending.get(request_id)
-            if pending is None or now >= pending[1]:
+            if pending is None:
                 return
-            command = pending[0]
+            command, deadline = pending
+            reply_details = {"command": command, "request_id": request_id,
+                             "request_age_ms": max(0, round((now - deadline + REQUEST_TIMEOUT_S) * 1000))}
+            if now >= deadline:
+                self._esp32_event("reply_ignored", reason="Acknowledgement deadline expired", **reply_details)
+                return
             if command == "hello" and not self.device and self.connect_started is not None and now - self.connect_started >= 8:
+                self._esp32_event("reply_ignored", reason="Connection deadline expired", **reply_details)
                 return
             expected = "hello" if command == "hello" else "ack"
             if not ((kind == expected and packet.get("ok") is True)
                     or (kind == "error" and packet.get("ok") is False)):
+                self._esp32_event("reply_ignored", reason="Unexpected reply type or success flag", **reply_details)
                 return  # An invalid or mismatched frame cannot confirm a command.
             self.pending.pop(request_id)
             if packet["ok"] is False:
-                self._log(f"Controller rejected {command}: {packet.get('error', 'unknown error')}")
+                reason = str(packet.get("error", "unknown error"))
+                self._esp32_event("request_rejected", reason=reason[:512], **reply_details)
+                self._log(f"Controller rejected {command}: {reason}")
                 if command == "stop":
                     self._stop_failed("Controller rejected stop: " + str(packet.get("error", "unknown error")))
                 elif command == "read_sensor_inputs":
@@ -560,13 +649,16 @@ class AppController:
                 elif command in ("load_recipe", "start", "manual", "manual_valves"):
                     self._abort(str(packet.get("error", "Command rejected")))
                 return
+            self._esp32_event("request_acknowledged", **reply_details)
             if command == "hello":
                 if packet.get("device") == "membrane-valve-test":
+                    self._esp32_event("alternate_firmware", firmware="membrane-valve-test")
                     self.disconnect_controller(request_stop=False)
                     self.snapshot["controller_status"] = "Valve test firmware found; open Valve test (no sensors)"
                     self._log("Valve test firmware uses the separate Valve test (no sensors) window")
                     return
                 if packet.get("device") == "membrane-relay-bench":
+                    self._esp32_event("alternate_firmware", firmware="membrane-relay-bench")
                     self.disconnect_controller(request_stop=False)
                     self.snapshot["controller_status"] = "Relay test firmware found; open Relay board test"
                     self._log("Relay test firmware uses the separate Relay board test window")
@@ -577,6 +669,8 @@ class AppController:
                     or type(packet.get("simulation")) is not bool
                     or type(packet.get("hardware_verified")) is not bool):
                     self.snapshot["controller_status"] = "Unsupported controller identity or protocol"
+                    self._esp32_event("hello_identity_mismatch", device=str(packet.get("device"))[:120],
+                                      **reply_details)
                     return
                 diagnostics = checked_controller_diagnostics(packet)
                 self.device = {key: value for key, value in packet.items()
@@ -596,12 +690,17 @@ class AppController:
                     and packet.get("sensor_test_available") is True)
                 self.snapshot.update(controller_connected=True, controller_status="Connected",
                                      hardware_verified=packet["hardware_verified"], simulation=packet["simulation"])
+                reset_reason = packet.get("reset_reason")
+                if (type(reset_reason) is str and 0 < len(reset_reason) <= 48 and reset_reason.isascii()
+                        and all(character.isalnum() or character in "_-" for character in reset_reason)):
+                    reply_details["reset_reason"] = reset_reason
+                self._esp32_event("hello_identified", firmware_version=str(packet.get("firmware_version", "unknown"))[:120],
+                                  **reply_details)
                 self._log("Controller identified: " + str(packet.get("firmware_version", "unknown")))
             elif command == "read_sensor_inputs":
-                values = packet.get("adc_pin_mv")
-                if isinstance(values, dict) and all(type(values.get(key)) is int and
-                        0 <= values[key] <= 3300 for key in SENSOR_KEYS):
-                    self.snapshot["sensor_test_voltages"] = {key: values[key] for key in SENSOR_KEYS}
+                values = _adc_pin_mv(packet.get("adc_pin_mv"))
+                if values:
+                    self.snapshot["sensor_test_voltages"] = values
                 else:
                     self.snapshot["sensor_test_status"] = "Invalid sensor voltage response. Retry the check."
             elif command == "load_recipe" and self.start_phase == "loading":
@@ -675,6 +774,7 @@ class AppController:
             device_elapsed = (uptime - self.last_controller_uptime) & 0xffffffff
             host_elapsed = max(0.0, now - self.last_telemetry) * 1000
             if device_elapsed > host_elapsed + 5000:
+                self._esp32_event("controller_reset_or_clock_jump", observed_uptime_ms=uptime)
                 self._disconnect_with_fault("Controller restarted or its clock changed",
                     "Controller restarted; reconnect before continuing")
                 return
@@ -692,15 +792,20 @@ class AppController:
                 self._disconnect_with_fault("Controller valve-control capability changed",
                     "Valve setup changed; reconnect before continuing")
                 return
+        first_telemetry = self.last_telemetry is None
         self.last_telemetry = now
         self.connect_started = None
         self.last_controller_uptime = uptime
         self.snapshot.update(values)
         self.snapshot["sensor_status"] = checked_sensor_status(packet.get("sensor_status"))
+        self.snapshot["live_sensor_voltages"] = (_adc_pin_mv(packet.get("adc_pin_mv"))
+            if self.snapshot["sensor_test_available"] and not packet["simulation"] and not packet["hardware_verified"] else {})
         self.snapshot.update(valves=list(valves), pump_percent=pump, step_index=step, cycle=cycle,
             remaining_s=remaining, state="fault" if self.local_fault else state,
             fault=self.local_fault or fault, controller_connected=True,
             controller_status="Connected (dry run)" if packet["simulation"] else "Connected")
+        if first_telemetry:
+            self._esp32_event("telemetry_started")
         self.snapshot["step_name"] = self.recipe.steps[step].name if 0 <= step < len(self.recipe.steps) else "Ready"
         if state == "fault":
             # The firmware has already applied its stop state. A local fault
@@ -724,6 +829,7 @@ class AppController:
         # A failed worker cannot execute or acknowledge a new STOP. Detach it
         # now, withdrawing heartbeats and retaining its original port error.
         reason = str(reason)
+        self._esp32_event("link_lost", reason=reason[:512])
         if self._active() or self.run_id is not None:
             self._disconnect_with_fault("Controller disconnected: " + reason, reason)
         else:
@@ -741,12 +847,15 @@ class AppController:
             # Stop sending heartbeats after an internal/storage failure. The
             # firmware watchdog remains effective even if a stop cannot be sent.
             logging.exception("Controller update failed")
+            self._esp32_event("application_error", reason=str(error)[:512])
             driver, self.driver = self.driver, None
             if driver is not None:
                 try:
                     close_transport(driver, {"v": 1, "id": 2147483646, "cmd": "stop"})
                 except Exception as cleanup_error:
                     self._log("Serial cleanup failed after application error: " + str(cleanup_error))
+                    self._esp32_event("port_close_error", port=getattr(driver, "port", None), reason=str(cleanup_error)[:512])
+            self._esp32_port = None
             self.pending.clear()
             self.device = {}
             self.connect_started = None
@@ -784,6 +893,8 @@ class AppController:
         for request_id, (command, deadline) in list(self.pending.items()):
             if now >= deadline:
                 self.pending.pop(request_id, None)
+                self._esp32_event("request_timeout", command=command, request_id=request_id,
+                                  request_age_ms=round((now - deadline + REQUEST_TIMEOUT_S) * 1000))
                 if command == "stop":
                     self._stop_failed("No acknowledgement for stop")
                     break
@@ -804,6 +915,9 @@ class AppController:
             if self.last_telemetry is None and self.connect_started is not None and now - self.connect_started > 2:
                 self._controller_disconnected("Controller answered HELLO but sent no valid telemetry")
             elif self.last_telemetry is not None and now - self.last_telemetry > 2:
+                if self.snapshot["controller_status"] != "Telemetry stale":
+                    self._esp32_event("telemetry_stale")
+                self.snapshot["live_sensor_voltages"] = {}
                 if self._active() or self.run_id is not None:
                     self._abort("Controller telemetry is stale")
                     if self.driver is not None:
@@ -905,3 +1019,4 @@ class AppController:
                 self.driver = None
                 self.balance = None
                 self.closed = True
+                self._esp32_log.close()

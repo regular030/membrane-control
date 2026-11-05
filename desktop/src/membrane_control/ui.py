@@ -17,7 +17,7 @@ from typing import Any
 from PySide6.QtCore import Qt, QSignalBlocker, QTimer
 from PySide6.QtGui import QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QScrollArea, QSpinBox, QSplitter, QTabWidget,
@@ -342,6 +342,13 @@ class MainWindow(QMainWindow):
             self._metric_labels[key] = value
             metric_row.addWidget(frame)
         outer.addLayout(metric_row)
+        self.live_sensor_detail = _label("", "muted", True)
+        self.live_sensor_detail.setAccessibleName("Live diagnostic sensor inputs")
+        self.live_sensor_detail.setToolTip(
+            "Raw ESP32 pin voltages and nominal estimates using a 5:1 divider. "
+            "These are separate from calibrated readings, charts, and pressure protection.")
+        self.live_sensor_detail.hide()
+        outer.addWidget(self.live_sensor_detail)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
@@ -578,6 +585,10 @@ class MainWindow(QMainWindow):
         cform.addRow(crow)
         self.controller_detail = _label("No controller connected", "muted", True)
         cform.addRow(self.controller_detail)
+        self.copy_esp32_log_button = _button("Copy ESP32 log", self._copy_esp32_log)
+        self.copy_esp32_log_button.setToolTip(
+            f"Copy recent serial events from {self.controller.esp32_log_path}")
+        cform.addRow(self.copy_esp32_log_button)
         self.sensor_test_button = _button("Read sensor inputs", self._read_sensor_inputs)
         self.sensor_test_button.setToolTip("Read the protected ESP32 input voltages with valves and pump stopped.")
         cform.addRow(self.sensor_test_button)
@@ -1080,6 +1091,14 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Select a controller serial port first", 6000)
 
+    def _copy_esp32_log(self):
+        history = self.controller.esp32_log_text()
+        if history:
+            QApplication.clipboard().setText(history)
+            self.statusBar().showMessage("ESP32 log copied. Paste it into your troubleshooting message.", 6000)
+        else:
+            self.statusBar().showMessage("No ESP32 connection events have been logged yet.", 6000)
+
     def _read_sensor_inputs(self):
         self._action(self.controller.read_sensor_inputs, "Requested a sensor voltage check")
 
@@ -1576,6 +1595,18 @@ class MainWindow(QMainWindow):
                     f"Flow SVP {pin_mv['flow']} · Pump feedback SVN {pin_mv['pump_feedback']}"
                 )
             self.sensor_test_detail.setText(sensor_note)
+            live_mv = snap.get("live_sensor_voltages", {}) if sensor_test_available and fresh else {}
+            self.live_sensor_detail.setVisible(bool(live_mv))
+            if live_mv:
+                pressure, flow, feedback = (live_mv[key] for key in ("pressure", "flow", "pump_feedback"))
+                pressure_note = f" (≈{pressure / 10:.1f} psi)" if 100 <= pressure <= 1000 else " (outside estimate range)"
+                flow_note = f" (≈{flow / 10:.1f} mL/min)" if 130 <= flow <= 1000 else " (outside estimate range)"
+                feedback_note = f" (≈{feedback / 200:.2f} V at pump)" if 150 <= feedback <= 2000 else " (outside estimate range)"
+                self.live_sensor_detail.setText(
+                    f"Live sensor check · nominal estimates · Pressure {pressure} mV{pressure_note} · "
+                    f"Flow {flow} mV{flow_note} · Pump feedback {feedback} mV{feedback_note}")
+            else:
+                self.live_sensor_detail.clear()
             if desktop_simulation:
                 hardware_text = "Practice mode: no equipment setup is needed."
             elif not connected:
@@ -1587,8 +1618,8 @@ class MainWindow(QMainWindow):
             elif snap.get('valve_control_ready'):
                 inputs = snap.get("sensor_inputs", {})
                 if all(inputs.get(key, {}).get("source") == "disabled" for key in ("pressure", "flow")):
-                    hardware_text = ("Manual valves are ready. This firmware has no pressure or flow input "
-                                     "configured. See the sensor troubleshooting guide to check the wiring.")
+                    hardware_text = ("Manual valves are ready. The Dashboard shows a separate sensor check when available. "
+                                     "Calibrated pressure and flow still need a reviewed profile.")
                 else:
                     hardware_text = "Six valve controls ready. Manual valves can operate without sensor readings."
             else:

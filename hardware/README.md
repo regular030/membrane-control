@@ -35,7 +35,7 @@ Its PWM input uses ESP32 GPIO25 and GND, and its power pair takes regulated
 Check its reference paths before connecting the divider.
 
 Start/stop uses the COM/NO terminals of a mapped spare onboard relay across
-DB25 15/17. Its bit remains unassigned. GPIO26 is available for a separate
+DB25 15/17. The lab confirmed bit 15, LOW for STOP and HIGH for RUN. GPIO26 is available for a separate
 isolated contact driver as an alternative. The factory full profile remains
 locked. The earlier DB15 pump and EC Buying converter are documented
 separately in the pump guide.

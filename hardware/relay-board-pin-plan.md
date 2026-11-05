@@ -24,8 +24,8 @@ The seller's `ESP32_X16_TEST.ino` screenshot defines:
 
 These traces already exist. Do not connect sensors or new jumper wires to these
 GPIOs. The normal manual-valve driver already uses them with the confirmed
-six-valve mapping above. The factory full pump/sensor profile remains
-unassigned. LOW off / HIGH on and the recorded valve bits do not establish
+six-valve mapping above. The lab also confirmed pump bit 15. The factory
+controller still keeps full pump operation disabled. The confirmed polarity and valve bits do not establish
 reset/OE defaults or the process's fault-state valve routing. Do not infer
 additional physical relay mappings from the confirmed six alone.
 
@@ -50,7 +50,7 @@ Solder the supplied headers into the labelled I/O breakout pads beside the ESP32
 | Garosa **PWM+** | IO25 / GPIO25 | 3.3 V PWM at 1 kHz |
 | Garosa **PWM-** | ESP32 GND | PWM signal return |
 | Garosa **Supply+ / Supply-** | Separate regulated 24 V DC supply pair | Seller range 15-30 V DC and board mark 12-30 V |
-| Pump start/stop | Verified spare 74HC595 channel | Physical COM and NO across DB25 15/17. Bit remains unassigned |
+| Pump start/stop | 74HC595 raw bit 15 | Physical COM and NO across DB25 15/17. LOW stops, HIGH runs |
 | Optional external contact-driver control | IO26 / GPIO26 | Reserved for a 3.3 V-compatible external isolated driver, if used instead |
 | Optional external ADC SDA | IO21 / GPIO21 | I2C only if ADS1115 acquisition is selected; the PWM converter does not use it |
 | Optional external ADC SCL | IO22 / GPIO22 | Same acquisition choice |
@@ -82,8 +82,8 @@ its input return to the ESP32 ADC ground.
 
 Use a tested spare onboard relay with independent contacts. Its **COM** goes
 to DB25 **15** and **NO** to **17**. Both contacts must be separate from the
-110-120 VAC valve distribution. The bit is unassigned until a disconnected
-board test identifies the channel and verifies its OFF state. An external
+110-120 VAC valve distribution. The lab reported that raw bit 15 is LOW
+for STOP and HIGH for RUN. An external
 isolated contact driver on **GPIO26** is an alternative. GPIO26 goes to that
 driver's control input.
 

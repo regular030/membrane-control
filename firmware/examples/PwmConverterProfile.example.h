@@ -15,9 +15,9 @@ inline BoardConfig compiledBoardConfig() {
   config.pumpPwmFrequencyHz = 1000;
   config.pumpPwmResolutionBits = 12;
   config.pwmSettleMs = 0;  // Placeholder: measure and review a delay in 10-5000 ms.
-  // Assign the tested active-high spare 595 bit to pumpContactBit. For the
-  // separate isolated contact interface, leave the bit at -1 and use GPIO26.
-  config.pumpContactBit = -1;
+  // Lab-confirmed 595 bit 15 is LOW for STOP and HIGH for RUN. For the
+  // separate isolated contact interface, set the bit to -1 and use GPIO26.
+  config.pumpContactBit = 15;
   config.pumpContactPin = -1;
   config.pumpContactActiveHigh = true;
   config.shiftDataPin = 14;

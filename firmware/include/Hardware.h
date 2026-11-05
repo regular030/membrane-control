@@ -9,6 +9,7 @@
 namespace basu {
 
 enum class SensorReadState { Never, Reading, OutOfRange, Unavailable };
+enum class SensorTestScope { IdleOnly, IdleOrManualValves };
 
 struct SensorTestMillivolts {
   uint32_t pressure = 0;
@@ -247,17 +248,26 @@ class Hardware {
     return factoryProfile && !simulation_ && !ioInitialized_;
   }
 
-  const char* readSensorTestInputs(bool factoryProfile, State state, SensorTestMillivolts& result) const {
+  const char* readSensorTestInputs(bool factoryProfile, State state, SensorTestMillivolts& result,
+                                  SensorTestScope scope = SensorTestScope::IdleOnly) {
     if (!sensorTestAvailable(factoryProfile)) return "sensor input test requires factory physical firmware";
-    if (state != State::Idle) return "stop the controller before reading sensor test inputs";
+    const bool liveManualValves = scope == SensorTestScope::IdleOrManualValves && state == State::ManualValves;
+    if (state != State::Idle && !liveManualValves)
+      return "stop the controller before reading sensor test inputs";
 
     // Report the pin voltages separately from calibrated Measurements.
-    const auto readPin = [](int pin) {
-      pinMode(pin, INPUT);
-      analogSetPinAttenuation(pin, ADC_11db);
-      return analogReadMilliVolts(pin);
-    };
-    result = {readPin(34), readPin(36), readPin(39)};
+    constexpr int pressurePin = 34;
+    constexpr int flowPin = 36;
+    constexpr int pumpFeedbackPin = 39;
+    if (!sensorTestPinsInitialized_) {
+      for (int pin : {pressurePin, flowPin, pumpFeedbackPin}) pinMode(pin, INPUT);
+      // The planned divider yields up to 1 V for pressure and flow, and 2 V for feedback.
+      analogSetPinAttenuation(pressurePin, ADC_2_5db);
+      analogSetPinAttenuation(flowPin, ADC_2_5db);
+      analogSetPinAttenuation(pumpFeedbackPin, ADC_11db);
+      sensorTestPinsInitialized_ = true;
+    }
+    result = {analogReadMilliVolts(pressurePin), analogReadMilliVolts(flowPin), analogReadMilliVolts(pumpFeedbackPin)};
     return nullptr;
   }
 
@@ -489,6 +499,7 @@ class Hardware {
   bool pumpRunPending_ = false;
   uint32_t pumpCommandChangedMs_ = 0;
   bool ready_ = false;
+  bool sensorTestPinsInitialized_ = false;
   bool safeStopIssued_ = false;
   const char* error_ = "hardware_not_initialized";
   Outputs applied_;

@@ -30,6 +30,22 @@ connected, have the load switching and board supply checked before repeating
 it under load. A brownout or electrical transient is possible and needs an
 on-site check.
 
+## Capture a dropout in 0.1.19
+
+After the next dropout, use **Connections and settings → Copy ESP32 log** before
+pressing EN. Paste the recent events into the troubleshooting message. The log
+records the COM port, valve commands, matching acknowledgements, last telemetry
+age and uptime, Stop and connection errors. It keeps recent events across app
+restarts in the app data folder under `logs/esp32-link.jsonl`.
+
+A fresh handshake records the ESP32's last boot reason when the new firmware
+reports it. An EN reset or power cycle can replace an earlier reset reason.
+The app and firmware have no three-command cutoff. Record which valves were
+commanded and whether their relay LEDs, contact outputs, and actual valves
+responded. A relay click alone establishes relay movement. If the controller
+remains responsive in an unloaded check, have the affected valve circuit and
+power checked before repeating with the load attached.
+
 ## Bare relay board recovery
 
 In **Bare relay board test**, select the ESP32 port and click **Recover

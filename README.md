@@ -11,9 +11,9 @@ Open the [short Start here guide](docs/START-HERE.md).
 
 For the Masterflex 75211-70, Garosa converter and HiLetgo dividers, use the
 [current wiring guide](docs/ordered-parts-wiring.md). It lists the six DB25
-connections and ESP32 GPIO25/34/36/39. Identify the pump's spare relay with
-[Find pump relay](docs/relay-board-test.md#find-the-pumps-spare-relay) before
-assigning its bit in the hardware profile.
+connections, ESP32 GPIO25/34/36/39, and the confirmed pump relay bit 15.
+Factory firmware shows live sensor voltages on Dashboard. Use **Copy ESP32
+log** in Connections and settings after a dropout.
 
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and download the Windows `.exe` under **Assets**. For a fresh PC including
