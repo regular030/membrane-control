@@ -74,6 +74,43 @@ def test_dry_run_firmware_does_not_change_desktop_connection_mode(screen):
     assert window.stop_button.isEnabled()
 
 
+def test_unconfirmed_stop_shows_disconnected_and_leaves_connect_available(screen):
+    window, controller, _ = screen
+    controller.set_simulation(False)
+    controller.snapshot.update(state="fault", fault="No acknowledgement for stop")
+    window._update_view(dict(controller.snapshot))
+    assert "Check outputs at the rig" in window.fault_label.text()
+    assert window.controller_connect.isEnabled()
+    assert not window.stop_button.isEnabled()
+
+
+def test_disconnect_available_while_waiting_for_controller_hello(screen):
+    window, controller, _ = screen
+    controller.set_simulation(False)
+    controller.driver = type("OpeningDriver", (), {"close": lambda self: None})()
+    try:
+        window._update_view(dict(controller.snapshot))
+        assert window.controller_disconnect.isEnabled()
+    finally:
+        controller.driver = None
+
+
+def test_sensor_test_shows_pin_voltage_without_using_calibrated_metrics(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    controller.snapshot.update(controller_connected=True, sensor_test_available=True,
+                               sensor_test_voltages={"pressure": 950, "flow": 410, "pump_feedback": 0})
+    window._update_view(dict(controller.snapshot))
+    assert window.sensor_test_button.isEnabled()
+    assert "Pressure IO34 950" in window.sensor_test_detail.text()
+    assert "Flow SVP 410" in window.sensor_test_detail.text()
+    assert controller.snapshot["flow_ml_min"] is None
+    controller.snapshot["state"] = "manual_valves"
+    window._update_view(dict(controller.snapshot))
+    assert not window.sensor_test_button.isEnabled()
+
+
 def test_timer_failure_requests_stop_once_and_blocks_start(screen, monkeypatch):
     window, controller, _ = screen
     requests = []

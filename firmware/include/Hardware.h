@@ -10,6 +10,12 @@ namespace basu {
 
 enum class SensorReadState { Never, Reading, OutOfRange, Unavailable };
 
+struct SensorTestMillivolts {
+  uint32_t pressure = 0;
+  uint32_t flow = 0;
+  uint32_t pumpFeedback = 0;
+};
+
 inline const char* analogSourceName(AnalogSource source) {
   switch (source) {
     case AnalogSource::NativeAdc1: return "native_adc1";
@@ -235,6 +241,24 @@ class Hardware {
       }
     }
     sampleAds(now);
+  }
+
+  bool sensorTestAvailable(bool factoryProfile) const {
+    return factoryProfile && !simulation_ && !ioInitialized_;
+  }
+
+  const char* readSensorTestInputs(bool factoryProfile, State state, SensorTestMillivolts& result) const {
+    if (!sensorTestAvailable(factoryProfile)) return "sensor input test requires factory physical firmware";
+    if (state != State::Idle) return "stop the controller before reading sensor test inputs";
+
+    // Report the pin voltages separately from calibrated Measurements.
+    const auto readPin = [](int pin) {
+      pinMode(pin, INPUT);
+      analogSetPinAttenuation(pin, ADC_11db);
+      return analogReadMilliVolts(pin);
+    };
+    result = {readPin(34), readPin(36), readPin(39)};
+    return nullptr;
   }
 
   bool ready() const { return ready_; }

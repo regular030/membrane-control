@@ -578,6 +578,11 @@ class MainWindow(QMainWindow):
         cform.addRow(crow)
         self.controller_detail = _label("No controller connected", "muted", True)
         cform.addRow(self.controller_detail)
+        self.sensor_test_button = _button("Read sensor inputs", self._read_sensor_inputs)
+        self.sensor_test_button.setToolTip("Read the protected ESP32 input voltages with valves and pump stopped.")
+        cform.addRow(self.sensor_test_button)
+        self.sensor_test_detail = _label("", "muted", True)
+        cform.addRow(self.sensor_test_detail)
         self.relay_bench_button = _button("1. Bare relay board test", self._open_relay_bench)
         self.relay_bench_button.setToolTip("Turn Simulation mode off first. Separate tool for REAL relays on a bare board with every contact load disconnected.")
         cform.addRow(self.relay_bench_button)
@@ -1075,6 +1080,9 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Select a controller serial port first", 6000)
 
+    def _read_sensor_inputs(self):
+        self._action(self.controller.read_sensor_inputs, "Requested a sensor voltage check")
+
     def _connect_balance(self):
         port = self.balance_port.currentData()
         if port:
@@ -1501,10 +1509,13 @@ class MainWindow(QMainWindow):
                 banner_text = "HARDWARE MODE  •  Equipment setup is unfinished. Ask the lab maintainer before using the rig."
             self.banner.setText(banner_text)
             self.fault_label.setVisible(bool(fault))
-            self.fault_label.setText(f"Run stopped or blocked: {fault}" if fault else "")
+            fault_prefix = "Controller fault"
+            if not desktop_simulation and not connected:
+                fault_prefix = "Controller disconnected. Check outputs at the rig"
+            self.fault_label.setText(f"{fault_prefix}. {fault}" if fault else "")
             self.start_button.setEnabled(not operating and ready and not fault and next_index is None)
             self.start_button.setToolTip(next_text)
-            self.stop_button.setEnabled(connected or operating or bool(fault))
+            self.stop_button.setEnabled(connected or operating)
             self.stop_button.setText('Stop valves' if state.lower() == 'manual_valves' else 'Stop run')
             self.clear_fault_button.setVisible(bool(fault))
             self.clear_fault_button.setEnabled(bool(fault) and connected and not snap.get("stop_pending") and not snap.get("start_pending") and not snap.get("manual_pending"))
@@ -1549,6 +1560,22 @@ class MainWindow(QMainWindow):
             self.balance_badge.setText(f"Balance: {'simulated' if desktop_simulation else ('connected' if balanced else 'disconnected')}")
             self.controller_detail.setText(str(snap.get("controller_status") or "No responding controller"))
             self.balance_detail.setText(str(snap.get("balance_status") or "No valid balance data"))
+            sensor_test_available = connected and not simulation and snap.get("sensor_test_available") is True
+            self.sensor_test_button.setVisible(sensor_test_available)
+            self.sensor_test_button.setEnabled(
+                sensor_test_available and fresh and not operating and not fault and state == "idle"
+                and not self.controller.sensor_test_pending)
+            self.sensor_test_detail.setVisible(sensor_test_available)
+            pin_mv = snap.get("sensor_test_voltages", {})
+            sensor_note = snap.get("sensor_test_status") or "Reads the voltages after the dividers."
+            if self.controller.sensor_test_pending:
+                sensor_note = "Reading sensor inputs…"
+            if pin_mv:
+                sensor_note = (
+                    f"Last check in mV · Pressure IO34 {pin_mv['pressure']} · "
+                    f"Flow SVP {pin_mv['flow']} · Pump feedback SVN {pin_mv['pump_feedback']}"
+                )
+            self.sensor_test_detail.setText(sensor_note)
             if desktop_simulation:
                 hardware_text = "Practice mode: no equipment setup is needed."
             elif not connected:
@@ -1558,7 +1585,12 @@ class MainWindow(QMainWindow):
             elif verified:
                 hardware_text = "Equipment setup: approved by the controller. A trained operator must also review the sequence."
             elif snap.get('valve_control_ready'):
-                hardware_text = 'Six valve controls ready. Pressure, flow and scale are not required for manual valves.'
+                inputs = snap.get("sensor_inputs", {})
+                if all(inputs.get(key, {}).get("source") == "disabled" for key in ("pressure", "flow")):
+                    hardware_text = ("Manual valves are ready. This firmware has no pressure or flow input "
+                                     "configured. See the sensor troubleshooting guide to check the wiring.")
+                else:
+                    hardware_text = "Six valve controls ready. Manual valves can operate without sensor readings."
             else:
                 hardware_text = "Equipment setup is unfinished. Ask the lab maintainer; this cannot be changed here."
             self.hardware_status.setText(hardware_text)
@@ -1567,7 +1599,9 @@ class MainWindow(QMainWindow):
             self.valve_test_button.setEnabled(not operating and not desktop_simulation)
             self.sensorless_valve_button.setEnabled(not operating and not desktop_simulation)
             self.balance_connect.setEnabled(not operating and not desktop_simulation)
-            self.controller_disconnect.setEnabled(not operating and connected and not desktop_simulation)
+            controller_port_opening = self.controller.driver is not None
+            self.controller_disconnect.setEnabled(
+                not operating and (connected or controller_port_opening) and not desktop_simulation)
             self.balance_disconnect.setEnabled(not operating and balanced and not desktop_simulation)
             self.balance_request.setEnabled(not desktop_simulation and self.controller.balance is not None)
             self.balance_diagnostics.setEnabled(not operating and not desktop_simulation)

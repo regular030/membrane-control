@@ -11,6 +11,11 @@ static_assert(BASU_DRY_RUN == 0 || BASU_DRY_RUN == 1, "BASU_DRY_RUN must be 0 or
 
 namespace {
 constexpr bool kSimulation = BASU_DRY_RUN != 0;
+#ifdef BASU_VERIFIED_PROFILE_HEADER
+constexpr bool kFactoryProfile = false;
+#else
+constexpr bool kFactoryProfile = true;
+#endif
 const basu::BoardConfig board = basu::compiledBoardConfig();
 basu::SafetyConfig makeSafety() {
   basu::SafetyConfig safety;
@@ -30,16 +35,24 @@ bool discardingOversize = false;
 uint32_t lastTelemetryMs = 0;
 uint32_t lastSimulationSampleMs = 0;
 
-void reply(uint32_t id, const char* error = nullptr, bool hello = false) {
+void reply(uint32_t id, const char* error = nullptr, bool hello = false,
+           const basu::SensorTestMillivolts* sensorTest = nullptr) {
   JsonDocument document;
   document["v"] = 1;
   document["id"] = id;
   document["type"] = error ? "error" : (hello ? "hello" : "ack");
   document["ok"] = error == nullptr;
   if (error) document["error"] = error;
+  if (sensorTest && !error) {
+    JsonObject values = document["adc_pin_mv"].to<JsonObject>();
+    values["pressure"] = sensorTest->pressure;
+    values["flow"] = sensorTest->flow;
+    values["pump_feedback"] = sensorTest->pumpFeedback;
+  }
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.17";
+    document["firmware_version"] = "0.1.18";
+    document["sensor_test_available"] = hardware.sensorTestAvailable(kFactoryProfile);
     document["valve_control_ready"] = hardware.valveControlReady();
     document["manual_valve_count"] = basu::kManualValveCount;
     JsonArray ids = document["manual_valve_ids"].to<JsonArray>();
@@ -101,6 +114,11 @@ void handleLine(uint32_t now) {
     basu::Outputs candidate;
     error = basu::parseManualValves(request.as<JsonVariantConst>(), candidate);
     if (!error) error = controller.manualValves(candidate.valves, now);
+  } else if (command == "read_sensor_inputs") {
+    basu::SensorTestMillivolts result;
+    error = hardware.readSensorTestInputs(kFactoryProfile, controller.state(), result);
+    reply(id, error, false, error ? nullptr : &result);
+    return;
   } else error = "unknown command";
   // Apply before acknowledging an actuator command. Failure is a latched fault.
   // A serial batch can take time: do not backdate a newly written PWM command's

@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 
 from .balance import MassFlow, parse_mass
-from .device_status import checked_controller_diagnostics, checked_sensor_status, checked_valve_control
+from .device_status import SENSOR_KEYS, checked_controller_diagnostics, checked_sensor_status, checked_valve_control
 from .models import Recipe, number, valve_states
 from .recipes import built_in_recipes, read_recipe, write_recipe
 from .storage import RunStore
@@ -51,6 +51,7 @@ class AppController:
         self.last_mass = None
         self.last_heartbeat = -100.0
         self.connect_started = None
+        self.controller_port_open = False
         self.last_hello = -100.0
         self.local_fault = None
         self.mass_flow = MassFlow()
@@ -58,6 +59,7 @@ class AppController:
         self.manual_pending = False
         self.manual_requested = None
         self.stop_pending = False
+        self.stop_valves_only = False
         self.run_started = None
         self.last_record = -100.0
         self.run_id = None
@@ -195,6 +197,7 @@ class AppController:
         self.driver = SerialTransport(port)
         self.connect_started = self.clock()
         self.last_hello = -100.0
+        self.last_heartbeat = -100.0
         self.snapshot["controller_status"] = "Opening port; waiting for firmware"
         self._log(f"Opening controller {port}")
 
@@ -209,7 +212,10 @@ class AppController:
             self.manual_pending = False
             self.manual_requested = None
             self.stop_pending = False
+            self.stop_valves_only = False
             self.device = {}
+            self.connect_started = None
+            self.controller_port_open = False
             self.last_telemetry = None
             self.last_controller_uptime = None
             try:
@@ -218,15 +224,19 @@ class AppController:
             finally:
                 if hasattr(self, "snapshot"):
                     self.snapshot.update(controller_connected=False, controller_status="Disconnected",
-                        state="idle", start_pending=False, manual_pending=False, stop_pending=False, valves=[False]*7, pump_percent=0,
+                        state="fault" if self.local_fault else "idle",
+                        start_pending=False, manual_pending=False, stop_pending=False,
                         pressure_psi=None, flow_ml_min=None, pump_feedback_v=None, flux_lmh=None, hardware_verified=False)
+                    if not self.local_fault:
+                        self.snapshot.update(valves=[False] * 7, pump_percent=0)
                     self._reset_diagnostics()
 
     def _reset_diagnostics(self):
         self._reported_valve_control_ready = None
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
-            valve_control_status="Valve-only controls unavailable")
+            valve_control_status="Valve-only controls unavailable", sensor_test_available=False,
+            sensor_test_voltages={}, sensor_test_status="")
 
     def connect_balance(self, port, baud=9600, serial_format="8N1", polling=True):
         if self.simulation:
@@ -328,6 +338,7 @@ class AppController:
             raise
 
     def stop_run(self):
+        valves_only = self._valves_only()
         self.start_phase = None
         self.manual_pending = False
         self.manual_requested = None
@@ -338,6 +349,7 @@ class AppController:
         if self.driver is not None:
             self.pending.clear()
             self.stop_pending = True
+            self.stop_valves_only = valves_only
             self.snapshot["stop_pending"] = True
             try:
                 self._request("stop")
@@ -402,6 +414,22 @@ class AppController:
             self.snapshot["manual_pending"] = False
             raise
 
+    @property
+    def sensor_test_pending(self):
+        return any(command == "read_sensor_inputs" for command, _ in self.pending.values())
+
+    def read_sensor_inputs(self):
+        if not self.snapshot["controller_connected"] or self.snapshot["sensor_test_available"] is not True:
+            raise ValueError("Connect normal firmware with sensor test support")
+        if self._active() or self.local_fault or self.snapshot["fault"] or self.snapshot["state"] != "idle":
+            raise ValueError("Stop the controller and clear any fault before testing sensor voltages")
+        if self.last_telemetry is None or self.clock() - self.last_telemetry > 2:
+            raise ValueError("Controller telemetry is stale; reconnect to test sensor voltages")
+        if self.sensor_test_pending:
+            raise ValueError("A sensor voltage check is already in progress")
+        self._request("read_sensor_inputs")
+        self.snapshot.update(sensor_test_voltages={}, sensor_test_status="")
+
     def clear_fault(self):
         if not self.snapshot["controller_connected"]:
             raise ValueError("Reconnect the controller before clearing a fault")
@@ -415,7 +443,7 @@ class AppController:
         Continuing heartbeat traffic after a failed stop would prevent the
         controller watchdog from protecting a still-active output.
         """
-        self._disconnect_with_fault(reason, "Stop unconfirmed; connection closed for watchdog stop")
+        self._disconnect_with_fault(reason, "Stop unconfirmed; heartbeats stopped for the controller watchdog")
 
     def _disconnect_with_fault(self, reason, status):
         if self.local_fault and self.local_fault not in reason:
@@ -428,12 +456,15 @@ class AppController:
                 self._log("Serial close failed after unconfirmed stop: " + str(error))
         self.pending.clear()
         self.device = {}
+        self.connect_started = None
+        self.controller_port_open = False
         self.last_telemetry = None
         self.last_controller_uptime = None
         self.start_phase = None
         self.manual_pending = False
         self.manual_requested = None
         self.stop_pending = False
+        self.stop_valves_only = False
         self.local_fault = reason
         self.snapshot.update(state="fault", fault=reason, start_pending=False, manual_pending=False, stop_pending=False,
             controller_connected=False, controller_status=status,
@@ -466,6 +497,7 @@ class AppController:
     def _abort(self, reason):
         if self.local_fault == reason:
             return
+        valves_only = self._valves_only()
         self.local_fault = self.local_fault or reason
         self.start_phase = None
         self.manual_pending = False
@@ -479,6 +511,7 @@ class AppController:
         self.pending.clear()
         if self.driver is not None:
             self.stop_pending = True
+            self.stop_valves_only = valves_only
             self.snapshot["stop_pending"] = True
             try:
                 self._request("stop")
@@ -490,9 +523,13 @@ class AppController:
 
     def _handle_packet(self, packet, now):
         kind = packet.get("type")
-        if kind in ("port_open", "parse_error"):
-            if kind == "parse_error":
-                self._log(packet.get("error", "Invalid serial message"))
+        if kind == "port_open":
+            self.controller_port_open = True
+            if not self.device:
+                self.snapshot["controller_status"] = "Port open; waiting for controller firmware"
+            return
+        if kind == "parse_error":
+            self._log(packet.get("error", "Invalid serial message"))
             return
         if kind == "disconnected":
             self._controller_disconnected(packet.get("error") or "Controller disconnected")
@@ -504,9 +541,11 @@ class AppController:
             if type(request_id) is not int or not 0 < request_id <= 0xffffffff:
                 return
             pending = self.pending.get(request_id)
-            if pending is None:
+            if pending is None or now >= pending[1]:
                 return
             command = pending[0]
+            if command == "hello" and not self.device and self.connect_started is not None and now - self.connect_started >= 8:
+                return
             expected = "hello" if command == "hello" else "ack"
             if not ((kind == expected and packet.get("ok") is True)
                     or (kind == "error" and packet.get("ok") is False)):
@@ -516,6 +555,8 @@ class AppController:
                 self._log(f"Controller rejected {command}: {packet.get('error', 'unknown error')}")
                 if command == "stop":
                     self._stop_failed("Controller rejected stop: " + str(packet.get("error", "unknown error")))
+                elif command == "read_sensor_inputs":
+                    self.snapshot["sensor_test_status"] = "Sensor check rejected. Stop the controller and retry."
                 elif command in ("load_recipe", "start", "manual", "manual_valves"):
                     self._abort(str(packet.get("error", "Command rejected")))
                 return
@@ -541,7 +582,7 @@ class AppController:
                 self.device = {key: value for key, value in packet.items()
                                if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
                                               "valve_control_ready", "manual_valve_count", "manual_valve_ids",
-                                              "valve_bits", "valve_control_status")}
+                                              "valve_bits", "valve_control_status", "sensor_test_available")}
                 self.device.update(diagnostics)
                 self.device.update(checked_valve_control(packet))
                 self._reset_diagnostics()
@@ -549,9 +590,20 @@ class AppController:
                 self._reported_valve_control_ready = reported if type(reported) is bool else None
                 self.snapshot.update(copy.deepcopy(diagnostics))
                 self.snapshot.update(checked_valve_control(packet))
+                self.pending = {key: item for key, item in self.pending.items() if item[0] != "hello"}
+                self.connect_started = now
+                self.snapshot["sensor_test_available"] = (not packet["simulation"]
+                    and packet.get("sensor_test_available") is True)
                 self.snapshot.update(controller_connected=True, controller_status="Connected",
                                      hardware_verified=packet["hardware_verified"], simulation=packet["simulation"])
                 self._log("Controller identified: " + str(packet.get("firmware_version", "unknown")))
+            elif command == "read_sensor_inputs":
+                values = packet.get("adc_pin_mv")
+                if isinstance(values, dict) and all(type(values.get(key)) is int and
+                        0 <= values[key] <= 3300 for key in SENSOR_KEYS):
+                    self.snapshot["sensor_test_voltages"] = {key: values[key] for key in SENSOR_KEYS}
+                else:
+                    self.snapshot["sensor_test_status"] = "Invalid sensor voltage response. Retry the check."
             elif command == "load_recipe" and self.start_phase == "loading":
                 self.start_phase = "starting"
                 # Use the earliest possible start, not the later ACK receipt.
@@ -576,6 +628,9 @@ class AppController:
                 self.stop_pending = False
                 self.snapshot.update(stop_pending=False, state="fault" if self.local_fault else "idle",
                     pump_percent=0, step_index=-1, cycle=0, remaining_s=0)
+                if self.stop_valves_only:
+                    self.snapshot["valves"] = [False] * 7
+                self.stop_valves_only = False
                 self._finish_run("stopped")
                 self._log("Stop acknowledged")
             elif command == "clear_fault":
@@ -638,6 +693,7 @@ class AppController:
                     "Valve setup changed; reconnect before continuing")
                 return
         self.last_telemetry = now
+        self.connect_started = None
         self.last_controller_uptime = uptime
         self.snapshot.update(values)
         self.snapshot["sensor_status"] = checked_sensor_status(packet.get("sensor_status"))
@@ -647,7 +703,11 @@ class AppController:
             controller_status="Connected (dry run)" if packet["simulation"] else "Connected")
         self.snapshot["step_name"] = self.recipe.steps[step].name if 0 <= step < len(self.recipe.steps) else "Ready"
         if state == "fault":
-            self._abort(fault or "Controller reported a fault without a description")
+            # The firmware has already applied its stop state. A local fault
+            # retained over reconnect must not create a new STOP after every ACK
+            # or discard a pending Clear Fault command.
+            if self.local_fault is None or self._active() or self.run_id is not None:
+                self._abort(fault or "Controller reported a fault without a description")
         elif state == "idle" and self.run_id is not None and not self.stop_pending and not self.local_fault:
             if self.run_started is None or now - self.run_started + 1e-6 < self.recipe.duration_s:
                 self._abort("Controller returned to idle before the sequence could finish")
@@ -664,10 +724,13 @@ class AppController:
         # A failed worker cannot execute or acknowledge a new STOP. Detach it
         # now, withdrawing heartbeats and retaining its original port error.
         reason = str(reason)
-        if self._active() or self.run_id is not None or self.local_fault:
+        if self._active() or self.run_id is not None:
             self._disconnect_with_fault("Controller disconnected: " + reason, reason)
         else:
-            self.disconnect_controller(request_stop=False)
+            try:
+                self.disconnect_controller(request_stop=False)
+            except Exception as error:
+                self._log("Serial cleanup failed after disconnect: " + str(error))
             self.snapshot["controller_status"] = reason
             self._log("Controller disconnected: " + reason)
 
@@ -678,18 +741,23 @@ class AppController:
             # Stop sending heartbeats after an internal/storage failure. The
             # firmware watchdog remains effective even if a stop cannot be sent.
             logging.exception("Controller update failed")
-            if self.driver is not None:
+            driver, self.driver = self.driver, None
+            if driver is not None:
                 try:
-                    self.driver.send({"v": 1, "id": 2147483646, "cmd": "stop"})
-                except Exception:
-                    pass
-                self.driver.close()
-                self.driver = None
+                    close_transport(driver, {"v": 1, "id": 2147483646, "cmd": "stop"})
+                except Exception as cleanup_error:
+                    self._log("Serial cleanup failed after application error: " + str(cleanup_error))
             self.pending.clear()
+            self.device = {}
+            self.connect_started = None
+            self.controller_port_open = False
+            self.last_telemetry = None
+            self.last_controller_uptime = None
             self.start_phase = None
             self.manual_pending = False
             self.manual_requested = None
             self.stop_pending = False
+            self.stop_valves_only = False
             self.local_fault = "Application stopped: " + str(error)
             self.snapshot.update(state="fault", fault=self.local_fault, controller_connected=False,
                 controller_status="Stopped after application error", start_pending=False, manual_pending=False, stop_pending=False,
@@ -701,38 +769,48 @@ class AppController:
         if self.closed:
             return
         now = self.clock()
-        if self.driver is not None:
-            if now - self.last_heartbeat >= 0.5:
-                try:
-                    self._request("heartbeat")
-                except Exception as error:
-                    self._controller_disconnected(str(error))
-                self.last_heartbeat = now
-            if self.driver is not None and not self.device and self.connect_started is not None and now-self.connect_started < 8 and now-self.last_hello >= 1:
-                try:
-                    self._request("hello")
-                except Exception as error:
-                    self._controller_disconnected(str(error))
-                self.last_hello = now
-            if self.driver is not None:
-                for packet in self.driver.poll(now):
-                    self._handle_packet(packet, now)
+        if self.driver is not None and not self.device and self.connect_started is not None and now-self.connect_started < 8 and now-self.last_hello >= 1:
+            try:
+                self._request("hello")
+            except Exception as error:
+                self._controller_disconnected(str(error))
+            self.last_hello = now
+        driver = self.driver
+        if driver is not None:
+            for packet in driver.poll(now):
+                self._handle_packet(packet, now)
+                if self.driver is not driver:
+                    break
         for request_id, (command, deadline) in list(self.pending.items()):
-            if now > deadline:
+            if now >= deadline:
                 self.pending.pop(request_id, None)
                 if command == "stop":
                     self._stop_failed("No acknowledgement for stop")
                     break
+                if command == "read_sensor_inputs":
+                    self.snapshot["sensor_test_status"] = "Sensor check timed out. Retry when the controller is responding."
+                    self._log("No acknowledgement for sensor voltage check")
+                    continue
                 if command != "hello":
                     self._abort(f"No acknowledgement for {command}")
                     break
         if self.driver is not None and not self.device and self.connect_started is not None and now-self.connect_started >= 8:
-            self.snapshot["controller_status"] = "Adapter found; ESP32 firmware did not respond"
-        if self.last_telemetry is not None and now-self.last_telemetry > 2:
-            if self._active():
-                self._abort("Controller telemetry is stale")
-            self.snapshot.update(controller_connected=False, controller_status="Telemetry stale", pressure_psi=None,
-                                 flow_ml_min=None, flux_lmh=None, pump_feedback_v=None)
+            reason = ("Port opened; no supported controller HELLO received within 8 seconds"
+                      if self.controller_port_open else "Controller port did not open within 8 seconds")
+            if self.snapshot["controller_status"] == "Unsupported controller identity or protocol":
+                reason = self.snapshot["controller_status"]
+            self._controller_disconnected(reason)
+        if self.driver is not None and self.device:
+            if self.last_telemetry is None and self.connect_started is not None and now - self.connect_started > 2:
+                self._controller_disconnected("Controller answered HELLO but sent no valid telemetry")
+            elif self.last_telemetry is not None and now - self.last_telemetry > 2:
+                if self._active() or self.run_id is not None:
+                    self._abort("Controller telemetry is stale")
+                    if self.driver is not None:
+                        self.snapshot.update(controller_connected=False, controller_status="Telemetry stale",
+                            pressure_psi=None, flow_ml_min=None, flux_lmh=None, pump_feedback_v=None)
+                else:
+                    self._controller_disconnected("Telemetry stale")
         if self.simulation and self.driver is not None:
             self._accept_mass(now, self.driver.mass)
             self.snapshot["balance_status"] = "Connected (simulated)"
@@ -764,10 +842,20 @@ class AppController:
         if self.last_mass is not None and now-self.last_mass > 3:
             self.snapshot.update(balance_connected=False, balance_status="Weight data stale", mass_g=None, balance_flow_ml_min=None)
             self.mass_flow.reset()
-        if (self._active() and not self._valves_only()
+        if (self._active() and not self.stop_pending and not self._valves_only()
                 and (self.recipe.require_balance or self.settings["require_balance"])
                 and not self.snapshot["balance_connected"]):
             self._abort("Required balance reading is unavailable")
+        # An unresolved STOP relies on the firmware watchdog. A new connection
+        # must first identify the board, and a latched fault never extends an
+        # old session while waiting for the operator to clear it.
+        if (self.driver is not None and self.device and self.last_telemetry is not None
+                and not self.stop_pending and not self.local_fault and now - self.last_heartbeat >= 0.5):
+            try:
+                self._request("heartbeat")
+            except Exception as error:
+                self._controller_disconnected(str(error))
+            self.last_heartbeat = now
         flow = self.snapshot["flow_ml_min"]
         self.snapshot["flux_lmh"] = None if flow is None else flow * 0.06 / self.settings["membrane_area_m2"]
         if self.run_started is not None and self.run_id is not None:

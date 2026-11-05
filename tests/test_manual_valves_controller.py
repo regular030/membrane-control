@@ -1,6 +1,7 @@
 """Normal six-valve controls remain independent of pump/experiment approvals."""
 import pytest
 
+import membrane_control.controller as controller_module
 from membrane_control.controller import AppController
 from membrane_control.device_status import checked_valve_control, device_statuses
 
@@ -17,6 +18,7 @@ class Driver:
 
     def __init__(self):
         self.sent = []
+        self.events = []
         self.closed = False
         self.error = None
 
@@ -26,7 +28,8 @@ class Driver:
         self.sent.append(packet)
 
     def poll(self, now):
-        return []
+        events, self.events = self.events, []
+        return events
 
     def close(self):
         self.closed = True
@@ -120,6 +123,164 @@ def test_all_off_is_still_manual_valves_until_stop_ack(app):
     stop_id = next(key for key, value in controller.pending.items() if value[0] == "stop")
     controller._handle_packet({"v": 1, "type": "ack", "id": stop_id, "ok": True}, clock())
     assert controller.snapshot["state"] == "idle" and not controller._active()
+
+
+def test_valve_stop_ack_clears_prior_commands_before_the_next_toggle(app):
+    controller, clock = app
+    controller.set_manual_valves([True, False, False, False, False, False])
+    acknowledge(controller, clock)
+    controller.stop_run()
+    stop = controller.driver.sent[-1]
+    assert stop["cmd"] == "stop" and controller.snapshot["valves"][0]
+    controller._handle_packet({"v": 1, "type": "ack", "id": stop["id"], "ok": True}, clock())
+    # A second click can occur before the next hardware telemetry frame.
+    assert controller.snapshot["valves"] == [False] * 7
+    controller.set_manual_valves([False, True, False, False, False, False])
+    assert controller.driver.sent[-1]["valves"] == [False, True, False, False, False, False, False]
+
+
+def test_full_mode_stop_ack_waits_for_its_configured_safe_valve_telemetry(app):
+    controller, clock = app
+    prior_valves = [True, False, False, False, False, False, False]
+    controller.snapshot.update(state="manual", valves=prior_valves)
+    controller.stop_run()
+    stop = controller.driver.sent[-1]
+    controller._handle_packet({"v": 1, "type": "ack", "id": stop["id"], "ok": True}, clock())
+    assert controller.snapshot["valves"] == prior_valves
+
+
+def test_pending_valve_stop_withdraws_heartbeats_and_rejects_late_ack(app):
+    controller, clock = app
+    driver = controller.driver
+    controller.set_manual_valves([True] * 6)
+    acknowledge(controller, clock)
+    controller.stop_run()
+    stop = driver.sent[-1]
+    sent = list(driver.sent)
+    for index in range(1, 6):
+        clock.now += 0.5
+        telemetry(controller, clock, state="manual_valves", uptime_ms=1000 + index * 500,
+                  valves=[True] * 5 + [False, True])
+        controller.tick()
+        assert controller.stop_pending and driver.sent == sent
+    clock.now += 0.5
+    driver.events.append({"v": 1, "type": "ack", "id": stop["id"], "ok": True})
+    controller.tick()
+    assert driver.closed and controller.driver is None and driver.sent == sent
+    assert controller.local_fault == "No acknowledgement for stop"
+    assert controller.snapshot["valves"][0]  # No all-off assertion without timely confirmation.
+
+
+def test_unanswered_manual_valve_command_requests_stop_before_heartbeat(app):
+    controller, clock = app
+    driver = controller.driver
+    controller.set_manual_valves([True] * 6)
+    command = driver.sent[-1]
+    clock.now += 3
+    telemetry(controller, clock, state="manual_valves", uptime_ms=4000,
+              valves=[True] * 5 + [False, True])
+    driver.events.append({"v": 1, "type": "ack", "id": command["id"], "ok": True})
+    controller.tick()
+    assert controller.local_fault == "No acknowledgement for manual_valves"
+    assert controller.stop_pending and driver.sent[-1]["cmd"] == "stop"
+    assert [packet["cmd"] for packet in driver.sent[-2:]] == ["manual_valves", "stop"]
+
+
+def test_idle_telemetry_while_waiting_for_valve_stop_ignores_balance_requirement(app):
+    controller, clock = app
+    controller.settings["require_balance"] = True
+    controller.set_manual_valves([True] * 6)
+    acknowledge(controller, clock)
+    controller.stop_run()
+    telemetry(controller, clock, state="idle")
+    controller.tick()
+    assert controller.stop_pending and controller.local_fault is None
+
+
+@pytest.mark.parametrize("port_open", [False, True])
+def test_unanswered_hello_closes_port_then_explicit_retry_starts_fresh(app, monkeypatch, port_open):
+    controller, clock = app
+    first, retry = Driver(), Driver()
+    drivers = iter((first, retry))
+    monkeypatch.setattr(controller_module, "SerialTransport", lambda _port: next(drivers))
+    controller.connect_controller(first.port)
+    if port_open:
+        first.events.append({"type": "port_open"})
+    for _ in range(8):
+        controller.tick()
+        clock.now += 1
+    assert all(packet["cmd"] == "hello" for packet in first.sent)
+    controller.tick()
+    assert first.closed and controller.driver is None and controller.pending == {}
+    reason = controller.snapshot["controller_status"]
+    assert ("no supported controller HELLO" if port_open else "port did not open") in reason
+    controller.connect_controller(retry.port)
+    controller.tick()
+    assert [packet["cmd"] for packet in retry.sent] == ["hello"]
+    identify(controller, clock)
+    telemetry(controller, clock)
+    controller.tick()
+    assert retry.sent[-1]["cmd"] == "heartbeat"
+    assert controller.snapshot["controller_connected"]
+    assert not any(controller.snapshot["valves"])
+
+
+def test_reconnect_with_watchdog_fault_leaves_clear_fault_available(app, monkeypatch):
+    controller, clock = app
+    controller._stop_failed("No acknowledgement for stop")
+    retry = Driver()
+    monkeypatch.setattr(controller_module, "SerialTransport", lambda _port: retry)
+    controller.connect_controller(retry.port)
+    identify(controller, clock)
+    for _ in range(3):
+        telemetry(controller, clock, state="fault", fault="heartbeat_timeout")
+        controller.tick()
+        assert not controller.stop_pending
+    assert controller.local_fault == "No acknowledgement for stop"
+    assert [packet["cmd"] for packet in retry.sent] == ["hello"]
+    controller.clear_fault()
+    clear = retry.sent[-1]
+    telemetry(controller, clock, state="fault", fault="heartbeat_timeout")
+    assert clear["id"] in controller.pending and not controller.stop_pending
+    controller._handle_packet({"v": 1, "type": "ack", "id": clear["id"], "ok": True}, clock())
+    telemetry(controller, clock, state="idle")
+    controller.tick()
+    assert controller.local_fault is None and controller.snapshot["state"] == "idle"
+    assert [packet["cmd"] for packet in retry.sent] == ["hello", "clear_fault", "heartbeat"]
+
+
+def test_stale_valve_telemetry_and_unanswered_stop_release_each_failed_port(app, monkeypatch):
+    controller, clock = app
+    first = controller.driver
+    controller.set_manual_valves([True] * 6)
+    acknowledge(controller, clock)
+    clock.now += 2.1
+    controller.tick()
+    assert controller.local_fault == "Controller telemetry is stale"
+    assert controller.stop_pending and first.sent[-1]["cmd"] == "stop"
+    clock.now += 3
+    controller.tick()
+    fault = "Controller telemetry is stale; No acknowledgement for stop"
+    assert first.closed and controller.driver is None and controller.local_fault == fault
+    assert not controller.stop_pending and controller.snapshot["valves"][0]
+    retry, recovered = Driver(), Driver()
+    drivers = iter((retry, recovered))
+    monkeypatch.setattr(controller_module, "SerialTransport", lambda _port: next(drivers))
+    controller.connect_controller(retry.port)
+    retry.events.append({"type": "port_open"})
+    controller.tick()
+    assert controller.snapshot["valves"][0]  # Still unconfirmed until fresh telemetry arrives.
+    clock.now += 8
+    controller.tick()
+    assert retry.closed and controller.driver is None and controller.local_fault == fault
+    assert [packet["cmd"] for packet in retry.sent] == ["hello"]
+    controller.connect_controller(recovered.port)
+    identify(controller, clock)
+    telemetry(controller, clock, state="fault", fault="heartbeat_timeout")
+    controller.tick()
+    assert controller.snapshot["controller_connected"] and not controller.stop_pending
+    assert controller.local_fault == fault and not any(controller.snapshot["valves"])
+    assert [packet["cmd"] for packet in recovered.sent] == ["hello"]
 
 
 @pytest.mark.parametrize("values", [[True] * 7, [True] * 5, [1] * 6,

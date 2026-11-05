@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.17 includes the complete controller source and compiled ESP32 images,
+Version 0.1.18 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.17-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.18-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -13,7 +13,7 @@ The portable application ZIP also contains it. Setup installs it in
 | `esp32-dry-run` | Full recipe/communications logic with generated readings and no relay or pump output. Use for connection and app checks. |
 | `esp32-relay-bench` | Real unloaded relay pulses through the board's candidate shift-register interface. Separate test window; no sensors, pump or experiments. |
 | `esp32-valve-test` | Sensor-free, one-at-a-time solenoid pulses using a separate reviewed valve profile. No pump or sensor protection; the supplied factory profile stays locked. |
-| `esp32-physical` | Normal controller. The six installed valves V1-V5/V7 use bits 0, 1, 2, 3, 5, 6 and work manually without sensors or profile forms. Full pump/experiment operation still needs its configured interfaces and inputs. |
+| `esp32-physical` | Normal controller. The six installed valves V1-V5/V7 use bits 0, 1, 2, 3, 5, 6 and work manually without sensors or profile forms. An idle sensor-voltage check is available on the factory image. Full pump/experiment operation still needs its configured interfaces and inputs. |
 
 All targets are for the ESP32-WROOM/classic ESP32 profile used by this project.
 The full controller source is `firmware/src/main.cpp`; its I/O implementation is

@@ -169,6 +169,59 @@ void test_source_names_are_fixed_diagnostic_codes() {
   TEST_ASSERT_EQUAL_STRING("ads1115", analogSourceName(AnalogSource::Ads1115));
 }
 
+void test_factory_sensor_test_reads_three_input_pins_without_creating_process_readings() {
+  Hardware hardware(BoardConfig{}, false);
+  TEST_ASSERT_FALSE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.beginManualValves(confirmedRigManualValves()));
+  fake::resetGpio();
+  fake::adcMillivolts[34] = 735;
+  fake::adcMillivolts[36] = 0;
+  fake::adcMillivolts[39] = 1821;
+
+  SensorTestMillivolts result;
+  TEST_ASSERT_TRUE(hardware.sensorTestAvailable(true));
+  TEST_ASSERT_NULL(hardware.readSensorTestInputs(true, State::Idle, result));
+  TEST_ASSERT_EQUAL_UINT32(735, result.pressure);
+  TEST_ASSERT_EQUAL_UINT32(0, result.flow);
+  TEST_ASSERT_EQUAL_UINT32(1821, result.pumpFeedback);
+  const int expectedPins[] = {34, 36, 39};
+  TEST_ASSERT_EQUAL(3, fake::adcReadPins.size());
+  TEST_ASSERT_EQUAL_INT_ARRAY(expectedPins, fake::adcReadPins.data(), 3);
+  TEST_ASSERT_EQUAL(3, fake::gpioEvents.size());
+  for (std::size_t i = 0; i < 3; ++i) {
+    TEST_ASSERT_FALSE(fake::gpioEvents[i].write);
+    TEST_ASSERT_EQUAL(expectedPins[i], fake::gpioEvents[i].pin);
+    TEST_ASSERT_EQUAL(INPUT, fake::gpioEvents[i].value);
+    TEST_ASSERT_EQUAL_STRING("not_configured", hardware.sensorStatus(i, 100));
+  }
+  TEST_ASSERT_FALSE(hardware.ready());
+  TEST_ASSERT_TRUE(hardware.valveControlReady());
+  TEST_ASSERT_FALSE(hardware.measurements().pressure.valid);
+  TEST_ASSERT_FALSE(hardware.measurements().flow.valid);
+  TEST_ASSERT_FALSE(hardware.measurements().pumpFeedback.valid);
+  TEST_ASSERT_EQUAL(0, fake::ledcCalls);
+  TEST_ASSERT_EQUAL(0, Wire.transactionCount);
+}
+
+void test_sensor_test_rejects_nonidle_simulated_and_custom_profiles_without_adc_access() {
+  SensorTestMillivolts result{1, 2, 3};
+  Hardware factory(BoardConfig{}, false);
+  TEST_ASSERT_FALSE(factory.begin());
+  for (State state : {State::Running, State::Manual, State::ManualValves, State::Fault})
+    TEST_ASSERT_NOT_NULL(factory.readSensorTestInputs(true, state, result));
+  TEST_ASSERT_FALSE(factory.sensorTestAvailable(false));
+  TEST_ASSERT_NOT_NULL(factory.readSensorTestInputs(false, State::Idle, result));
+
+  Hardware simulation(BoardConfig{}, true);
+  TEST_ASSERT_FALSE(simulation.sensorTestAvailable(true));
+  TEST_ASSERT_NOT_NULL(simulation.readSensorTestInputs(true, State::Idle, result));
+  TEST_ASSERT_EQUAL(0, fake::gpioCalls);
+  TEST_ASSERT_TRUE(fake::adcReadPins.empty());
+  TEST_ASSERT_EQUAL_UINT32(1, result.pressure);
+  TEST_ASSERT_EQUAL_UINT32(2, result.flow);
+  TEST_ASSERT_EQUAL_UINT32(3, result.pumpFeedback);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_factory_disabled_inputs_are_distinct_from_configured_locked_inputs);
@@ -183,5 +236,7 @@ int main() {
   RUN_TEST(test_disabled_channel_stays_not_configured_when_other_hardware_fails);
   RUN_TEST(test_freshness_survives_unsigned_millis_rollover);
   RUN_TEST(test_source_names_are_fixed_diagnostic_codes);
+  RUN_TEST(test_factory_sensor_test_reads_three_input_pins_without_creating_process_readings);
+  RUN_TEST(test_sensor_test_rejects_nonidle_simulated_and_custom_profiles_without_adc_access);
   return UNITY_END();
 }

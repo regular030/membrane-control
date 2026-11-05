@@ -13,6 +13,8 @@ namespace fake {
 struct GpioEvent { bool write; int pin; int value; unsigned sequence; };
 struct LedcEvent { const char* operation; int channel; int pin; uint32_t value; unsigned sequence; };
 inline std::array<int, 40> levels{};
+inline std::array<uint32_t, 40> adcMillivolts{};
+inline std::vector<int> adcReadPins;
 inline unsigned gpioCalls = 0;
 inline std::vector<GpioEvent> gpioEvents;
 inline unsigned operationSequence = 0;
@@ -26,7 +28,14 @@ inline bool ledcStopFails = false;
 inline std::array<uint32_t, 16> ledcDuties{};
 inline std::array<int, 16> ledcPins{};
 inline std::vector<LedcEvent> ledcEvents;
-inline void resetGpio() { levels.fill(0); gpioCalls = 0; gpioEvents.clear(); operationSequence = 0; }
+inline void resetGpio() {
+  levels.fill(0);
+  adcMillivolts.fill(1000);
+  adcReadPins.clear();
+  gpioCalls = 0;
+  gpioEvents.clear();
+  operationSequence = 0;
+}
 inline void resetLedc() {
   ledcCalls = 0; ledcSetupSucceeds = true; ledcActualFrequency = 0;
   ledcAttachFails = ledcSetFails = ledcUpdateFails = ledcStopFails = false;
@@ -45,7 +54,11 @@ inline void pinMode(int pin, int mode) {
   ++fake::gpioCalls; fake::gpioEvents.push_back({false, pin, mode, ++fake::operationSequence});
 }
 inline void analogSetPinAttenuation(int, int) { ++fake::gpioCalls; }
-inline uint32_t analogReadMilliVolts(int) { ++fake::gpioCalls; return 1000; }
+inline uint32_t analogReadMilliVolts(int pin) {
+  ++fake::gpioCalls;
+  fake::adcReadPins.push_back(pin);
+  return fake::adcMillivolts.at(pin);
+}
 inline uint32_t ledcSetup(uint8_t channel, uint32_t frequency, uint8_t resolution) {
   fake::recordLedc("setup", channel, -1, resolution);
   return fake::ledcSetupSucceeds ? (fake::ledcActualFrequency ? fake::ledcActualFrequency : frequency) : 0;

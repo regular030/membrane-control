@@ -19,7 +19,7 @@ Sensor black reference --> reviewed input/ESP32 reference
 Sensor red supply      --> its appropriate external sensor supply, never a GPIO
 ```
 
-The candidate native flow input is **GPIO35 / ADC1**. An ADS1115 is an alternative
+Use **SVP / GPIO36** for flow after its divider. Leave GPIO35 unused. An ADS1115 is an alternative
 only with a suitable input stage and a matching firmware profile. Neither a
 bare ADC module nor a software setting protects a pin from excessive voltage.
 Do not copy the old Arduino A12 label, connect the signal to SDA/SCL, or use the
@@ -36,12 +36,28 @@ whether an input was damaged. Check wiring and voltages before replacing parts.
 | Dry-run controller | None. It generates practice values and ignores the sensor. |
 | Bare relay board test | None. Sensors are intentionally unavailable. |
 | Valve test (no sensors) | None. Only the reviewed valve circuits are tested. |
-| Factory physical controller | None until a complete reviewed profile is supplied. It starts with inputs disabled and outputs locked. |
+| Factory physical controller | Manual valves and a separate sensor voltage check. Calibrated pressure, flow, and pump feedback require a reviewed profile. |
 | Reviewed physical controller | Only its configured ADC channel, protected voltage range and calibration. |
 
 Unchecking **Simulation mode** chooses a real serial connection. It does not
 configure an ADC, discover sensor wiring, or change the program installed on
 the board. Simply attaching the flow cable cannot create a configured reading.
+
+## Test the connected sensors
+
+With app and normal firmware 0.1.18, click **Stop valves** or **Stop run**,
+then open **Connections and settings → Read sensor inputs**. Each click samples the protected ADC pins once. The result shows millivolts at
+**IO34** for pressure, **SVP / GPIO36** for flow, and **SVN / GPIO39** for optional
+pump feedback. Compare it with a meter across the corresponding divider's
+**S** and **−**. A verified 5:1 divider gives roughly 1000 mV at the pin for a
+5 V signal. An unwired pin can float, and a zero can be a valid signal, so the
+voltage alone cannot identify a cable or confirm a good sensor.
+
+The test leaves the Dashboard's calibrated PSI and mL/min values empty on
+factory firmware. It makes no valve or pump command and supplies no pressure
+interlock measurement. If **Read sensor inputs** is missing, verify that the
+controller is connected and running **Flash normal controller** from the
+0.1.18 installer.
 
 ## Read the connection status
 
@@ -70,8 +86,7 @@ engineering-unit limits and verified calibration. Configure the full system's
 pressure protection, safe relay map and pump stop interface independently.
 Do not set production review flags just to test the flow wire.
 
-The PWM converter profile example deliberately leaves flow disabled. It is a
-starting template, not a finished wiring map. New firmware diagnostics describe
+The PWM converter profile example records the candidate pins and leaves acquisition disabled until calibration is complete. New firmware diagnostics describe
 configuration and acquisition status; they do not detect a cable or generate
 missing values.
 

@@ -279,3 +279,68 @@ def test_diagnostics_cannot_bypass_controller_identity_or_existing_reset_fault(a
     assert "restarted" in controller.local_fault
     assert not controller.snapshot["controller_connected"]
     assert controller.snapshot["sensor_inputs"] == controller.snapshot["sensor_status"] == {}
+
+def test_sensor_voltage_check_is_separate_from_calibrated_telemetry(app):
+    controller, clock = app
+    hello(controller, clock, sensor_test_available=True)
+    telemetry(controller, clock)
+    controller.read_sensor_inputs()
+    request = controller.driver.sent[-1]
+    assert request["cmd"] == "read_sensor_inputs"
+    assert controller.sensor_test_pending
+    voltages = {"pressure": 800, "flow": 0, "pump_feedback": 1800}
+    controller._handle_packet({"v": 1, "type": "ack", "ok": True,
+                               "id": request["id"], "adc_pin_mv": voltages}, clock())
+    assert not controller.sensor_test_pending
+    assert controller.snapshot["sensor_test_voltages"] == voltages
+    assert all(controller.snapshot[key] is None
+               for key in ("pressure_psi", "flow_ml_min", "pump_feedback_v"))
+    assert not controller.snapshot["hardware_verified"]
+    controller.disconnect_controller(request_stop=False)
+    assert not controller.snapshot["sensor_test_available"]
+    assert not controller.snapshot["sensor_test_voltages"]
+
+
+@pytest.mark.parametrize("response", [
+    {},
+    {"adc_pin_mv": {"pressure": True, "flow": 0, "pump_feedback": 2000}},
+    {"adc_pin_mv": {"pressure": 5000, "flow": 0, "pump_feedback": 2000}},
+])
+def test_invalid_sensor_check_response_does_not_fill_values_or_trigger_stop(app, response):
+    controller, clock = app
+    hello(controller, clock, sensor_test_available=True)
+    telemetry(controller, clock)
+    controller.read_sensor_inputs()
+    request = controller.driver.sent[-1]
+    controller._handle_packet({"v": 1, "type": "ack", "ok": True, "id": request["id"], **response}, clock())
+    assert controller.snapshot["sensor_test_voltages"] == {}
+    assert "Invalid sensor voltage response" in controller.snapshot["sensor_test_status"]
+    assert not controller.stop_pending
+
+
+def test_sensor_check_times_out_without_stopping_healthy_controller(app):
+    controller, clock = app
+    hello(controller, clock, sensor_test_available=True)
+    telemetry(controller, clock)
+    controller.read_sensor_inputs()
+    clock.now += 3.1
+    telemetry(controller, clock, uptime_ms=4100)
+    controller.tick()
+    assert "timed out" in controller.snapshot["sensor_test_status"]
+    assert not controller.sensor_test_pending
+    assert controller.snapshot["controller_connected"]
+    assert not any(packet["cmd"] == "stop" for packet in controller.driver.sent)
+
+
+def test_hello_without_telemetry_releases_port_without_heartbeat(app):
+    controller, clock = app
+    controller.connect_started = clock.now - 7
+    driver = controller.driver
+    hello(controller, clock)
+    controller.tick()
+    assert controller.driver is driver
+    clock.now += 2.1
+    controller.tick()
+    assert controller.driver is None
+    assert "sent no valid telemetry" in controller.snapshot["controller_status"]
+    assert [packet["cmd"] for packet in driver.sent] == ["hello"]

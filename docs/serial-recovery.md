@@ -1,11 +1,36 @@
-# COM5 is listed, but the relay tool cannot reconnect
+# ESP32 serial connection recovery
 
 The user reports that COM5 remains visible in Windows Device Manager after the
 bare-relay tool disconnects, but the app cannot identify the firmware again
 until the PC restarts. A listed port proves that Windows lists the adapter; it
 does not prove that a program can open the port or receive firmware data.
 
-## Recovery in app 0.1.16
+## Normal firmware after a telemetry or Stop timeout
+
+**Controller telemetry is stale** means the app stopped receiving usable
+controller updates. **No acknowledgement for stop** means the app could not
+confirm the Stop command. Check the equipment locally and switch off the
+valve and pump load supplies before retrying.
+
+1. Close Membrane Control and any serial monitor. Unplug the ESP32's USB-to-UART
+   adapter from the PC, wait for that COM entry to disappear, and reconnect it.
+2. With only the controller supply on, tap **EN** with **IO0** released.
+3. Reopen the app, refresh ports, and connect the ESP32 in **Connections and
+   settings**. If a fault remains after reconnecting, clear it only after
+   checking the rig. The app does not resume an old valve command.
+4. If the app still says the adapter opened without an ESP32 response, capture
+   the boot log at **115200 baud** with the app closed. A working USB COM port
+   can coexist with a reset, power, or UART problem on the controller.
+   [ESP32 boot log](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html#boot-log)
+
+App 0.1.18 releases a connection if firmware never responds, stops heartbeats
+while Stop is pending, and lets the operator clear a latched fault after a
+fresh handshake. If the valve-switching failure only happens with a load
+connected, have the load switching and board supply checked before repeating
+it under load. A brownout or electrical transient is possible and needs an
+on-site check.
+
+## Bare relay board recovery
 
 In **Bare relay board test**, select the ESP32 port and click **Recover
 connection**. The app ends the old session, retries its outstanding port cleanup,
@@ -35,7 +60,4 @@ reason. Active ports owned by another instrument are not seized. Dashboard
 graphs pause behind equipment dialogs while controller polling continues,
 reducing unnecessary work on the GUI thread used for test heartbeats.
 
-These are demonstrated software failures and recovery fixes. The exact cause
-of the reported physical COM5 incident still needs a live error/log; the
-adapter is on the separate lab PC. No lab serial port was opened to prepare
-this update.
+The exact cause of the lab failures still needs a boot log or an on-site test.
