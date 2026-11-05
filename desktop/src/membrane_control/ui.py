@@ -1602,8 +1602,10 @@ class MainWindow(QMainWindow):
                 pressure_note = f" (≈{pressure / 10:.1f} psi)" if 100 <= pressure <= 1000 else " (outside estimate range)"
                 flow_note = f" (≈{flow / 10:.1f} mL/min)" if 130 <= flow <= 1000 else " (outside estimate range)"
                 feedback_note = f" (≈{feedback / 200:.2f} V at pump)" if 150 <= feedback <= 2000 else " (outside estimate range)"
+                uptime_ms = self.controller.last_controller_uptime
+                sample = f" · ESP32 sample at {uptime_ms / 1000:.2f} s" if uptime_ms is not None else ""
                 self.live_sensor_detail.setText(
-                    f"Live sensor check · nominal estimates · Pressure {pressure} mV{pressure_note} · "
+                    f"Live sensor check{sample} · nominal estimates · Pressure {pressure} mV{pressure_note} · "
                     f"Flow {flow} mV{flow_note} · Pump feedback {feedback} mV{feedback_note}")
             else:
                 self.live_sensor_detail.clear()

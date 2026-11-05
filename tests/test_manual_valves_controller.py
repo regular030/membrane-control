@@ -1,4 +1,6 @@
 """Normal six-valve controls remain independent of pump/experiment approvals."""
+import json
+
 import pytest
 
 import membrane_control.controller as controller_module
@@ -95,6 +97,114 @@ def test_six_valve_command_inserts_unused_v6_slot_and_waits_for_ack_without_sens
     assert controller.local_fault is None
     assert not controller.snapshot["hardware_verified"]
     assert controller.snapshot["pressure_psi"] is None
+
+
+def test_exact_new_telemetry_receipt_completes_valve_request_after_lost_ack(app):
+    controller, clock = app
+    driver = controller.driver
+    controller.set_manual_valves([True, False, False, False, False, False])
+    command = driver.sent[-1]
+    driver.events.append({"type": "parse_error", "error": "Malformed serial data"})
+    controller.tick()
+    assert controller.manual_pending
+    clock.now += 0.25
+    telemetry(controller, clock, state="manual_valves", valves=command["valves"],
+              uptime_ms=1250, manual_valves_receipt_id=command["id"])
+    assert not controller.manual_pending and not controller.snapshot["manual_pending"]
+    assert controller.manual_requested is None and command["id"] not in controller.pending
+    assert controller.snapshot["valves"] == command["valves"]
+    clock.now += 3
+    telemetry(controller, clock, state="manual_valves", valves=command["valves"],
+              uptime_ms=4250, manual_valves_receipt_id=command["id"])
+    controller.tick()
+    assert controller.local_fault is None and not controller.stop_pending
+    assert [packet["cmd"] for packet in driver.sent if packet["cmd"] in ("manual_valves", "stop")] == ["manual_valves"]
+    records = [json.loads(line) for line in controller.esp32_log_text().splitlines()]
+    results = [row for row in records if row.get("request_id") == command["id"]]
+    assert [row["event"] for row in results] == ["request_queued", "manual_valves_receipt"]
+    assert results[-1]["request_age_ms"] == 250
+
+
+@pytest.mark.parametrize("changes", [
+    {"manual_valves_receipt_id": None},  # Legacy frame, or an omitted receipt.
+    {"manual_valves_receipt_id": True},
+    {"manual_valves_receipt_id": 0},
+    {"manual_valves_receipt_id": 0x100000000},
+    {"manual_valves_receipt_id": 0xffffffff},  # Valid ID for a different request.
+    {"valves": [False] * 7},
+    {"state": "idle"},
+    {"pump_percent": 1},
+    {"fault": "reported fault"},
+    {"uptime_ms": 1000},  # Duplicate uptime cannot confirm a new request.
+])
+def test_nonmatching_or_invalid_receipt_cannot_complete_valve_request(app, changes):
+    controller, clock = app
+    controller.set_manual_valves([True, False, False, False, False, False])
+    command = controller.driver.sent[-1]
+    clock.now += 0.25
+    packet = {"state": "manual_valves", "valves": command["valves"], "uptime_ms": 1250,
+              "manual_valves_receipt_id": command["id"], **changes}
+    telemetry(controller, clock, **packet)
+    assert controller.manual_pending and command["id"] in controller.pending
+    assert '"event":"manual_valves_receipt"' not in controller.esp32_log_text()
+
+
+def test_exact_receipt_at_timeout_keeps_fault_and_stop_fallback(app):
+    controller, clock = app
+    controller.set_manual_valves([True, False, False, False, False, False])
+    command = controller.driver.sent[-1]
+    clock.now += 3
+    telemetry(controller, clock, state="manual_valves", valves=command["valves"],
+              uptime_ms=4000, manual_valves_receipt_id=command["id"])
+    controller.tick()
+    assert controller.stop_pending and controller.local_fault == "No acknowledgement for manual_valves"
+    assert controller.driver.sent[-1]["cmd"] == "stop"
+    assert '"event":"manual_valves_receipt"' not in controller.esp32_log_text()
+
+
+def test_receipt_cannot_acknowledge_stop_or_bypass_controller_restart(app):
+    controller, clock = app
+    driver = controller.driver
+    controller.set_manual_valves([True, False, False, False, False, False])
+    valve_request = driver.sent[-1]
+    controller.stop_run()
+    stop = driver.sent[-1]
+    for index, receipt_id in enumerate((valve_request["id"], stop["id"]), start=1):
+        clock.now += 0.25
+        telemetry(controller, clock, state="manual_valves", valves=valve_request["valves"],
+                  uptime_ms=1000 + 250 * index, manual_valves_receipt_id=receipt_id)
+        assert controller.stop_pending and stop["id"] in controller.pending
+    controller._handle_packet({"v": 1, "type": "ack", "id": stop["id"], "ok": True}, clock())
+    assert not controller.stop_pending and not any(controller.snapshot["valves"])
+    controller.set_manual_valves([True, False, False, False, False, False])
+    pending = driver.sent[-1]
+    clock.now += 0.25
+    telemetry(controller, clock, state="manual_valves", valves=pending["valves"],
+              uptime_ms=20, manual_valves_receipt_id=pending["id"])
+    assert controller.driver is None and driver.closed
+    assert "restarted" in controller.local_fault
+    assert '"event":"manual_valves_receipt"' not in controller.esp32_log_text()
+
+
+def test_previous_connection_receipt_cannot_confirm_same_valves_on_reconnect(app, monkeypatch):
+    controller, clock = app
+    requested = [True, False, False, False, False, False]
+    controller.set_manual_valves(requested)
+    old_request = controller.driver.sent[-1]
+    controller.disconnect_controller()
+    new_driver = Driver()
+    monkeypatch.setattr(controller_module, "SerialTransport", lambda _port: new_driver)
+    controller.connect_controller(new_driver.port)
+    identify(controller, clock)
+    telemetry(controller, clock)
+    controller.set_manual_valves(requested)
+    new_request = new_driver.sent[-1]
+    clock.now += 0.25
+    telemetry(controller, clock, state="manual_valves", valves=new_request["valves"],
+              uptime_ms=1250, manual_valves_receipt_id=old_request["id"])
+    assert controller.manual_pending and new_request["id"] in controller.pending
+    assert old_request["id"] not in controller.pending
+    assert '"event":"manual_valves_receipt"' not in controller.esp32_log_text()
 
 
 def test_valve_only_telemetry_needs_no_pressure_or_balance_and_remains_active(app):

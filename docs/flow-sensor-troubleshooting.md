@@ -46,7 +46,9 @@ the board. Simply attaching the flow cable cannot create a configured reading.
 ## Test the connected sensors
 
 With app and normal firmware 0.1.19, **Dashboard → Live sensor check** updates
-automatically while idle or using manual valves. **Connections and settings →
+automatically while idle or using manual valves. Scroll below the four metric
+cards. In app 0.1.20, the ESP32 sample time advances even when the measured
+voltage stays steady. **Connections and settings →
 Read sensor inputs** still performs a one-time check while idle. Both show millivolts at
 **IO34** for pressure, **SVP / GPIO36** for flow, and **SVN / GPIO39** for optional
 pump feedback. Compare it with a meter across the corresponding divider's
@@ -100,7 +102,31 @@ The compiled physical profile needs `config.flow.source`, a matching native
 ADC1 pin or ADS1115 channel, protected pin-voltage limits, scaling/offset,
 engineering-unit limits and verified calibration. Configure the full system's
 pressure protection, safe relay map and pump stop interface independently.
-Do not set production review flags just to test the flow wire.
+The factory live check needs no profile editing.
+
+To prepare calibrated charts, collect two reference points per sensor using the
+intended production ADC range and the installed divider. For pressure, use a
+reference gauge and two known pressures within the rig's approved operating
+range. For flow, measure two steady rates from volume collected over time
+(`mL/min = 60 × collected mL / seconds`). Use distinct readings within the
+sensor's calibrated range. The classic ESP32 ADC has a low-end measurement
+limit, so establish an acquisition method that covers the lab's operating
+range before accepting the readings.
+[Espressif ADC ranges](https://docs.espressif.com/projects/esp-idf/en/v4.4.8/esp32/api-reference/peripherals/adc.html)
+
+Enter the results in a local copy of `PwmConverterProfile.example.h`. For each
+channel, let `V1` and `V2` be ADC readings in volts after the divider and `Y1`
+and `Y2` the corresponding reference readings in psi or mL/min.
+
+```text
+unitsPerVolt = (Y2 - Y1) / (V2 - V1)
+offset = Y1 - unitsPerVolt * V1
+```
+
+Confirm the fit against an independent reference point. Set the allowed ADC
+and engineering ranges from the tested values. Full operation also needs the
+lab's approved pressure limit, pump interface, and safe valve state. See the
+[local profile and flash steps](pwm-converter-setup.md#maintainer-select-the-pwm-profile).
 
 The PWM converter profile example records the candidate pins and leaves acquisition disabled until calibration is complete. New firmware diagnostics describe
 configuration and acquisition status; they do not detect a cable or generate

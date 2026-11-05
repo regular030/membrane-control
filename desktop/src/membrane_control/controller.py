@@ -596,6 +596,31 @@ class AppController:
         self._finish_run("fault")
         self._log(reason)
 
+    def _complete_manual_command(self, command):
+        valves, pump = self.manual_requested
+        self.manual_pending = False
+        self.manual_requested = None
+        self.snapshot.update(manual_pending=False,
+            state="manual_valves" if command == "manual_valves" else "manual", valves=valves,
+            pump_percent=pump, step_index=-1, cycle=0, remaining_s=0)
+
+    def _accept_manual_valves_receipt(self, receipt_id, valves, now):
+        if (not self.manual_pending or self.stop_pending or self.local_fault is not None
+                or type(receipt_id) is not int or not 0 < receipt_id <= 0xffffffff
+                or self.manual_requested != (list(valves), 0.0)):
+            return
+        pending = self.pending.get(receipt_id)
+        if pending is None or pending[0] != "manual_valves":
+            return
+        _, deadline = pending
+        if not deadline - REQUEST_TIMEOUT_S <= now < deadline:
+            return
+        self.pending.pop(receipt_id)
+        self._complete_manual_command("manual_valves")
+        self._esp32_event("manual_valves_receipt", command="manual_valves", request_id=receipt_id,
+                          request_age_ms=round((now - deadline + REQUEST_TIMEOUT_S) * 1000))
+        self._log(f"Valve command {receipt_id} confirmed by controller telemetry")
+
     def _handle_packet(self, packet, now):
         kind = packet.get("type")
         if kind == "port_open":
@@ -717,12 +742,7 @@ class AppController:
                 self.snapshot["run_id"] = self.run_id
                 self._log(f"Started run {self.run_id}: {self.recipe.name}")
             elif command in ("manual", "manual_valves") and self.manual_pending:
-                valves, pump = self.manual_requested
-                self.manual_pending = False
-                self.manual_requested = None
-                self.snapshot.update(manual_pending=False,
-                    state="manual_valves" if command == "manual_valves" else "manual", valves=valves,
-                    pump_percent=pump, step_index=-1, cycle=0, remaining_s=0)
+                self._complete_manual_command(command)
             elif command == "stop":
                 self.stop_pending = False
                 self.snapshot.update(stop_pending=False, state="fault" if self.local_fault else "idle",
@@ -793,6 +813,7 @@ class AppController:
                     "Valve setup changed; reconnect before continuing")
                 return
         first_telemetry = self.last_telemetry is None
+        advanced_uptime = self.last_controller_uptime is not None and uptime != self.last_controller_uptime
         self.last_telemetry = now
         self.connect_started = None
         self.last_controller_uptime = uptime
@@ -806,6 +827,10 @@ class AppController:
             controller_status="Connected (dry run)" if packet["simulation"] else "Connected")
         if first_telemetry:
             self._esp32_event("telemetry_started")
+        # Only a validated, newly advanced valve-only frame can corroborate
+        # this exact pending request. STOP still needs its own explicit ACK.
+        if advanced_uptime and state == "manual_valves" and fault is None:
+            self._accept_manual_valves_receipt(packet.get("manual_valves_receipt_id"), valves, now)
         self.snapshot["step_name"] = self.recipe.steps[step].name if 0 <= step < len(self.recipe.steps) else "Ready"
         if state == "fault":
             # The firmware has already applied its stop state. A local fault

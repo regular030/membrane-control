@@ -1,11 +1,11 @@
-Membrane Control 0.1.19 adds live sensor checks and a persistent ESP32 connection log.
+Membrane Control 0.1.20 recovers some lost manual-valve replies and shows an advancing sample time on the live sensor panel.
 
 Developed for **Dr. Onita Basu's lab at Carleton University**.
 
-Download **MembraneControl-Setup-0.1.19-windows-x64.exe** from Assets. The new app records serial events with compatible controller firmware. Use **Flash normal controller** from the updated setup for live sensor voltages and ESP32 reset reporting.
+Download **MembraneControl-Setup-0.1.20-windows-x64.exe** from Assets. Use **Flash normal controller** from the updated setup for valve receipts.
 
-- **Dashboard → Live sensor check** shows GPIO34 pressure, GPIO36 flow, and optional GPIO39 pump feedback in millivolts while idle or using manual valves. Estimates assume the documented divider and sensors. Calibrated readings and experiment protection still require a reviewed profile.
-- **Connections and settings → Copy ESP32 log** copies recent valve commands, acknowledgements, link errors, timeouts and reset information. The log survives app restarts and omits the routine sample stream.
-- The pump profile template records the lab-confirmed **bit 15**, LOW for STOP and HIGH for RUN. The factory firmware leaves the pump output off, with manual V3 available as before.
+- A fresh ESP32 telemetry frame can confirm a valve command using the exact pending request ID and matching requested states. An unconfirmed command still triggers Stop. This recovery does not resend valve commands or change the watchdog.
+- **Dashboard → Live sensor check** shows the ESP32's sample time so steady readings are distinguishable from a frozen display. Test voltages require no manual configuration on factory firmware.
+- The guides describe how to investigate a complete serial dropout and how to measure two reference points for a calibrated profile.
 
-See [serial recovery](https://github.com/regular030/membrane-control/blob/v0.1.19/docs/serial-recovery.md) and the [sensor test guide](https://github.com/regular030/membrane-control/blob/v0.1.19/docs/flow-sensor-troubleshooting.md#test-the-connected-sensors).
+See the [serial recovery guide](https://github.com/regular030/membrane-control/blob/v0.1.20/docs/serial-recovery.md) and [sensor guide](https://github.com/regular030/membrane-control/blob/v0.1.20/docs/flow-sensor-troubleshooting.md).

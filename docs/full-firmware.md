@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.19 includes the complete controller source and compiled ESP32 images,
+Version 0.1.20 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.19-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.20-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 

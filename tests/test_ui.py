@@ -115,12 +115,17 @@ def test_live_sensor_estimates_stay_separate_and_hide_on_disconnect(screen):
     window, controller, now = screen
     controller.set_simulation(False)
     controller.last_telemetry = now[0]
+    controller.last_controller_uptime = 250
     controller.snapshot.update(controller_connected=True, sensor_test_available=True,
                                live_sensor_voltages={"pressure": 180, "flow": 142, "pump_feedback": 142})
     window._update_view(dict(controller.snapshot))
     assert not window.live_sensor_detail.isHidden()
     text = window.live_sensor_detail.text()
     assert "nominal estimates" in text
+    assert "ESP32 sample at 0.25 s" in text
+    controller.last_controller_uptime = 500
+    window._update_view(dict(controller.snapshot))
+    assert "ESP32 sample at 0.50 s" in window.live_sensor_detail.text()
     assert "18.0 psi" in text
     assert "14.2 mL/min" in text
     assert "Pump feedback 142 mV (outside estimate range)" in text

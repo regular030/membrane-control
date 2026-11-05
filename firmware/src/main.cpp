@@ -35,6 +35,7 @@ std::size_t lineLength = 0;
 bool discardingOversize = false;
 uint32_t lastTelemetryMs = 0;
 uint32_t lastSimulationSampleMs = 0;
+uint32_t lastManualValvesReceiptId = 0;
 
 const char* resetReasonName(esp_reset_reason_t reason) {
   switch (reason) {
@@ -70,7 +71,7 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
   if (sensorTest && !error) addAdcPinMillivolts(document, *sensorTest);
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.19";
+    document["firmware_version"] = "0.1.20";
     document["reset_reason"] = resetReasonName(esp_reset_reason());
     document["sensor_test_available"] = hardware.sensorTestAvailable(kFactoryProfile);
     document["valve_control_ready"] = hardware.valveControlReady();
@@ -115,12 +116,16 @@ void handleLine(uint32_t now) {
   }
   const char* error = nullptr;
   if (command == "hello") {
+    lastManualValvesReceiptId = 0;
     if (controller.state() == basu::State::ManualValves) { controller.onHello(); hardware.safeStop(); }
     reply(id, nullptr, true); return;
   }
   if (command == "heartbeat") controller.heartbeat(now);
-  else if (command == "stop") { controller.stop(); hardware.safeStop(); }
-  else if (command == "clear_fault") error = controller.clearFault();
+  else if (command == "stop") {
+    lastManualValvesReceiptId = 0;
+    controller.stop();
+    hardware.safeStop();
+  } else if (command == "clear_fault") error = controller.clearFault();
   else if (command == "load_recipe") {
     basu::Recipe candidate;
     error = basu::parseRecipe(request["recipe"], candidate);
@@ -148,10 +153,14 @@ void handleLine(uint32_t now) {
     hardware.safeStop();
     error = hardware.error();
   }
-  if (!error && command == "manual_valves" && !hardware.applyManualValves(controller.outputs().valves)) {
-    controller.latchFault(hardware.valveError());
-    hardware.safeStop();
-    error = hardware.valveError();
+  if (!error && command == "manual_valves") {
+    if (hardware.applyManualValves(controller.outputs().valves)) {
+      lastManualValvesReceiptId = id;
+    } else {
+      controller.latchFault(hardware.valveError());
+      hardware.safeStop();
+      error = hardware.valveError();
+    }
   }
   reply(id, error);
 }
@@ -202,6 +211,8 @@ void writeTelemetry(uint32_t now) {
   document["type"] = "telemetry";
   document["uptime_ms"] = now;
   document["state"] = basu::stateName(controller.state());
+  if (controller.state() == basu::State::ManualValves && lastManualValvesReceiptId != 0)
+    document["manual_valves_receipt_id"] = lastManualValvesReceiptId;
   document["valve_control_ready"] = hardware.valveControlReady();
   document["step_index"] = controller.stepIndex();
   document["cycle"] = controller.cycle();

@@ -46,6 +46,21 @@ responded. A relay click alone establishes relay movement. If the controller
 remains responsive in an unloaded check, have the affected valve circuit and
 power checked before repeating with the load attached.
 
+## A valve reply is missing but telemetry continues
+
+In the supplied 0.1.19 log, the V1 command was followed by a malformed serial
+line. Valve-mode telemetry continued, then the ESP32 acknowledged Stop. Valid
+telemetry stopped after that acknowledgement. Windows reopened COM5, and the
+ESP32 never answered the logged reconnect requests. This sequence does not
+identify what interrupted communication after Stop.
+
+App and normal firmware 0.1.20 can use a fresh telemetry receipt containing the
+exact valve request ID and requested states to recover a lost valve reply. If
+there is no matching receipt, the original Stop fallback applies. After a full
+dropout, separate the rig's load wiring from the test and check boot and idle
+serial output at 115200 baud. If the relay board stays connected unloaded,
+have the lab check the valve circuit and its supply before retrying under load.
+
 ## Bare relay board recovery
 
 In **Bare relay board test**, select the ESP32 port and click **Recover
