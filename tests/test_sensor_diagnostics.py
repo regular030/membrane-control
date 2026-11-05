@@ -301,6 +301,49 @@ def test_sensor_voltage_check_is_separate_from_calibrated_telemetry(app):
     assert not controller.snapshot["sensor_test_voltages"]
 
 
+def test_live_sensor_zero_is_a_session_display_baseline_only(app):
+    controller, clock = app
+    hello(controller, clock, sensor_test_available=True)
+    readings = {"pressure": 108, "flow": 0, "pump_feedback": 250}
+    telemetry(controller, clock, adc_pin_mv=readings)
+    sent = list(controller.driver.sent)
+    baseline = controller.zero_live_sensors()
+    assert baseline == {"pressure": 108, "flow": 0}
+    baseline["pressure"] = 900
+    assert controller.snapshot["live_sensor_zero"] == {"pressure": 108, "flow": 0}
+    assert controller.snapshot["live_sensor_voltages"] == readings
+    assert all(controller.snapshot[key] is None
+               for key in ("pressure_psi", "flow_ml_min", "pump_feedback_v"))
+    assert controller.driver.sent == sent and not controller.snapshot["hardware_verified"]
+    controller.clear_live_sensor_zero()
+    assert controller.snapshot["live_sensor_zero"] == {}
+    controller.zero_live_sensors()
+    controller.disconnect_controller(request_stop=False)
+    assert controller.snapshot["live_sensor_zero"] == {}
+
+
+@pytest.mark.parametrize("blocked", ["stale", "no readings", "pending stop", "fault", "dry run", "reviewed"])
+def test_live_sensor_zero_requires_fresh_idle_factory_telemetry(app, blocked):
+    controller, clock = app
+    hello(controller, clock, sensor_test_available=True)
+    telemetry(controller, clock, adc_pin_mv={"pressure": 108, "flow": 0, "pump_feedback": 250})
+    if blocked == "stale":
+        clock.now += 2.1
+    elif blocked == "no readings":
+        telemetry(controller, clock)
+    elif blocked == "pending stop":
+        controller.stop_run()
+    elif blocked == "fault":
+        controller.snapshot["fault"] = "check controller"
+    elif blocked == "dry run":
+        controller.snapshot["simulation"] = True
+    elif blocked == "reviewed":
+        controller.snapshot["hardware_verified"] = True
+    with pytest.raises(ValueError):
+        controller.zero_live_sensors()
+    assert controller.snapshot["live_sensor_zero"] == {}
+
+
 @pytest.mark.parametrize("response", [
     {},
     {"adc_pin_mv": {"pressure": True, "flow": 0, "pump_feedback": 2000}},

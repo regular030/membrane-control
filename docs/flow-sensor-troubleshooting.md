@@ -77,6 +77,15 @@ The calibrated Dashboard metrics, charts, and pressure interlock still require
 a reviewed hardware profile. If the live check is missing, verify that the
 controller is connected and running **Flash normal controller** from 0.1.19.
 
+## Zero the live pressure and flow display
+
+With the pump stopped, no flow, and the reference pressure gauge at zero,
+click **Zero pressure and flow** under the Dashboard's live sensor check. The
+app records the current pressure and flow pin voltages and displays changes
+from that reference in mV. **Clear zero** removes the reference. It also clears
+when the controller reconnects. This reference belongs to the live display.
+The calibrated charts and pressure limit continue to use the reviewed profile.
+
 ## Read the connection status
 
 App and full-controller firmware **0.1.14** provide more specific messages:

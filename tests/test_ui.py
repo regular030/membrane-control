@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 
 from membrane_control.controller import AppController
 from membrane_control.ui import MainWindow
@@ -135,6 +135,26 @@ def test_live_sensor_estimates_stay_separate_and_hide_on_disconnect(screen):
     window._update_view(dict(controller.snapshot))
     assert window.live_sensor_detail.isHidden()
     assert not window.live_sensor_detail.text()
+
+
+def test_zero_controls_show_relative_voltages_and_allow_reset(screen, monkeypatch):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    controller.snapshot.update(
+        controller_connected=True, sensor_test_available=True,
+        live_sensor_voltages={"pressure": 105, "flow": 103, "pump_feedback": 142},
+    )
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Ok)
+    window._update_view(dict(controller.snapshot))
+    window.zero_live_sensors_button.click()
+    controller.snapshot["live_sensor_voltages"]["pressure"] = 116
+    window._update_view(dict(controller.snapshot))
+    assert "Change since zero · Pressure 11 mV · Flow 0 mV" in window.live_sensor_detail.text()
+    assert "Pump feedback 142 mV" in window.live_sensor_detail.text()
+    window.clear_live_sensor_zero_button.click()
+    window._update_view(dict(controller.snapshot))
+    assert "Change since zero" not in window.live_sensor_detail.text()
 
 
 def test_copy_esp32_log_copies_persistent_diagnostics(screen, monkeypatch):

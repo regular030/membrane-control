@@ -349,6 +349,16 @@ class MainWindow(QMainWindow):
             "These are separate from calibrated readings, charts, and pressure protection.")
         self.live_sensor_detail.hide()
         outer.addWidget(self.live_sensor_detail)
+        self.live_sensor_zero_controls = QWidget()
+        zero_layout = QHBoxLayout(self.live_sensor_zero_controls)
+        zero_layout.setContentsMargins(0, 0, 0, 0)
+        self.zero_live_sensors_button = _button("Zero pressure and flow", self._zero_live_sensors)
+        self.clear_live_sensor_zero_button = _button("Clear zero", self._clear_live_sensor_zero)
+        zero_layout.addWidget(self.zero_live_sensors_button)
+        zero_layout.addWidget(self.clear_live_sensor_zero_button)
+        zero_layout.addStretch()
+        self.live_sensor_zero_controls.hide()
+        outer.addWidget(self.live_sensor_zero_controls)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
@@ -1102,6 +1112,19 @@ class MainWindow(QMainWindow):
     def _read_sensor_inputs(self):
         self._action(self.controller.read_sensor_inputs, "Requested a sensor voltage check")
 
+    def _zero_live_sensors(self):
+        answer = QMessageBox.question(
+            self, "Zero pressure and flow",
+            "Confirm the pump is stopped, there is no flow, and the pressure gauge reads zero. "
+            "This sets a reference for the live voltage display.",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if answer == QMessageBox.StandardButton.Ok:
+            self._action(self.controller.zero_live_sensors, "Live sensor zero captured")
+
+    def _clear_live_sensor_zero(self):
+        self._action(self.controller.clear_live_sensor_zero, "Live sensor zero cleared")
+
     def _connect_balance(self):
         port = self.balance_port.currentData()
         if port:
@@ -1596,7 +1619,11 @@ class MainWindow(QMainWindow):
                 )
             self.sensor_test_detail.setText(sensor_note)
             live_mv = snap.get("live_sensor_voltages", {}) if sensor_test_available and fresh else {}
+            sensor_zero = snap.get("live_sensor_zero", {})
             self.live_sensor_detail.setVisible(bool(live_mv))
+            self.live_sensor_zero_controls.setVisible(bool(live_mv))
+            self.zero_live_sensors_button.setEnabled(bool(live_mv) and not operating and not fault and state == "idle")
+            self.clear_live_sensor_zero_button.setEnabled(bool(sensor_zero))
             if live_mv:
                 pressure, flow, feedback = (live_mv[key] for key in ("pressure", "flow", "pump_feedback"))
                 pressure_note = f" (≈{pressure / 10:.1f} psi)" if 100 <= pressure <= 1000 else " (outside estimate range)"
@@ -1604,9 +1631,14 @@ class MainWindow(QMainWindow):
                 feedback_note = f" (≈{feedback / 200:.2f} V at pump)" if 150 <= feedback <= 2000 else " (outside estimate range)"
                 uptime_ms = self.controller.last_controller_uptime
                 sample = f" · ESP32 sample at {uptime_ms / 1000:.2f} s" if uptime_ms is not None else ""
-                self.live_sensor_detail.setText(
+                details = (
                     f"Live sensor check{sample} · nominal estimates · Pressure {pressure} mV{pressure_note} · "
                     f"Flow {flow} mV{flow_note} · Pump feedback {feedback} mV{feedback_note}")
+                if sensor_zero:
+                    pressure_change = pressure - sensor_zero["pressure"]
+                    flow_change = flow - sensor_zero["flow"]
+                    details += f"\nChange since zero · Pressure {pressure_change} mV · Flow {flow_change} mV"
+                self.live_sensor_detail.setText(details)
             else:
                 self.live_sensor_detail.clear()
             if desktop_simulation:

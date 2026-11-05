@@ -85,7 +85,7 @@ class AppController:
             "balance_polling": False,
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
-            "live_sensor_voltages": {},
+            "live_sensor_voltages": {}, "live_sensor_zero": {},
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
             "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
@@ -302,7 +302,7 @@ class AppController:
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
             valve_control_status="Valve-only controls unavailable", sensor_test_available=False,
-            sensor_test_voltages={}, sensor_test_status="", live_sensor_voltages={})
+            sensor_test_voltages={}, sensor_test_status="", live_sensor_voltages={}, live_sensor_zero={})
 
     def connect_balance(self, port, baud=9600, serial_format="8N1", polling=True):
         if self.simulation:
@@ -495,6 +495,25 @@ class AppController:
             raise ValueError("A sensor voltage check is already in progress")
         self._request("read_sensor_inputs")
         self.snapshot.update(sensor_test_voltages={}, sensor_test_status="")
+
+    def zero_live_sensors(self):
+        """Capture a display baseline for this controller connection."""
+        if (self.simulation or self.snapshot["simulation"] or self.snapshot["hardware_verified"]
+                or not self.snapshot["controller_connected"] or self.snapshot["sensor_test_available"] is not True):
+            raise ValueError("Connect factory physical firmware with live sensor readings")
+        if self._active() or self.local_fault or self.snapshot["fault"] or self.snapshot["state"] != "idle":
+            raise ValueError("Stop the controller and clear any fault before capturing sensor zero")
+        if self.last_telemetry is None or self.clock() - self.last_telemetry > 2:
+            raise ValueError("Wait for fresh controller telemetry before capturing sensor zero")
+        readings = _adc_pin_mv(self.snapshot["live_sensor_voltages"])
+        if not readings:
+            raise ValueError("Wait for live pressure and flow readings before capturing sensor zero")
+        zero = {key: readings[key] for key in ("pressure", "flow")}
+        self.snapshot["live_sensor_zero"] = zero
+        return dict(zero)
+
+    def clear_live_sensor_zero(self):
+        self.snapshot["live_sensor_zero"] = {}
 
     def clear_fault(self):
         if not self.snapshot["controller_connected"]:
