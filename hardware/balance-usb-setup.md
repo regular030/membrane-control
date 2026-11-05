@@ -1,18 +1,13 @@
 # Connect the Adam Nimbus NBL 8201e balance
 
-Current connection, confirmed by the user on 26 October 2026:
-**balance USB-B I/O -> USB data cable -> computer USB**. Use the Nimbus native-USB
-driver if required. The user now confirms that Windows exposes a second COM
-port on this USB-B connection. The user reports that the port appears but no
-weight arrives. The user now reports **COM6 at 9600 baud**, with a changing
-physical display but no app weight. The model is **Adam Nimbus NBL 8201e**.
-The scale connects independently of the ESP32's USB-to-UART adapter, with a
-different COM port for each device.
+On 5 November 2026, the user reported that the **Adam Nimbus NBL 8201e**
+was reading in the app with default settings. Its square **USB-B I/O** port
+connects directly to the computer with a USB data cable. Windows previously
+listed the scale as **COM6**. The scale and the ESP32 each use their own COM port.
 
-App 0.1.15 adds automatic Print requests, matching8N1/7E1/7O1 options, raw
-CR/LF framing and actual byte diagnostics. Raw balance USB readiness (DTR) is
-enabled independently of ESP32 reset lines. See the current
-[COM6 connection and diagnostic steps](../docs/scale-connection.md).
+The app supports automatic Print requests, 8N1, 7E1 and 7O1 serial formats,
+and a diagnostic window that shows received bytes. See the
+[connection and diagnostic steps](../docs/scale-connection.md).
 
 ## Choose one connection path
 
@@ -30,17 +25,18 @@ ESP32's 3.3 V TTL UART adapter is not a substitute for an RS-232 interface.
 1. In Windows **Device Manager → Ports (COM & LPT)**, identify the balance
    connection by unplugging and reconnecting its USB adapter or cable. Do not
    assume a COM number from the photo or select the ESP32's port.
-2. On the balance, enable its serial interface. Use **9600 baud, NONE parity**
-   for the current app's **8 data bits, no parity, 1 stop bit (8N1)** connection.
-   These are recommended matching settings, not settings confirmed by a photo.
-3. Select grams and continuous single-line output, with stable-only filtering
-   off while collecting liquid. The documented format is `123.4 g` followed by
-   carriage return and line feed. Restart the balance after changing its serial
-   settings, as required by the [Nimbus manual, sections 11 and 13.3](https://adamequipment.com.cn/media/docs/manuals/NBLe_i_UM_EN.pdf).
+2. Enable serial output on the balance and match its baud rate and parity in
+   the app. The app defaults to **9600 baud** and **NONE · 8N1**. It also
+   supports **EVEN · 7E1** and **ODD · 7O1**.
+3. For continuous readings, select grams and single-line output, with
+   stable-only filtering off while collecting liquid. The documented format
+   is `123.4 g` followed by carriage return and line feed. Restart the balance
+   after changing its serial settings.
+   [Nimbus manual, sections 11 and 13.3](https://adamequipment.com.cn/media/docs/manuals/NBLe_i_UM_EN.pdf)
 4. Stop any app run, uncheck **Simulation mode**, and open **Connections and
-   settings**. Refresh the ports, select the balance's COM port and **9600** in
-   the **Balance** section, then click **Connect**. Close other programs using
-   that port first.
+   settings**. Close other programs using the balance's port, then select that
+   port in the **Balance** section and click **Connect**. Leave **Request weight
+   every second** checked to ask for readings when the scale is not streaming.
 
 ## If the balance is absent from the port menu
 
@@ -62,12 +58,11 @@ adapter. The app cannot create a COM port for hardware Windows has not exposed.
 
 ## Confirm readings
 
-The app waits for incoming weights; it does not configure the balance or send
-print/poll commands. A detected USB adapter alone does not confirm balance data.
-Confirm that a known change on the pan changes the displayed mass.
+Put a known weight on the pan and confirm that **Balance mass** on the
+Dashboard matches the scale. Click **Request reading** to send one Print
+request. With polling enabled, the app sends at most one request per second
+when fresh readings are absent.
 
-Without a valid weight for more than **3 seconds**, the app marks weight data
-stale. Stable-only output, manual-print mode or a long periodic-output interval
-can cause this even when the cable is connected. Use continuous output for the
-current app. Its baud selection must match the balance; the app's serial format
-is fixed at 8N1. The documented simple mass stream has no per-reading stability flag.
+The app marks weight data stale after **3 seconds** without a valid reading.
+If the mass stays blank or goes stale, use **Test scale / raw data** to check
+whether the scale is sending data. [Scale connection and diagnostics](../docs/scale-connection.md#if-no-weight-arrives)

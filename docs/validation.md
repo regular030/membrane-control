@@ -1,11 +1,12 @@
 # Software validation
 
-Latest hardware update, 26 October 2026: the user now identifies the balance as
-an **Adam Nimbus NBL 8201e**, uses its USB-B I/O connection, and confirms a second
-Windows COM port appears. The user reports that no weight arrives; balance-side
-serial settings will be checked later. Older
-release records below describe the green RS232 adapter used at that time. The
-Cole-Parmer drive is now identified as **75211-30, 60-3600 RPM, 0.1 HP**. Its
+On 5 November 2026, the user reported working app readings from the
+**Adam Nimbus NBL 8201e** with default settings. Its USB-B I/O connection uses
+a separate Windows COM port. Older release records describe the previous
+RS-232 adapter and the troubleshooting before the field report.
+[Scale connection and diagnostics](scale-connection.md)
+
+The earlier DB15 Cole-Parmer drive was identified as **75211-30, 60-3600 RPM, 0.1 HP**. Its
 manufacturer-authored manual and DB15 diagram confirm 0-10 V command 1(+)/3(-),
 0-10 V feedback 9(+)/5(-), and start/stop contact 10/12. Actual mode, harness
 continuity, conditioning and calibration remain unverified. No physical outputs
@@ -87,12 +88,10 @@ Checked locally on Windows x64, 26 October 2026:
   workflows' local actionlint checks passed. Hosted Actions retain the existing
   billing lock, so the release was built and checked locally.
 
-The local device inventory contains no COM ports, so the separate lab PC's
-COM6/9600 scale connection could not be physically tested here. Its changing
-display and missing app weight remain user-reported facts. These changes address
-identified software limitations; only a live response can establish which
-change resolves the physical connection. No lab valves, pump or serial port
-was operated or flashed during preparation.
+The local device inventory contained no COM ports, so this release was tested
+with fake serial data. At that time, the user reported a changing scale display
+and no app weight on COM6 at 9600 baud. No lab valves, pump or serial port was
+operated or flashed during preparation.
 
 ## Guided sensor-free valve setup, version 0.1.14
 
@@ -200,10 +199,10 @@ Checked locally on Windows x64, 26 October 2026:
 No physical rig or serial port was operated. Kunshpreet reports All LOW leaves
 the relays off and All HIGH turns them on. The individual raw-bit to valve map,
 safe reset/OE response, mains load installation and valve-only reviewed profile
-remain outstanding. The scale has a USB-B COM connection but no confirmed mass
-stream. Pump DAC, protected inputs and corrected return references remain to be
-installed and commissioned. The software watchdog is not an independent safety
-system.
+remain outstanding. At that time, the scale's USB-B COM port was visible, and
+a mass stream had yet to be confirmed. Pump DAC, protected inputs and corrected
+return references remain to be installed and commissioned. The software
+watchdog is not an independent safety system.
 
 The final Windows EXE produced a 1360 x 940 demo screenshot and exited cleanly.
 The setup EXE verified its embedded payload and read-only plan without installing,

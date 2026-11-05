@@ -38,7 +38,7 @@ sensor interfaces and a verified configuration; it is not the relay test target.
 ## Open the test controls
 
 Open the new Membrane Control app. Turn **Simulation mode** off, choose the
-controller port under **Connections and settings**, then open **Relay board test**.
+controller port under **Connections and settings**, then open **Bare relay board test**.
 Connect from the test window. The normal experiment connection is released first
 so the two windows do not fight over the same COM port.
 
@@ -61,6 +61,26 @@ means another program can open it, not that the USB device disappears.
 The app requests 500 ms pulses. Firmware caps any accepted pulse at two seconds
 and expires its heartbeat lease after one second. It does not keep outputs on
 between pulses. Reconnecting never restores a previous confirmation or pulse.
+
+## Find the pump's spare relay
+
+1. With all power disconnected, label the physical relay where the pump wires
+   land, then remove the pump and every valve load wire from the relay contacts.
+   Check that this spare relay's COM and NO are independent of the AC valve bus.
+2. Put the meter in continuity mode across that relay's **COM** and **NO**.
+   Power only the relay board and connect its USB-to-UART adapter. Complete the
+   rest-pattern check above. This board was observed to rest with **All LOW**.
+3. Check **Find pump relay (spare bits only)**. Pulse the enabled candidates one
+   at a time. Bits **4 and 7–15** are available because **0, 1, 2, 3, 5 and 6**
+   are assigned to valves on this rig.
+4. When your meter shows that COM–NO closes during a pulse and opens after it,
+   write down the **raw Bit** shown in the app and the **printed relay number**.
+   If the meter misses the brief change, repeat that one bit with the loads
+   disconnected. The app confirms the pulse completed, while the meter confirms
+   the actual contacts.
+5. Stop and disconnect. Report the raw bit and printed relay number to the
+   maintainer. The tester leaves the pump assignment unconfigured. Switch back
+   to normal controller firmware before restoring the load wiring.
 
 ## Record the result
 

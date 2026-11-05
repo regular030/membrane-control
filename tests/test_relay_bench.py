@@ -446,6 +446,34 @@ def test_dialog_close_clears_attestations_and_withdraws_heartbeat(dialog):
     assert len(transport.sent) == count
 
 
+def test_pump_relay_finder_pulses_only_spares_and_reports_completed_bit(dialog):
+    widget, transport, _ = dialog
+    widget.pump_finder_checkbox.click()
+    assert not any(button.isEnabled() for button in widget.pulse_buttons)
+
+    connect_verified(widget.session, transport)
+    probe_id = arm(widget.session, transport)
+    widget._render()
+    assert [bit for bit, button in enumerate(widget.pulse_buttons) if button.isEnabled()] == [4, *range(7, 16)]
+    widget.pulse_buttons[5].click()
+    assert not any(packet['cmd'] == 'bench_pulse' for packet in transport.sent)
+
+    widget.pulse_buttons[4].click()
+    request = transport.last('bench_pulse')
+    assert request['bit'] == 4 and request['duration_ms'] == 500
+    assert not widget.pump_finder_checkbox.isEnabled()
+    assert 'pulse finished' not in widget.status_label.text()
+    transport.events.extend([ack(request['id']), status(
+        state='pulsing', outputs_enabled=True, pulse_bit=4, remaining_ms=300,
+        baseline_confirmed=True, probe_completed=True, probe_id=probe_id), status(
+        state='ready', baseline_confirmed=True, probe_completed=True, probe_id=probe_id)])
+    widget._tick()
+    assert 'Bit 4 pulse finished' in widget.status_label.text()
+
+    widget.pump_finder_checkbox.click()
+    assert all(button.isEnabled() for button in widget.pulse_buttons)
+
+
 def test_withdrawing_load_confirmation_disconnects_during_operation(dialog):
     widget, transport, _ = dialog
     connect_verified(widget.session, transport)

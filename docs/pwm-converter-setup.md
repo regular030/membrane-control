@@ -3,76 +3,39 @@
 For membrane research in **Dr. Onita Basu's lab at Carleton University**.
 This is the handoff for Raj and the person preparing the electronics.
 
-The [3 November ordered-parts guide](ordered-parts-wiring.md) combines the
-HiLetgo dividers, GPIO34/36/39 measurements, GPIO25 PWM and separate GPIO26
-contact interface. It supersedes older analog pin proposals, explains the
-fixed divider ratio, and makes the unfinished factory configuration explicit.
-It also identifies that sharing ESP32 GND between pump analog returns 3 and 5
-requires confirmation; the two purchased modules do not provide isolation.
+Use the [current wiring guide](ordered-parts-wiring.md) for the
+**Masterflex 75211-70 DB25** and
+[Garosa 3.3P-10V converter](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2). The installed pump uses the
+voltage command on pins 1/3 and a dry start/stop contact on 15/17.
 
-## What to order
+## Connect the Garosa command path
 
-Order **one [EC Buying PWM-to-voltage converter, B0CPJGFCGR](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR)**.
-Choose the item whose product description specifies 3.3-12 V module power,
-3.3 V-compatible PWM, and **0-10 V output**. Do not order a GP8403/DFR0971 DAC
-as well for this same pump-command path. Check current delivery at your address.
-
-The converter adds only the speed command. The rest of the installation also
-needs these items if suitable ones are not already present:
-
-- A **3.3 V logic-compatible isolated dry-contact interface** for pump start/stop.
-  The current firmware uses a separate GPIO driver; it does not automatically
-  use an eighth onboard valve relay. Verify its supply, default STOP behavior
-  and contact suitability before selecting a particular module.
-- A **protected analog input stage** for pressure, flow and pump feedback.
-  Native ESP32 ADC1 or a supported ADS1115 can acquire the conditioned signals.
-  A bare ADS1115 module does not make raw 5 V or 10 V signals safe. The input
-  design must establish scaling, clamps/filtering, grounding and calibration.
-- A corrected, labelled **DB15 harness**, suitable low-voltage terminal wiring
-  and mounting/strain relief. Trace the actual returns instead of duplicating
-  the old four-wire common-ground assumption.
-
-Reuse the existing ESP32 board, USB-UART adapter, balance USB-B cable and suitable
-regulated supply. Verify that supply against the converter's **3.3-12 V** range:
-nominal 12 V is its published upper limit, with no extra tolerance specified.
-Do not power this converter from 15/24 V. Its supply does not power the pump motor.
-
-## Connect the command path
-
-With power disconnected, have the actual exposed header labels and references
-checked before soldering. The proposed signal assignment is:
-
-| Connection | Destination |
+| Garosa terminal | Connect to |
 | --- | --- |
-| Verified regulated supply, within 3.3-12 V | Converter **VIN** |
-| Supply negative and reviewed ESP32 GND | Converter **GND** |
-| ESP32 **GPIO25**, candidate | Converter **PWM** |
-| Converter **OUT** | Pump DB15 **pin 1 (+)**, after bench checks |
-| Converter GND / reviewed analog reference | Pump DB15 **pin 3 (-)** |
+| **PWM- / DIN-** | ESP32 **GND** |
+| **PWM+ / DIN+** | ESP32 **GPIO25** |
+| **Supply+** | Regulated **+24 V DC** |
+| **Supply-** | That supply's negative terminal |
+| **AO-** | Pump DB25 **pin 3** after bench checks |
+| **AO+** | Pump DB25 **pin 1** after bench checks |
 
-The module has a common supply/signal/output ground and **no isolation**.
-Resolve the pump/USB grounding before making that reference connection. The
-converter has no SDA/SCL wires. Its VIN is its power input; the pump's labelled
-VIN is the analog speed command. These are different terminals.
+Set the **5V PWM input jumper** with power off. The Garosa listing specifies
+15-30 V DC supply and the photographed unit says 12-30 V. A separate regulated
+24 V supply fits both. Keep the ESP32, sensor and pump voltage references on
+their specified terminals. See the [grounding and harness review](../hardware/pump-interface.md)
+before adding the pump voltage output and divider.
 
-Other pump circuits are separate:
+On the selected spare relay, use **COM to DB25 15** and **NO to DB25 17**.
+Identify its 74HC595 bit and verify that the contact pair is isolated from the
+mains valve distribution. Leave the bit unassigned until checked. A separate
+3.3 V-compatible contact driver on GPIO26 is an alternative if a spare
+onboard relay cannot be used. Both options require a reviewed compiled profile.
 
-| Circuit | Connection |
-| --- | --- |
-| Start/stop | Suitable isolated contact across **DB15 10/12**, controlled through its driver by candidate **GPIO26** |
-| Speed feedback | **DB15 9 (+)/5 (-)** through the protected/calibrated ADC stage |
-| Pressure and flow | Their analog outputs through protected/calibrated ADC inputs, not directly into ESP32 GPIO |
-
-Do not apply a supply voltage to the dry-contact pair, copy the old Arduino VIN
-start/stop wire, join pins 3/5/12 blindly, or attach this circuit to the 120 VAC
-valve COM distribution. See the [detailed pump/harness explanation](../hardware/pump-interface.md).
-
-## What the new firmware does
+## Firmware operation
 
 Version **0.1.13** adds a PWM-converter pump-command option to the full physical
 controller. The existing GP8403 backend is retained for older reviewed profiles.
-The selected module uses the PWM option; there is no GP8403/I2C probe for it.
-An ADS1115, if chosen for acquisition, still requires I2C.
+Select the PWM option for the Garosa. An optional ADS1115 uses I2C for acquisition.
 
 The proposed PWM signal is **1 kHz at 12-bit duty resolution**. With the module
 configured for 0-10 V, the intended nominal correspondence is:
@@ -115,6 +78,14 @@ The PWM-specific fields are `pumpPwmPin`, `pumpPwmChannel`,
 the measured reviewed value must be between 10 and 5000 ms. The source selection
 and verification flags do not substitute for those physical measurements.
 
+For the onboard contact, assign the measured `pumpContactBit` in a
+`ShiftRegister595` profile, leave `pumpContactPin = -1`, and use
+`pumpContactActiveHigh = true`. The selected bit must be separate from all
+valve bits and LOW in `shiftUnusedLevels`. The template leaves V6 absent with
+`valveBits[5] = -1` and `safeValves[5] = false`. Keep the seven-slot
+protocol representation and send false for V6. GPIO26 is only for the external
+driver option. See the [contact checks](../hardware/pump-interface.md#spare-onboard-relay-for-startstop).
+
 In `[env:esp32-physical]` in `firmware/platformio.ini`, preserve its existing
 flags and add the reviewed profile header:
 
@@ -145,15 +116,15 @@ stop circuit. GUI checkboxes cannot enable an unverified compiled profile.
 
 Before pressure acquisition is commissioned, use the standalone
 [`pwm-converter-bench` example](../firmware/examples/pwm-converter-bench/README.md)
-with **the pump DB15 harness and all valve contact loads disconnected**. It
+with **the pump DB25 harness and all relay contact loads disconnected**. It
 produces only GPIO25 test PWM, uses explicit serial confirmation and a maximum
 five-second nonzero test, then commands zero. It does not run the full controller,
 touch valve outputs, read pressure or approve a profile. Never bypass the full
 controller's pressure checks to make a converter bench measurement.
 
-1. Keep the pump disconnected. Check module identity, supply and 0-10 V range
-   selection against the received board's instructions.
-2. In a reviewed bench procedure, measure OUT-to-GND at 0/25/50/75/100%, then zero.
+1. Keep the pump disconnected. Verify the 3.3P-10V marking, 5V input jumper
+   position and the converter supply.
+2. Measure AO+ relative to AO- at 0/25/50/75/100%, then zero.
    Record error, ripple and settling after both increasing and decreasing steps.
 3. Measure power-up with either device powered first, ESP32 reset, absent PWM,
    converter supply loss and restored connections. The seller does not guarantee
@@ -163,7 +134,9 @@ controller's pressure checks to make a converter bench measurement.
    on Stop, on faults and when the ESP32 loses power. Check the pressure input
    and analog return wiring independently.
 5. Complete the approved physical profile and repeat the rig's acceptance checks
-   before connecting and operating the pump. Select its verified **V** control mode.
+   before connecting and operating the pump. Select **Voltage Input**, exit to
+   **Continuous Pump Mode**, set **START/STOP required ON**, and turn
+   **AUTO START OFF**. Check that an open contact prevents running.
 
 To operate the six installed valves before sensors are ready, use the normal
 [Dashboard valve controls](normal-valves.md), which require no sensor or extra

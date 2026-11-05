@@ -1,11 +1,11 @@
 # Srliya 16-channel board: proposed wiring
 
-For the ordered HiLetgo dividers and EC Buying converter, use the updated
-[3 November wiring guide](../docs/ordered-parts-wiring.md). It avoids GPIO35,
-explains the fixed 5:1 divider and identifies the unfinished sensor/pump setup.
+Use the [current wiring guide](../docs/ordered-parts-wiring.md) for the
+Masterflex 75211-70 DB25, Garosa 3.3P-10V and HiLetgo dividers. It identifies
+the GPIO34/36/39 measurement pins and the spare onboard pump relay plan.
 
 **Current installed valve map, version 0.1.16:** V1, V2, V3, V4, V5 and V7
-use bits 0, 1, 2, 3, 5 and 6. There is no V6 and bit 4 is unused. The
+use bits 0, 1, 2, 3, 5 and 6. There is no V6. Bit 4 has no valve assignment. The
 [normal valve guide](../docs/normal-valves.md) describes the current controls;
 the peripheral wiring below remains a planning reference.
 
@@ -47,10 +47,11 @@ Solder the supplied headers into the labelled I/O breakout pads beside the ESP32
 | USB-UART TX | RX / RXD0 / GPIO3 | Adapter must use 3.3 V TTL logic |
 | USB-UART RX | TX / TXD0 / GPIO1 | Cross TX and RX |
 | USB-UART GND | GND | Common UART reference |
-| Selected EC Buying converter PWM | IO25 / GPIO25, proposed | 3.3 V PWM, proposed 1 kHz; confirm exposed pad and reviewed profile |
-| Selected converter VIN | Verified regulated supply within its stated 3.3-12 V range | Existing nominal 12 V is at its maximum; verify actual tolerance/startup |
-| Selected converter GND | Reviewed common low-voltage reference | Nonisolated power/PWM/output reference; resolve pump and ESP32/USB grounding first |
-| Pump contact-interface control | IO26 / GPIO26, proposed | To a verified 3.3 V-compatible isolated contact interface, never directly to pump pins |
+| Garosa **PWM+** | IO25 / GPIO25 | 3.3 V PWM at 1 kHz |
+| Garosa **PWM-** | ESP32 GND | PWM signal return |
+| Garosa **Supply+ / Supply-** | Separate regulated 24 V DC supply pair | Seller range 15-30 V DC and board mark 12-30 V |
+| Pump start/stop | Verified spare 74HC595 channel | Physical COM and NO across DB25 15/17. Bit remains unassigned |
+| Optional external contact-driver control | IO26 / GPIO26 | Reserved for a 3.3 V-compatible external isolated driver, if used instead |
 | Optional external ADC SDA | IO21 / GPIO21 | I2C only if ADS1115 acquisition is selected; the PWM converter does not use it |
 | Optional external ADC SCL | IO22 / GPIO22 | Same acquisition choice |
 | ADS1115 power, if selected | 3V3 and GND | Verify module and pull-ups support 3.3 V; condition all analog inputs |
@@ -60,51 +61,36 @@ With the relay board externally powered, leave the USB-UART adapter's 3.3 V and 
 
 ### Analog measurements and pump command
 
-The pump's VOUT is feedback **from** the pump. It belongs on a protected ADC
-input. The selected PWM converter's OUT drives the opposite direction, into
-the pump's VIN/speed-command input. The identified 75211-30 manual documents a 0-10 V command at
-DB15 1(+)/3(-) and feedback at 9(+)/5(-). The actual harness and references must
-still be checked. See
-[pump interface](pump-interface.md).
+The [Garosa 3.3P-10V](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2) drives the 75211-70 pump's 0-10 V
+command at DB25 **1 (+)/3 (-)**. The running command output is DB25
+**14 (+)/5 (-)**. For the terminal table and unloaded measurements, see the
+[pump interface](pump-interface.md#garosa-converter-wiring).
 
-The [selected EC Buying module](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR)
-converts ESP32 PWM to a DC analog command. Its output is not isolated; do not
-join the pump's signal returns by assumption. See the
-[pump wiring handoff](pump-interface.md#connecting-the-ec-buying-converter-when-it-arrives)
-for the terminal table and unloaded output/stop/reset tests. No extra GP8403
-DAC is required for this selected path.
+| Signal | Selected native ADC1 input | Optional ADS1115 input |
+| --- | --- | --- |
+| Pressure 0-5 V through scaling/protection | **GPIO34** | A0 |
+| Flow 0-5 V through scaling/protection | **GPIO36 / SVP** | A1 |
+| Pump running command output 0-10 V through scaling/protection | **GPIO39 / SVN**, after reference review | A2, after reference review |
 
-This is one external-ADC acquisition plan supported by the firmware:
-
-| Signal | Destination |
-| --- | --- |
-| Pressure sensor 0-5 V output | Scaling/protection interface, then ADS1115 A0 |
-| Flow sensor 0-5 V analog output | Scaling/protection interface, then ADS1115 A1 |
-| Pump speed feedback, documented 0-10 V on DB15 9(+)/5(-) | Range-matched scaling/protection interface, then ADS1115 A2; use the specified return |
-| Pump speed command | EC Buying converter OUT to DB15 1(+), reviewed output reference to 3(-); first test with pump disconnected |
-
-Use the flow sensor's analog output for this plan. Its pulse output is a different interface. For a 3.3 V-powered ADS1115, keep normal analog pin voltage within 0-3.3 V; selecting a larger ADC gain range does not make it 5 V or 10 V tolerant. Connect each pump signal's specified return according to the exact drive manual. Do not assume every cable tag called GROUND is the right analog return.
-
-For the selected native-ADC plan, use GPIO34 for conditioned pressure,
-GPIO36/SVP for conditioned flow and GPIO39/SVN for conditioned pump feedback.
-Leave GPIO35 unused following the possible overvoltage report. This supersedes
-the older 34/35/36 proposal. It is an alternative to ADS1115 wiring and still
-requires scaling, protection, calibration and an updated firmware profile.
-See the ordered-parts guide for the unresolved pump-reference arrangement.
+Keep GPIO35 unused following the reported possible overvoltage. Use the flow
+sensor's analog output. On an ADS1115 powered at 3.3 V, the analog inputs still
+need scaling to stay within 0-3.3 V at the pins. Check the actual divider and
+pump reference paths before adding pump measurement. The direct divider joins
+its input return to the ESP32 ADC ground.
 
 ### Pump remote start/stop
 
-Use a separately reviewed isolated dry-contact interface, provisionally driven
-by **GPIO26**, matching the current `pumpContactPin` driver. Its control input
-must support 3.3 V ESP32 logic. Its isolated contact side connects only across
-the pump's **DB15 pins 10 and 12**, with no external voltage applied. This
-signal-contact circuit must remain separate from the 110-120 VAC valve COM bus.
-Never copy the old Arduino VIN connection to the pump's start/stop wire.
+Use a tested spare onboard relay with independent contacts. Its **COM** goes
+to DB25 **15** and **NO** to **17**. Both contacts must be separate from the
+110-120 VAC valve distribution. The bit is unassigned until a disconnected
+board test identifies the channel and verifies its OFF state. An external
+isolated contact driver on **GPIO26** is an alternative. GPIO26 goes to that
+driver's control input.
 
-The driver does not pack pump RUN into a spare 74HC595 relay bit. An onboard
-relay is not a substitute without a reviewed driver/mapping and an electrical
-separation design. Verify STOP, reset and interface power loss with the pump
-disconnected before connecting its harness.
+On the 75211-70, use **Voltage Input** and **Continuous Pump Mode** with
+**START/STOP required ON** and **AUTO START OFF**. Verify the contact's open
+state inhibits the pump before live use. See the
+[drive settings and wiring](pump-interface.md#spare-onboard-relay-for-startstop).
 
 ### Recorded old analog channels
 
@@ -130,5 +116,5 @@ The listing text says DC 5-12 V, but its annotated photo calls the input "5V Pow
 - [Espressif boot mode selection](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html)
 - [TI SN74HC595 OE behavior](https://www.ti.com/product/SN74HC595)
 - [TI ADS1115 input limits](https://www.ti.com/lit/ds/symlink/ads1115.pdf)
-- [Selected EC Buying PWM converter specification](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR)
+- [Garosa 3.3P-10V PWM converter listing](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2)
 - [Arduino Mega 2560 resources and pinout](https://docs.arduino.cc/hardware/mega-2560/)

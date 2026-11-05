@@ -27,7 +27,7 @@ def bundle_project(tmp_path, monkeypatch):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("// complete source " + name, encoding="utf-8")
     for name in ("firmware/test/test_control/test_main.cpp", "firmware/test/mocks/Arduino.h",
-                 "firmware/include/RelayBenchCore.h", "protocol/relay-bench.md", "docs/full-firmware.md"):
+                 "firmware/include/RelayBenchCore.h", "protocol/relay-bench.md", "docs/full-firmware.md", "docs/ordered-parts-wiring.md"):
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture " + name, encoding="utf-8")

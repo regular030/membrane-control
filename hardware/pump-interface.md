@@ -1,119 +1,106 @@
-# Cole-Parmer 75211-30 pump interface
+# Masterflex 75211-70 pump interface
 
-The installed drive is **Cole-Parmer 75211-30**, identified by the user as
-60-3600 RPM, 0.1 HP. This plan uses its **DB15** connector. The later Masterflex
-L/S / DB25 equipment is a separate profile.
+The installed drive is the **Masterflex 75211-70 digital gear pump** with a
+**DB25** remote connector. Use its A-1299-1142 Edition 02 manual, Figure 3-13.
+The six-wire handoff below uses the Garosa 3.3P-10V converter and a planned
+spare onboard relay for start/stop. The relay channel and bit still need
+verification. For the full controller wiring, see the
+[ordered-parts guide](../docs/ordered-parts-wiring.md).
 
-The selected speed-command interface is the
-[EC Buying PWM-to-voltage converter, Amazon.ca B0CPJGFCGR](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR).
-Order **one** for this pump. A second GP8403 DAC or replacement Arduino is not
-needed for this command path. The converter adds the speed command; the pump
-still needs a separate stop contact and protected analog acquisition.
+## Six pump wires
 
-## Pump signals and the existing harness
-
-The manufacturer-authored Cole-Parmer/Barnant operating manual A-1299-0853,
-Edition 03, covers 75211-30 and 75211-35. Its printed pages 12-13 give:
-
-| Function | DB15 signal | DB15 return | New interface |
-| --- | --- | --- | --- |
-| DC speed command into pump | Pin 1 (+) | Pin 3 (-) | Converter OUT and reviewed output reference |
-| Speed feedback from pump | Pin 9 (+) | Pin 5 (-) | Protected/scaled ADC input |
-| Remote start/stop | Pin 10 | Pin 12 | Isolated dry contact across this pair |
-
-Check the drive's **V** remote mode for voltage control. Connector pin numbers
-are not wire colors or positions on an ESP32 header. Verify the molded numbers
-and continuity with the pump, controller and harness disconnected. The diagram
-does not show pins 3, 5 and 12 joined; do not bridge their returns by assumption.
-
-The four existing tags identify **DB15 1, 9, 10 and 12**. Trace where analog
-returns **3 and 5** go before adding a ground connection. They may be connected
-inside the plug or elsewhere; the photos do not establish that. Repair/replace
-the harness if the correct returns cannot be identified. Use the tags' old
-DB15 numbers; their new DB25 column does not apply to this drive.
-
-## What can be prepared now
-
-With all equipment unplugged, label and continuity-check the harness, locate
-the ESP32 breakout labels, and plan a secured low-voltage terminal strip for
-power, PWM, analog command and feedback. Preserve the already established
-USB-UART wiring. Keep all pump signal wires insulated until their interfaces
-and references are checked. Keep this low-voltage wiring separate from the
-110-120 VAC valve contacts and their COM bus.
-
-The user has observed LOW = relay off and HIGH = relay on. That observation
-does not identify which shift-register bit drives each physical valve terminal,
-or establish reset/OE behavior and safe fluid routing. Record those separately
-in the [bare-board mapping procedure](../docs/relay-board-test.md).
-
-## Connecting the EC Buying converter when it arrives
-
-The seller's own specification lists a **3.3-12 V supply**, **3.3-24 V PWM high
-level**, 22 Hz-20 kHz input and selectable 0-5/0-10 V output, default 0-10 V.
-It is **not isolated**: its power, PWM and analog output share GND. These are
-seller specifications, not measurements on the received unit. Confirm the
-actual terminal labels and output-range jumper/pad before wiring.
-
-Use a regulated supply whose actual output, including tolerance and startup,
-stays inside the stated range. **12 V is its stated maximum, not spare margin**;
-verify the existing supply rather than assuming a nominal 12 V label is enough.
-Do not substitute a 15 V or 24 V supply for this converter. This supply rating
-is separate from the unresolved relay-board input rating.
-
-| From | To | Purpose / prerequisite |
+| Pump DB25 pin | Function | Controller endpoint |
 | --- | --- | --- |
-| Verified regulated DC supply, within 3.3-12 V | Converter VIN | Module power; not pump motor power |
-| Supply negative and ESP32 GND, after reference review | Converter GND | Common power/PWM/output reference; resolve ESP32/USB and pump grounding first |
-| ESP32 **GPIO25**, proposed | Converter PWM | 3.3 V logic, proposed 1 kHz PWM; confirm exposed header and reviewed profile |
-| Converter OUT | Pump DB15 **pin 1 (+)** | Connect only after the unloaded output tests below |
-| Converter GND / reviewed output reference | Pump DB15 **pin 3 (-)** | Nonisolated connection; review before joining to pump reference |
+| **1** | 0-10 V voltage command | Garosa **AO+** |
+| **3** | Speed-command input return | Garosa **AO-** |
+| **14** | 0-10 V running command output | HiLetgo divider 3 screw **VCC**, after reference review |
+| **5** | Running command output return, at pump earth | Divider 3 screw **GND**, after reference review |
+| **15** | Remote start/stop input | Selected spare relay **COM** |
+| **17** | Start/stop reference, at pump earth | Same relay **NO** |
 
-The converter performs **PWM -> DC analog voltage**. Do not wire raw ESP32 PWM
-directly to the pump's voltage-command input. GPIO25 is a candidate assignment,
-not a physical header position or an already approved profile. The converter
-has no SDA/SCL connection. The GND row does not authorize joining pump returns
-3, 5 and 12. If a common-ground interface is unsuitable for the installed
-pump/laptop arrangement, use a reviewed isolated analog interface instead.
+Turn the pump off before fitting or removing its remote cable. With the pump
+unplugged and the harness disconnected from all electronics, use continuity to
+identify each soldered wire by the molded connector number. Check adjacent pins
+for solder bridges. The connector's solder side and mating face are mirrored.
 
-### First bench checks: pump disconnected
+A DB25-to-DB15 adapter is usable only after tracing both ends. An adapter that
+preserves the old signal assignments needs DB25 **1/3/14/5/15/17** to reach
+DB15 **1/3/9/5/10/12**, respectively. These are desired mappings, not verified
+connections inside this cable. The old four tags cover only 1, 9, 10 and 12 on
+the DB15 end. In particular, verify whether the adapter carries analog returns
+3 and 5. If it does not, use the six traced DB25 wires directly.
 
-1. Disconnect the DB15 harness from the pump and keep its start/stop circuit
-   open. Verify the converter's supply and **0-10 V** range selection.
-2. With a voltmeter between converter OUT and GND, request duty cycles
-   **0%, 25%, 50%, 75%, 100%**. The intended corresponding command voltages are
-   **0, 2.5, 5, 7.5, 10 V**. Record the actual values, settling and ripple;
-   validate the chosen PWM frequency rather than treating these targets as
-   measured output.
-3. Verify zero command and the separate stop contact on STOP, communication/
-   heartbeat loss, controller reset, unplugged PWM and converter/ESP32 power
-   sequencing. Include removal of pulses from a nonzero command and restoration
-   of each power source. Do not assume loss of PWM forces the analog output to
-   zero or that a stopped app proves the motor stopped.
-4. Keep the pump disconnected until these checks, harness continuity, references,
-   signal protection, stop behavior and the required pressure channel pass review.
-   Use a dedicated reviewed bench procedure; the ordinary factory physical
-   profile is locked. Neither relay/valve test firmware drives this converter.
+## Garosa converter wiring
 
-## Separate pump stop and feedback paths
+Use the [Garosa B07WZNV1V2 listing](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2)
+and the received board marked **3.3P-10V**. With the printed labels upright, the
+pictured terminals read left to right:
 
-**Start/stop:** use an isolated dry-contact interface with a verified 3.3 V
-ESP32-compatible control input, rated for the pump's signal-contact circuit.
-Its isolated contact side connects only across **DB15 10/12**. Proposed
-**GPIO26** controls the interface, subject to profile review; it never connects
-to the pump pins directly. Keep its contact wiring electrically separate from
-the mains valve COM bus. Never apply the old Arduino VIN connection, relay-board
-supply, GPIO voltage or 120 VAC to this pair. Verify that interface power loss,
-reset and STOP leave the pump in its documented stopped state.
+| Garosa terminal | Connection |
+| --- | --- |
+| **PWM- / DIN-** | ESP32 **GND** |
+| **PWM+ / DIN+** | ESP32 **IO25 / GPIO25** |
+| **Supply+** | Regulated **+24 V DC** for the converter |
+| **Supply-** | That supply's negative terminal |
+| **AO-** | Pump DB25 **3** after bench checks |
+| **AO+** | Pump DB25 **1** after bench checks |
 
-The current driver uses a separate `pumpContactPin`; it does not pack pump RUN
-into an unused onboard 74HC595 bit. Do not substitute a spare valve-board
-channel without a corresponding reviewed driver and separation design.
+Fit the PWM-input jumper in the **5V** position with power off. The 3.3P-10V
+variant accepts 3.3 V PWM in that position. The seller specifies **15-30 V DC**
+supply, while the pictured power terminal is marked **12-30 V**. Use a regulated
+24 V supply within both ranges. The 12 V sensor supply remains on the sensors.
+ESP32 GPIO25 is the PWM signal. The pump's DB25 pin 25 is auxiliary 24 V and is
+unused in this plan.
 
-**Feedback:** pump **DB15 9 (+)/5 (-)** goes through a protected, range-matched
-0-10 V input-conditioning stage before an ADC. This is a measurement coming
-from the pump, not the converter output. The PWM converter provides no feedback
-input protection. Pressure and flow also need their own conditioned 0-5 V
-inputs. See [analog acquisition](relay-board-pin-plan.md#analog-measurements-and-pump-command).
+Keep the pump disconnected while measuring AO+ against AO- at 1 kHz and
+0/25/50/75/100% duty. Targets are 0/2.5/5/7.5/10 V. Use the trimmer with the
+meter connected and verify both endpoints, including a maximum of 10 V. Record
+settling, ripple and whether output returns to zero after a nonzero command,
+loss of PWM, reset and power cycling. The
+[unloaded bench example](../firmware/examples/pwm-converter-bench/README.md)
+produces test PWM without a production profile.
+
+### Grounding and the optional voltage output
+
+The pump specifies pin 3 for the input return. It separately lists 5, 13, 17
+and 18 at earth ground. Keep the converter's PWM input pair, supply pair and
+analog output pair on their designated terminals. Use the actual converter and
+supply wiring to determine continuity among their reference nodes, including
+any USB or shared-supply ground paths. The board's terminal labels alone do not
+establish isolation between the PWM and analog sides.
+
+The passive HiLetgo divider connects its screw GND to the ADC reference through
+header **-**. If the converter, supply or USB already connects ESP32 GND to
+pin 3, attaching the feedback divider also joins pin 3 to pump earth at pin 5.
+Keep pins 14/5 disconnected until that complete reference arrangement is
+verified or an isolated feedback input is fitted. After verification, divider
+3 **S** goes to **GPIO39 / SVN** and its **-** to ESP32 GND. Leave **+** open on
+the verified passive revision. A measured 10 V at the input should give about
+2 V at S. The output on 14/5 represents running command speed. Motor-running
+status and actual flow require their own signals.
+
+## Spare onboard relay for start/stop
+
+Select a physically unused channel on the relay board. Identify its COM and NO
+and its exact 74HC595 bit with the [unloaded relay test](../docs/relay-board-test.md).
+The bit must be separate from the six valve bits. Keep the pump wires
+disconnected during mapping. The chosen contact pair must remain separate from the mains valve COM bus
+and supply wiring. Verify the contact at the pump input's typical 1 mA.
+When mapped and verified,
+put DB25 pin 15 on COM and pin 17 on NO. Closing that dry contact pulls the
+active-low pump input to its reference.
+
+On the drive select **Remote Control > Voltage Input**, exit that menu, then
+select **Continuous Pump Mode**. Set **START/STOP required ON** and
+**AUTO START OFF**. The factory START/STOP setting is OFF, which permits
+running from a sufficient analog command with the contact open. Check that
+voltage scaling is appropriate and non-inverted. Verify the open contact
+inhibits running with a nonzero command, and verify opening it stops the
+pump during commissioning.
+
+For the external contact-interface alternative, GPIO26 drives the logic side
+of a reviewed 3.3 V-compatible driver. Its dry contact still connects across
+15/17. Leave GPIO26 unused for the spare onboard channel.
 
 ## Firmware profile and operation
 
@@ -135,7 +122,8 @@ backend. Values below are proposed assignments, not a ready-to-flash profile:
 | `pumpPwmFrequencyHz` | `1000` | Within the selected module's stated input range; verify actual output |
 | `pumpPwmResolutionBits` | `12` | Duty-code resolution, not a claim of 12-bit analog accuracy |
 | `pwmSettleMs` | `0` until measured | Invalid placeholder; review an actual 10-5000 ms settling interval before permitting RUN |
-| `pumpContactPin` | `26`, candidate | Separate reviewed isolated stop-contact interface |
+| `pumpContactBit` | Unassigned | Select a tested spare shift-register bit and leave `pumpContactPin` unassigned |
+| `pumpContactPin` | GPIO26 only for the external driver alternative | Leave unassigned for the onboard contact path |
 
 The PWM branch initializes at zero duty. Its software STOP path commands the
 pump contact to STOP before zeroing PWM and changing valve outputs; communication
@@ -155,7 +143,18 @@ readings or unlock physical operation. Pump output remains a percentage of the
 command range. The Desired flow mL/min field is a comparison target until the
 pump/head calibration and any closed-loop controller are validated.
 
-## Recorded old Arduino wiring and code evidence
+
+## Historical Cole-Parmer 75211-30 DB15 interface
+
+The older **75211-30** used DB15 **1(+)/3(-)** for voltage command,
+**9(+)/5(-)** for voltage output, and **10/12** for its dry run contact.
+Its front panel used **V** for voltage remote control. The reported nameplate
+range was 60-3600 RPM, while the operating manual listed 180-3600 RPM. The
+actual drive/head needs its own calibration. The older EC Buying
+B0CPJGFCGR converter had a 3.3-12 V supply rating and shared power, PWM and
+output ground. Those ratings and terminals apply to that converter only.
+
+### Recorded old Arduino wiring and code evidence
 
 | Notebook wire | Recorded Mega 2560 connection | Migration check |
 | --- | --- | --- |
@@ -179,15 +178,14 @@ duty values at runtime. The ZIP lacks native `.vi` files, so it does not recover
 host-side scaling or pin constants. The notebook supplies the physical mapping.
 Any original dividers, voltage levels and calibration must still be checked.
 
-## Revision and sources
 
-The user's 60-3600 RPM nameplate agrees with the service manual's model listing;
-the older operating manual lists 180-3600 RPM. Preserve that discrepancy and
-calibrate the actual installed drive/head rather than assuming a volts-to-RPM
-or mL/min conversion. The future DB25 pump needs its own manual/profile.
+## References
 
-- [EC Buying Amazon.ca product specification and pin description](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR), checked 26 October 2026. Price and delivery to the lab remain unverified.
-- [Cole-Parmer/Barnant operating manual, manufacturer-authored copy on a mirror](https://manualmachine.com/coleparmer/7521130/15945005-instruction-manual/), A-1299-0853 Edition 03, printed pages 12-13 and 21.
-- [Cole-Parmer/Barnant service manual, mirror](https://www.manualslib.com/manual/1449189/Cole-Parmer-75211-30.html), 75211-30 model listing.
-- [Arduino Mega 2560 official board resources and pinout](https://docs.arduino.cc/hardware/mega-2560/) and [official PWM guide](https://support.arduino.cc/hc/en-us/articles/9350537961500-Use-PWM-output-with-Arduino).
-- [TI ADS1115 input limits](https://www.ti.com/lit/ds/symlink/ads1115.pdf).
+- [Masterflex 75211-70 operating manual, manufacturer-authored mirror](https://manualmachine.com/masterflex/7521170/15984751-instruction-manual/),
+  A-1299-1142 Edition 02, pp. 3-21 to 3-24 and 7-1.
+- [Garosa 3.3P-10V seller listing](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2).
+- [Cole-Parmer/Barnant 75211-30 operating manual, manufacturer-authored mirror](https://manualmachine.com/coleparmer/7521130/15945005-instruction-manual/),
+  A-1299-0853 Edition 03, pp. 12-13.
+- [Historical EC Buying converter specification](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR).
+- [Arduino Mega 2560 pinout](https://docs.arduino.cc/hardware/mega-2560/) and
+  [Arduino PWM guide](https://support.arduino.cc/hc/en-us/articles/9350537961500-Use-PWM-output-with-Arduino).

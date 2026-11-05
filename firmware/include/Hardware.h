@@ -44,9 +44,12 @@ class Hardware {
     if (simulation_) return true;
     if (const char* error = validateBoardConfig(config_)) { error_ = error; return false; }
     profileValidated_ = true;
-    // Establish the pump's STOP contact before other outputs or I2C operations.
-    digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
-    pinMode(config_.pumpContactPin, OUTPUT);
+    // Set a GPIO contact to STOP first. A shared relay bit is latched LOW
+    // with the initial valve word while the shift-register outputs are disabled.
+    if (config_.pumpContactBit == -1) {
+      setPumpContact(false);
+      pinMode(config_.pumpContactPin, OUTPUT);
+    }
     ioInitialized_ = true;
     if (config_.relayKind == RelayKind::ShiftRegister595) {
       setOe(false);
@@ -96,6 +99,13 @@ class Hardware {
 
   bool beginManualValves(const ManualValveConfig& config) {
     if (const char* error = validateManualValveConfig(config)) { valveError_ = error; return false; }
+    // A rejected full profile can still fall back to manual valve control.
+    // Keep that fallback from driving a relay explicitly assigned to the pump.
+    if (config_.pumpContactBit >= 0 && (!config_.pumpContactActiveHigh ||
+        std::find(config.bits.begin(), config.bits.end(), config_.pumpContactBit) != config.bits.end())) {
+      valveError_ = "pump RUN bit must be separate and active-high for manual valve control";
+      return false;
+    }
     // If a full driver already owns GPIO, reuse it only when its relay interface
     // agrees with the confirmed rig. Never initialize a second competing driver.
     if (!simulation_ && ioInitialized_ && !manualInterfaceCompatible(config)) {
@@ -131,7 +141,7 @@ class Hardware {
     // Normally the core requires Stop before changing modes. Also handle the
     // narrow case of a just-completed recipe whose last output is not applied yet.
     if (ioInitialized_ && (applied_.pumpPercent > 0 || pumpRunPending_)) safeStop();
-    if (ioInitialized_) digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
+    if (ioInitialized_) setPumpContact(false);
     pumpRunPending_ = false;
     uint16_t word = 0;
     for (std::size_t index = 0; index < kManualValveCount; ++index)
@@ -148,19 +158,21 @@ class Hardware {
     if (simulation_) return true;
     if (!ready_) return false;
     if (!validOutputs(requested)) return fail("invalid_outputs");
+    if (hasAbsentValve6(config_) && requested.valves[kValve6Slot])
+      return fail("V6 is not installed; its wire slot must remain false");
     if (requested == applied_) {
       // Only the main loop passes allowPumpRun, after the current safety tick.
       // Sensor acquisition and serial ACK paths never release this contact.
       if (pumpRunPending_ && allowPumpRun &&
           static_cast<uint32_t>(now - pumpCommandChangedMs_) >= config_.pwmSettleMs) {
         pumpRunPending_ = false;
-        digitalWrite(config_.pumpContactPin, config_.pumpContactActiveHigh);
+        setPumpContact(true);
       }
       return true;
     }
     // Disable pump while changing valves/speed; recipe must still include any
     // required hydraulic settling delays as explicit steps.
-    digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
+    setPumpContact(false);
     pumpRunPending_ = false;
     manualModeActive_ = false;
     manualWordKnown_ = false;
@@ -172,19 +184,19 @@ class Hardware {
       if (config_.pumpCommandSource == PumpCommandSource::PwmConverter) {
         pumpCommandChangedMs_ = now;
         pumpRunPending_ = true;
-      } else digitalWrite(config_.pumpContactPin, config_.pumpContactActiveHigh);
+      } else setPumpContact(true);
     }
     applied_ = requested;
     safeStopIssued_ = requested == safeOutputs();
     return true;
   }
 
-  // Contact STOP precedes PWM zero, valve changes or I2C, so a stuck bus cannot
-  // prevent the software issuing STOP. Hardware must independently fail safe.
+  // Open the contact before changing pump command or valve states. Hardware
+  // must independently fail safe, including while the ESP32 is resetting.
   void safeStop() {
     pumpRunPending_ = false;
     if (simulation_ || (!ioInitialized_ && !manualRelayInitialized_)) return;
-    if (ioInitialized_) digitalWrite(config_.pumpContactPin, !config_.pumpContactActiveHigh);
+    if (ioInitialized_) setPumpContact(false);
     if (pwmInitialized_ && !writePumpPwmDuty(0) && ready_) {
       ready_ = false;
       error_ = "pwm_stop_failed";
@@ -266,6 +278,7 @@ class Hardware {
     }
     digitalWrite(kManualLatchPin, HIGH);
     digitalWrite(kManualOePin, LOW);  // Hold the commanded levels, including all-off LOW.
+    shiftWord_ = word;
     manualWord_ = word;
     manualWordKnown_ = true;
   }
@@ -285,13 +298,27 @@ class Hardware {
   void setOe(bool enabled) {
     digitalWrite(config_.shiftOePin, config_.shiftOeActiveLow ? !enabled : enabled);
   }
+  void setPumpContact(bool run) {
+    if (config_.pumpContactBit == -1) {
+      digitalWrite(config_.pumpContactPin, run == config_.pumpContactActiveHigh);
+      return;
+    }
+    const uint16_t mask = static_cast<uint16_t>(1U << config_.pumpContactBit);
+    const uint16_t word = run ? (shiftWord_ | mask) : (shiftWord_ & ~mask);
+    // Keep the other contacts in their last latched state when opening RUN.
+    if (word != shiftWord_) writeShiftWord(word);
+  }
   void writeValves(const Outputs& outputs) {
     if (config_.relayKind == RelayKind::DirectGpio) {
       for (std::size_t i = 0; i < kValveCount; ++i)
         digitalWrite(config_.valvePins[i], outputs.valves[i] == config_.valveActiveHigh[i]);
       return;
     }
-    const uint16_t levels = shiftLevels(config_, outputs);
+    // Validation reserves the contact bit outside the valve map and keeps it
+    // LOW in shiftUnusedLevels. Only setPumpContact(true) can close RUN.
+    writeShiftWord(shiftLevels(config_, outputs));
+  }
+  void writeShiftWord(uint16_t levels) {
     digitalWrite(config_.shiftLatchPin, LOW);
     for (int serialIndex = 0; serialIndex < config_.shiftBitCount; ++serialIndex) {
       const int bit = config_.shiftMsbFirst ? config_.shiftBitCount - 1 - serialIndex : serialIndex;
@@ -300,6 +327,7 @@ class Hardware {
       digitalWrite(config_.shiftClockPin, HIGH);
     }
     digitalWrite(config_.shiftLatchPin, HIGH);
+    shiftWord_ = levels;
   }
   bool probe(uint8_t address) {
     Wire.beginTransmission(address);
@@ -348,7 +376,7 @@ class Hardware {
   bool writePumpPwmDuty(uint32_t duty) {
     if (ledc_set_duty(pwmMode(), pwmChannel(), duty) != ESP_OK ||
         ledc_update_duty(pwmMode(), pwmChannel()) != ESP_OK) {
-      ledc_stop(pwmMode(), pwmChannel(), 0);  // Best effort; STOP contact stays independent.
+      ledc_stop(pwmMode(), pwmChannel(), 0);  // Best effort; STOP uses a separate contact.
       return false;
     }
     return true;
@@ -428,6 +456,7 @@ class Hardware {
   bool manualModeActive_ = false;
   bool manualWordKnown_ = false;
   uint16_t manualWord_ = 0;
+  uint16_t shiftWord_ = 0;
   const char* valveError_ = "valve_control_not_ready";
   bool profileValidated_ = false;
   bool ioInitialized_ = false;

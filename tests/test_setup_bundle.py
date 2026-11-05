@@ -27,7 +27,8 @@ def fake_source(tmp_path):
         "docs/flow-sensor-troubleshooting.md",
         "docs/normal-valves.md", "docs/scale-connection.md",
         "docs/serial-recovery.md",
-        "docs/pwm-converter-setup.md", "hardware/procurement.md",
+        "docs/pwm-converter-setup.md", "docs/ordered-parts-wiring.md",
+        "hardware/procurement.md", "hardware/relay-board-pin-plan.md",
         "firmware/examples/PwmConverterProfile.example.h",
         "firmware/examples/pwm-converter-bench/README.md",
         "firmware/examples/pwm-converter-bench/platformio.ini",
@@ -66,7 +67,8 @@ def test_payload_hashes_actual_bytes_and_excludes_local_files(tmp_path):
         assert archive.read(manifest["app"]) == executable.read_bytes()
         for name in ("docs/valve-test.md", "protocol/valve-test.md", "firmware/src/valve_test_main.cpp",
                      "firmware/include/ValveTestProfile.h", "firmware/examples/ValveTestProfile.example.h",
-                     "docs/pwm-converter-setup.md", "hardware/procurement.md"):
+                     "docs/pwm-converter-setup.md", "docs/ordered-parts-wiring.md",
+                     "hardware/procurement.md", "hardware/relay-board-pin-plan.md"):
             assert archive.read(name) == (tmp_path / name).read_bytes()
         for name in ("firmware/examples/PwmConverterProfile.example.h",
                      "firmware/examples/pwm-converter-bench/README.md",

@@ -1,34 +1,14 @@
-# Wiring the ordered HiLetgo dividers and EC Buying converter
+# Wiring the installed pump, pressure sensor and flow sensor
 
-Updated 3 November 2026 for Dr. Onita Basu's lab at Carleton University.
+For Dr. Onita Basu's lab at Carleton University. The current plan uses the
+**Masterflex 75211-70 DB25** pump, the
+[Garosa 3.3P-10V PWM converter](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2) and
+**HiLetgo B01HTC4XKY** passive divider modules.
 
-Selected parts are **HiLetgo B01HTC4XKY** (five passive voltage-divider modules,
-use three) and **EC Buying B0CPJGFCGR** (PWM to 0-10 V command converter).
-The later OSEPP/DFR1036 shopping alternatives are not the selected build.
-
-## What is ready in the software
-
-GitHub was checked on 3 November: **v0.1.16** is the newest published release.
-It includes normal sensor-independent control of V1, V2, V3, V4, V5 and V7,
-serial recovery, the PWM converter driver, analog input support and a separate
-unloaded PWM bench example. It does **not** include a completed, calibrated
-sensor/pump profile for this wiring.
-
-The factory normal image leaves pressure, flow and pump feedback unconfigured;
-its full hardware profile is not validated. A wire alone cannot enable readings.
-The current source initializes ADC acquisition only after the complete full
-profile validates. The existing example only selects pressure GPIO34; it is an
-unverified template, not a finished configuration. This guide records the new
-flow/feedback assignments without claiming that the released image uses them.
-
-The remaining work is to configure and calibrate the three inputs, select the
-PWM backend, complete the pump stop interface and grounding, measure converter
-settling, and finish process/fault settings. The legacy seven-slot full-profile
-map also needs an explicit unused V6 policy; it must never energize absent V6
-or unused bit 4. Existing normal manual valve control is already configured.
-
-This guide is a source documentation update. It does not alter the v0.1.16 EXE
-or firmware archive and does not upload or enable anything on the lab board.
+The factory controller can operate the six confirmed valves manually. Pump
+control and analog acquisition need a reviewed full hardware profile with
+calibrated inputs, a verified spare pump relay and measured converter settling.
+The pump relay bit remains unassigned.
 
 ## Board pins
 
@@ -41,8 +21,8 @@ possible overvoltage; the health of the other inputs still needs checking.
 | Pressure measurement | **IO34 / GPIO34** | Divider 1 S output |
 | Flow analog measurement | **SVP / VP / GPIO36** | Divider 2 S output |
 | Pump speed feedback measurement | **SVN / VN / GPIO39** | Divider 3 S output, after resolving pump analog references |
-| Pump speed command PWM | **IO25 / GPIO25** | EC Buying PWM input |
-| Pump start/stop driver | **IO26 / GPIO26** | Separate 3.3 V-compatible isolated contact-interface input |
+| Pump speed command PWM | **IO25 / GPIO25** | Garosa PWM+ |
+| Pump start/stop | **Spare onboard relay**, bit to be verified | GPIO26 is reserved only for the external contact-driver alternative |
 | Low-voltage reference | **GND** | Sensor/divider references; pump references need the review below |
 
 GPIO34, GPIO36 and GPIO39 are ADC1 inputs. They are input-only. The onboard
@@ -110,68 +90,71 @@ of assuming its colors. Insulate the flow sensor's separate unused pulse wire.
 Its specified pulse peak is 7.5 V, not a direct 3.3 V logic input. This plan
 uses analog output, not I2C or pulse counting.
 
-## Pump signals and references
+## Pump connections
 
-For the Cole-Parmer **75211-30 DB15** connector:
+The [75211-70 manual](https://manualmachine.com/masterflex/7521170/15984751-instruction-manual/) gives the DB25 assignments.
+Use the actual molded pin numbers. With the pump unplugged and all electronics
+disconnected, trace the six soldered wires and any DB25-to-DB15 adapter. See the
+[pump interface](../hardware/pump-interface.md) for the required adapter map.
 
-| Pump circuit | Signal pin | Its specified return |
-| --- | --- | --- |
-| Voltage speed command into pump | **1** | **3** |
-| Voltage speed feedback out of pump | **9** | **5** |
-| Start/stop contact | **10** | **12** |
-
-The old four labels identify 1, 9, 10 and 12, but do not establish where analog
-returns 3 and 5 go. Locate those returns in the actual connector/harness.
-Do not substitute pin 12 for both analog returns.
-
-### Resolve the common-ground arrangement before attaching the pump
-
-Both ordered modules are **nonisolated**. Converter GND tied to pump return 3
-and feedback-divider GND tied to return 5, each referenced to ESP32 GND,
-would **externally join pump pins 3 and 5**. Confirm that this is permitted for
-the drive and installation, or use appropriate isolated analog interfaces.
-The following pump terminal assignments describe the planned circuits; they
-do not establish that this common-reference arrangement has been verified.
-Keep the pump signals disconnected until that question and harness returns
-are resolved. Pin 12 remains on the isolated start/stop contact side.
-
-### Speed command: ESP32 to EC Buying converter to pump
-
-| From | To |
+| Pump DB25 wire | Connect to |
 | --- | --- |
-| GPIO25 | Converter **PWM** |
-| Verified regulated supply within **3.3-12 V** | Converter **VIN** |
-| Reviewed supply/ESP32 reference | Converter **GND** |
-| Converter **OUT** | Pump DB15 **1**, after reference and output checks |
-| Converter output reference / GND | Pump DB15 **3**, after reference checks |
+| **1** speed command | Garosa **AO+** |
+| **3** command return | Garosa **AO-** |
+| **15** start/stop | Verified spare relay **COM** |
+| **17** start/stop reference | Same relay **NO** |
+| **14** speed command output | Divider 3 screw **VCC**, after grounding review |
+| **5** output return | Divider 3 screw **GND**, after grounding review |
 
-Select the converter's **0-10 V output** range. Its VIN is its module power;
-the pump's label VIN denotes its speed-command signal. They are not the same
-connection. A nominal 12 V supply is at this module's advertised maximum, so
-its actual tolerance/startup must stay within the rating. Do not copy the
-3.3-5 V-only power instructions for the unselected DFR1036 alternative.
+### Garosa power and PWM
 
-The source PWM backend proposes 1 kHz. First use the separate
-[unloaded bench example](../firmware/examples/pwm-converter-bench/README.md)
-with the pump disconnected and measure OUT/GND at 0/25/50/75/100% duty.
-Intended outputs are 0/2.5/5/7.5/10 V. This bench example replaces the current
-program when flashed and does not speak the normal app's protocol.
+With its labels readable, the pictured converter terminals from left to right
+are **PWM-**, **PWM+**, **Supply+**, **Supply-**, **AO-** and **AO+**.
 
-### Speed feedback: pump to divider 3 to ESP32
+| Converter terminal | Connect to |
+| --- | --- |
+| PWM- | ESP32 **GND** |
+| PWM+ | ESP32 **IO25** |
+| Supply+ | Regulated **+24 V DC** |
+| Supply- | Converter supply negative |
 
-After resolving the references above, pump DB15 **9** is the 0-10 V signal
-to divider 3 screw VCC; pump **5** is that signal's return to divider 3 GND.
-Divider 3 **S** goes to **SVN / GPIO39**; its - joins the reviewed ADC reference.
-The nominal result is 0-2 V at GPIO39. This is not the converter OUT signal.
+Set the **5V input jumper** with power off. The selected 3.3P-10V variant uses
+3.3 V PWM on this setting. The listing specifies 15-30 V supply and the board
+is marked 12-30 V. Use 24 V to satisfy both. Keep 24 V off ESP32 pins and the
+12 V sensor supply. ESP32 IO25 and pump DB25 pin 25 are distinct. Pump pin 25
+is unused.
 
-### Start/stop requires a separate contact interface
+With the pump disconnected, use the
+[unloaded example](../firmware/examples/pwm-converter-bench/README.md) to
+measure AO+ relative to AO- at 1 kHz and 0%, 50%, and 100% duty. The targets
+are about 0, 5 and 10 V, with a maximum of 10 V. Check zero after PWM loss and
+power cycling, and measure settling before approving the profile.
 
-Neither ordered module supplies the pump's isolated start/stop contact.
-Use GPIO26 only on the control side of a suitable **3.3 V-compatible isolated
-contact interface**. Its isolated contact terminals connect across pump DB15
-**10 and 12**. Confirm its exact input, supply and stopped/default behavior.
-Do not connect GPIO26, sensor +12 V or the valve power bus directly to 10/12.
-Pump operation cannot be considered fully wired until this interface exists.
+### Divider 3 and pump reference
+
+Divider 3 **S** goes to **SVN / GPIO39**. On the verified passive divider,
+**-** connects to ESP32 GND and **+** stays open. Confirm the ratio and
+continuity between the two ground terminals with the ESP32 disconnected.
+The pump's 0-10 V output should become approximately 0-2 V at S.
+
+Leave pump pins 14 and 5 disconnected until reference review. Pin 5 is pump
+earth. The divider connects it to ESP32 ground. If the converter, USB or
+shared supply already connects ESP32 ground to pin 3, adding the divider
+joins pin 3 to pump earth. Verify the actual paths or use an isolated feedback
+interface. Pin 17 is the dry-contact reference. Keep it on the relay side.
+
+### Pump contact and drive settings
+
+Use COM and NO from one physically unused relay after identifying its bit with
+the [unloaded relay test](relay-board-test.md). Keep the selected contact pair
+free of any mains COM jumper and external voltage. The factory firmware has
+no selected pump bit. An external 3.3 V-compatible contact driver on GPIO26
+remains an alternative, with its dry contacts connected to the same 15/17 pair.
+
+On the pump, choose **Voltage Input**, exit to **Continuous Pump Mode**, set
+**START/STOP required ON**, and turn **AUTO START OFF**. With START/STOP set
+to its factory default OFF, a sufficient analog command can run the drive with
+the contact open. Confirm the settings and stop response during commissioning.
 
 ## USB connections and installed valves
 
@@ -209,13 +192,12 @@ protocols; do not apply their connection semantics to analog sensor wires.
 - [HiLetgo seller listing](https://www.amazon.ca/dp/B01HTC4XKY) and the user's
   supplied product-description screenshot: fixed 5:1 division; header + revision
   remains unresolved.
-- [EC Buying seller specification](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR):
-  3.3-12 V supply, 3.3 V PWM compatibility, 0-10 V output option, nonisolated.
+- [Garosa 3.3P-10V seller specification](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2).
 - [Espressif pin definitions](https://documentation.espressif.com/esp32-wroom-32e_esp32-wroom-32ue_datasheet_en.html).
 - [Omega datasheet](https://assets.omega.com/pdf/test-and-measurement-equipment/pressure/pressure-transducers/PX309.pdf).
 - [McMillan manual](https://www.mcmflow.com/wp-content/uploads/2015/02/101-M002.pdf).
-- [Manufacturer-authored pump manual, mirrored copy](https://manualmachine.com/coleparmer/7521130/15945005-instruction-manual/),
-  printed pages 12-13.
+- [Masterflex 75211-70 operating manual, manufacturer-authored mirror](https://manualmachine.com/masterflex/7521170/15984751-instruction-manual/),
+  A-1299-1142 Edition 02, pp. 3-21 to 3-24.
 
 No lab port was opened, wiring measured, firmware uploaded or physical output
 operated while preparing this guide. Pin assignments are a design handoff;

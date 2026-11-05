@@ -2,7 +2,7 @@
 
 This **source-only example** measures no sensors and controls no actuators. It
 generates candidate **GPIO25**, 3.3 V PWM, **1 kHz**, 12-bit timer resolution to
-bench-check the selected [EC Buying B0CPJGFCGR converter](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR)
+bench-check the [Garosa 3.3P-10V converter](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2)
 before the full controller's pressure/profile commissioning. It is a separate
 PlatformIO project, not a fifth factory image, GUI shortcut or production mode.
 Flashing it replaces the board's current program. Normal app connections do not
@@ -10,18 +10,15 @@ understand this example's serial text protocol.
 
 ## Disconnect first
 
-Keep **every pump DB15 wire disconnected**, the pump stop circuit isolated,
+Keep **every pump DB25 wire disconnected**, the pump stop circuit isolated,
 and **all external relay COM/NO/NC contact wires disconnected throughout**.
 Do not connect the pump while this firmware is installed. This example does
 not configure relays, pressure/flow/feedback ADCs or a pump-stop GPIO.
 
-Confirm GPIO25 is exposed and suitable on the actual board. With power off,
-connect GPIO25 to converter PWM and the reviewed ESP32/supply reference to
-converter GND. Power converter VIN only from a verified regulated supply inside
-its stated 3.3-12 V range; a nominal 12 V supply needs tolerance/startup checks.
-Select the received module's **0-10 V** output range. Its reference is shared,
-not isolated. Connect only a voltmeter between converter OUT and GND; keep OUT
-disconnected from the pump. See the [pump handoff](../../../hardware/pump-interface.md).
+Confirm GPIO25 is exposed on the actual board. With power off, connect GPIO25
+to Garosa PWM+ and ESP32 GND to PWM-. Set the 5V input jumper and connect a
+regulated 24 V DC supply to the Garosa supply pair. Connect only a voltmeter
+across AO+ and AO-. See the [pump handoff](../../../hardware/pump-interface.md).
 
 ## Build and upload manually on an installed Windows PC
 
@@ -69,7 +66,7 @@ example, this manual command opens only the COM port you specify:
 
 ## Bench sequence
 
-1. With the pump/relay loads still disconnected, send `0` and measure OUT.
+1. With the pump/relay loads still disconnected, send `0` and measure AO+ relative to AO-.
 2. Send the exact uppercase phrase `PUMP DISCONNECTED`, press Enter, then send
    **one** of `25`, `50`, `75`, `100` within five seconds. Each positive command
    requires a fresh phrase. The intended output targets are respectively

@@ -78,7 +78,7 @@ def source_files(root: Path) -> dict[str, bytes]:
                  "docs/flow-sensor-troubleshooting.md",
                  "docs/normal-valves.md", "docs/scale-connection.md",
                  "docs/serial-recovery.md",
-                 "docs/pwm-converter-setup.md", "hardware/procurement.md",
+                 "docs/pwm-converter-setup.md", "docs/ordered-parts-wiring.md", "hardware/procurement.md",
                  "docs/full-firmware.md", "hardware/README.md", "hardware/relay-board-pin-plan.md",
                  "hardware/pump-interface.md", "packaging/build_firmware.py", "LICENSE"):
         path = root / name

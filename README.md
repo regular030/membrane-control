@@ -9,10 +9,11 @@ sequences and saving results. **Start with the demo. No USB devices are needed.*
 
 Open the [short Start here guide](docs/START-HERE.md).
 
-For the ordered HiLetgo dividers and EC Buying PWM converter, use the
-[current wiring guide](docs/ordered-parts-wiring.md). It explains the fixed
-5:1 scaling, the GPIO34/36/39 input map avoiding GPIO35, and what remains to
-configure before sensor readings and pump operation are available.
+For the Masterflex 75211-70, Garosa converter and HiLetgo dividers, use the
+[current wiring guide](docs/ordered-parts-wiring.md). It lists the six DB25
+connections and ESP32 GPIO25/34/36/39. Identify the pump's spare relay with
+[Find pump relay](docs/relay-board-test.md#find-the-pumps-spare-relay) before
+assigning its bit in the hardware profile.
 
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and download the Windows `.exe` under **Assets**. For a fresh PC including
@@ -77,11 +78,11 @@ See [automatic GitHub builds](docs/development.md#automatic-github-builds).
 - [Development](docs/development.md): run the source, tests and Windows build.
 - [ESP32 setup](firmware/README.md): USB detection, firmware upload and hardware verification.
 - [Full firmware release](docs/full-firmware.md): controller source, compiled images and the four upload choices.
-- [Real relay board test](docs/relay-board-test.md): test the unloaded relay board and record its channel mapping.
+- [Real relay board test](docs/relay-board-test.md): pulse unloaded contacts and identify the pump's spare relay bit.
 - [Six valves with normal firmware](docs/normal-valves.md): version 0.1.16 uses V1-V5 and V7 = bits 0, 1, 2, 3, 5, 6, with normal ON/OFF controls and no sensors or extra profile form. V6 is absent.
-- [Scale connection and raw data](docs/scale-connection.md): COM6/9600, automatic weight requests and actual received-data diagnostics.
+- [Scale connection and raw data](docs/scale-connection.md): the lab confirmed USB readings with default settings. Troubleshooting is available if needed.
 - [Legacy valve pulse test](docs/valve-test.md): older separate firmware for short solenoid tests.
-- [Pump PWM wiring handoff](hardware/pump-interface.md#connecting-the-ec-buying-converter-when-it-arrives): selected Amazon module and connection steps for the lab maintainer.
+- [Pump PWM wiring handoff](hardware/pump-interface.md#garosa-converter-wiring): Garosa converter and Masterflex DB25 connections.
 - [PWM converter setup](docs/pwm-converter-setup.md): what to order, firmware setup and disconnected-pump checks.
 - [Architecture](docs/architecture.md) and [protocol](protocol/v1.md): how the code fits together.
 - [Hardware](hardware/README.md), [parts](hardware/procurement.md) and [pin plan](hardware/relay-board-pin-plan.md).

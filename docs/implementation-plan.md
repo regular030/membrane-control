@@ -20,7 +20,7 @@ Acceptance: known values and units match expected tolerances; stale values are m
 
 ## Stage 4 Outputs and pump
 
-Verify every output with suitable disconnected bench tests. The selected EC Buying
+Verify every output with suitable disconnected bench tests. The selected Garosa 3.3P-10V
 module converts ESP32 PWM to 0-10 V. Measure zero/full-scale, settling, loss of PWM
 and startup/reset behavior with the pump disconnected. Verify that the separate
 stop contact remains stopped while command voltage settles and on any fault.
@@ -43,8 +43,8 @@ Acceptance: clean-machine installation test; CSV export verified against stored 
 ## Open decisions
 
 - Selected 16-channel ESP32 board revision, schematic, shift-register pins, free I2C/GPIO pins and relay polarity.
-- DB15 pump is now identified as Cole-Parmer 75211-30. Verify its revision,
-  selected mode, analog returns and harness; identify the future DB25 drive.
+- Current pump is the Masterflex 75211-70 with DB25. Verify its revision,
+  selected mode, analog returns and harness.
 - Analogue front-end design, electrical isolation and sensor supply arrangements.
 - Lab-approved limits, shutdown behavior and independent emergency shutdown.
 - Definition of old unlabeled controls and partially visible table columns.

@@ -18,6 +18,7 @@ basu::SafetyConfig makeSafety() {
   safety.safeProfileVerified = board.safeProfileVerified;
   safety.pressureLimitPsi = board.pressureLimitPsi;
   safety.safeValves = board.safeValves;
+  safety.valve6Absent = !kSimulation && basu::hasAbsentValve6(board);
   safety.sensorMaxAgeMs = board.sensorMaxAgeMs;
   return safety;
 }
@@ -38,7 +39,7 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false) {
   if (error) document["error"] = error;
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.16";
+    document["firmware_version"] = "0.1.17";
     document["valve_control_ready"] = hardware.valveControlReady();
     document["manual_valve_count"] = basu::kManualValveCount;
     JsonArray ids = document["manual_valve_ids"].to<JsonArray>();

@@ -323,6 +323,217 @@ void test_gp8403_range_zero_and_health_probe_are_preserved_without_ledc_calls() 
   TEST_ASSERT_EQUAL(0, fake::ledcCalls);
 }
 
+BoardConfig onboardContactFixture() {
+  auto config = pwmFixture();
+  config.pumpContactPin = -1;
+  config.pumpContactBit = 15;  // Arbitrary test bit, never a factory assignment.
+  config.valveBits = {{0, 1, 2, 3, 5, 4, 6}};
+  return config;
+}
+
+struct LatchedWord { uint16_t word; unsigned sequence; };
+
+std::vector<LatchedWord> latchedWords() {
+  std::vector<LatchedWord> words;
+  int data = 0;
+  uint16_t word = 0;
+  unsigned clocks = 0;
+  for (const auto& event : fake::gpioEvents) {
+    if (!event.write) continue;
+    if (event.pin == 14) data = event.value;
+    if (event.pin == 13 && event.value == HIGH) {
+      word = static_cast<uint16_t>((word << 1) | data);
+      ++clocks;
+    }
+    if (event.pin == 12 && event.value == HIGH) {
+      TEST_ASSERT_EQUAL(16, clocks);
+      words.push_back({word, event.sequence});
+      word = 0;
+      clocks = 0;
+    }
+  }
+  return words;
+}
+
+void test_onboard_contact_must_be_spare_in_range_low_at_rest_and_exclusive() {
+  TEST_ASSERT_EQUAL(-1, BoardConfig{}.pumpContactBit);
+  TEST_ASSERT_NULL(validateBoardConfig(onboardContactFixture()));
+  for (int bit : {-2, 0, 4, 6, 16}) {
+    auto config = onboardContactFixture();
+    config.pumpContactBit = bit;
+    TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  }
+  auto config = onboardContactFixture();
+  config.shiftBitCount = 8;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  config = onboardContactFixture();
+  config.pumpContactPin = 26;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  config = onboardContactFixture();
+  config.shiftUnusedLevels = 0x8000;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  config = onboardContactFixture();
+  config.pumpContactActiveHigh = false;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  config = onboardContactFixture();
+  config.relayKind = RelayKind::DirectGpio;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+}
+
+void test_onboard_startup_latches_stopped_before_enabling_outputs() {
+  Hardware hardware(onboardContactFixture(), false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_EQUAL(5, fake::gpioEvents.front().pin);
+  TEST_ASSERT_EQUAL(HIGH, fake::gpioEvents.front().value);
+  const auto words = latchedWords();
+  TEST_ASSERT_EQUAL(1, words.size());
+  TEST_ASSERT_EQUAL_HEX16(0, words[0].word);
+  TEST_ASSERT_TRUE(words[0].sequence < fake::ledcEvents.front().sequence);
+  for (const auto& event : fake::gpioEvents) {
+    TEST_ASSERT_NOT_EQUAL(26, event.pin);
+    if (event.write && event.pin == 5 && event.value == LOW)
+      TEST_ASSERT_TRUE(event.sequence > words[0].sequence);
+  }
+  TEST_ASSERT_EQUAL(LOW, fake::levels[5]);
+}
+
+void test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run() {
+  Hardware hardware(onboardContactFixture(), false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  fake::gpioEvents.clear();
+  Outputs first = pump(50);
+  first.valves[0] = true;
+  TEST_ASSERT_TRUE(hardware.apply(first, 1000));
+  TEST_ASSERT_TRUE(hardware.apply(first, 1099, true));
+  TEST_ASSERT_TRUE(hardware.apply(first, 1100, false));
+  TEST_ASSERT_EQUAL(1, latchedWords().size());
+  TEST_ASSERT_EQUAL_HEX16(0x0001, latchedWords()[0].word);
+  TEST_ASSERT_TRUE(hardware.apply(first, 1100, true));
+  TEST_ASSERT_EQUAL(2, latchedWords().size());
+  TEST_ASSERT_EQUAL_HEX16(0x8001, latchedWords()[1].word);
+
+  fake::gpioEvents.clear();
+  fake::ledcEvents.clear();
+  Outputs next = pump(25);
+  next.valves[1] = true;
+  TEST_ASSERT_TRUE(hardware.apply(next, 1101, true));
+  const auto change = latchedWords();
+  TEST_ASSERT_EQUAL(2, change.size());
+  TEST_ASSERT_EQUAL_HEX16(0x0001, change[0].word);  // STOP preserves existing valves.
+  TEST_ASSERT_EQUAL_HEX16(0x0002, change[1].word);
+  TEST_ASSERT_TRUE(change[0].sequence < change[1].sequence);
+  TEST_ASSERT_TRUE(change[1].sequence < fake::ledcEvents.front().sequence);
+  TEST_ASSERT_TRUE(hardware.apply(next, 1201, true));
+  TEST_ASSERT_EQUAL_HEX16(0x8002, latchedWords().back().word);
+
+  fake::gpioEvents.clear();
+  fake::ledcEvents.clear();
+  hardware.safeStop();
+  const auto stop = latchedWords();
+  TEST_ASSERT_EQUAL(2, stop.size());
+  TEST_ASSERT_EQUAL_HEX16(0x0002, stop[0].word);
+  TEST_ASSERT_EQUAL_HEX16(0, stop[1].word);
+  TEST_ASSERT_EQUAL(0, fake::ledcEvents.front().value);
+  TEST_ASSERT_TRUE(stop[0].sequence < fake::ledcEvents.front().sequence);
+  TEST_ASSERT_TRUE(fake::ledcEvents.front().sequence < stop[1].sequence);
+}
+
+void test_onboard_contact_opens_even_if_pwm_cannot_be_zeroed() {
+  Hardware hardware(onboardContactFixture(), false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.apply(pump(50), 1000));
+  TEST_ASSERT_TRUE(hardware.apply(pump(50), 1100, true));
+  TEST_ASSERT_EQUAL_HEX16(0x8000, latchedWords().back().word);
+  fake::gpioEvents.clear();
+  fake::ledcEvents.clear();
+  fake::ledcSetFails = fake::ledcStopFails = true;
+  hardware.safeStop();
+  const auto stop = latchedWords();
+  TEST_ASSERT_FALSE(hardware.ready());
+  TEST_ASSERT_EQUAL(2048, fake::ledcDuties[0]);
+  TEST_ASSERT_EQUAL_HEX16(0, stop.front().word);
+  TEST_ASSERT_TRUE(stop.front().sequence < fake::ledcEvents.front().sequence);
+  TEST_ASSERT_FALSE(hardware.apply(pump(50), 2000, true));
+  TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
+}
+
+void test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile() {
+  for (bool fullReady : {false, true}) {
+    auto config = onboardContactFixture();
+    config.verifiedBoardConfig = fullReady;
+    Hardware hardware(config, false);
+    TEST_ASSERT_EQUAL(fullReady, hardware.begin());
+    TEST_ASSERT_TRUE(hardware.beginManualValves(confirmedRigManualValves()));
+    fake::gpioEvents.clear();
+    const unsigned pwmCalls = fake::ledcCalls;
+    TEST_ASSERT_TRUE(hardware.applyManualValves({{true, true, true, true, true, false, true}}));
+    TEST_ASSERT_EQUAL(pwmCalls, fake::ledcCalls);
+    TEST_ASSERT_EQUAL(1, latchedWords().size());
+    TEST_ASSERT_EQUAL_HEX16(0x006f, latchedWords()[0].word);
+    hardware.safeStop();
+    TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
+  }
+}
+
+void test_manual_fallback_rejects_pump_overlap_or_active_low_relay() {
+  for (bool overlap : {false, true}) {
+    auto config = onboardContactFixture();
+    config.verifiedBoardConfig = false;
+    config.pumpContactBit = overlap ? 6 : 15;
+    config.pumpContactActiveHigh = overlap;
+    Hardware hardware(config, false);
+    TEST_ASSERT_FALSE(hardware.begin());
+    TEST_ASSERT_FALSE(hardware.beginManualValves(confirmedRigManualValves()));
+    TEST_ASSERT_FALSE(hardware.valveControlReady());
+    TEST_ASSERT_EQUAL(0, fake::gpioCalls);
+  }
+}
+
+void test_absent_v6_frees_bit4_and_rejects_commands_to_the_absent_valve() {
+  auto config = onboardContactFixture();
+  config.pumpContactBit = 4;
+  config.valveBits[kValve6Slot] = -1;
+  TEST_ASSERT_NULL(validateBoardConfig(config));
+  auto invalid = config;
+  invalid.safeValves[kValve6Slot] = true;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(invalid));
+  invalid = config;
+  invalid.valveBits[4] = -1;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(invalid));
+
+  Outputs requested = pump(25);
+  requested.valves[6] = true;
+  requested.valves[kValve6Slot] = true;
+  Recipe recipe;
+  recipe.name = "V6 command";
+  recipe.stepCount = 1;
+  recipe.steps[0] = {"Test", 10, requested};
+  SafetyConfig safety;
+  safety.valve6Absent = true;
+  Controller core(safety);
+  TEST_ASSERT_NOT_NULL(core.load(recipe));
+  TEST_ASSERT_NOT_NULL(core.manual(requested, 0));
+  TEST_ASSERT_TRUE(core.state() == State::Idle);
+  Controller legacy;
+  TEST_ASSERT_NULL(legacy.load(recipe));
+  TEST_ASSERT_NULL(legacy.manual(requested, 0));
+
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.beginManualValves(confirmedRigManualValves()));
+  requested.valves[kValve6Slot] = false;
+  TEST_ASSERT_TRUE(hardware.applyManualValves(requested.valves));
+  TEST_ASSERT_EQUAL_HEX16(0x0040, latchedWords().back().word);
+  hardware.safeStop();
+  TEST_ASSERT_NULL(core.manual(requested, 0));
+  TEST_ASSERT_TRUE(hardware.apply(requested, 1000));
+  TEST_ASSERT_TRUE(hardware.apply(requested, 1100, true));
+  TEST_ASSERT_EQUAL_HEX16(0x0050, latchedWords().back().word);
+  requested.valves[kValve6Slot] = true;
+  TEST_ASSERT_FALSE(hardware.apply(requested, 1101, true));
+  TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_default_and_unreviewed_pwm_never_touch_any_gpio_i2c_or_ledc);
@@ -343,5 +554,12 @@ int main() {
   RUN_TEST(test_settling_timer_is_correct_across_millis_rollover);
   RUN_TEST(test_pending_activation_cannot_beat_watchdog_or_pressure_fault);
   RUN_TEST(test_gp8403_range_zero_and_health_probe_are_preserved_without_ledc_calls);
+  RUN_TEST(test_onboard_contact_must_be_spare_in_range_low_at_rest_and_exclusive);
+  RUN_TEST(test_onboard_startup_latches_stopped_before_enabling_outputs);
+  RUN_TEST(test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run);
+  RUN_TEST(test_onboard_contact_opens_even_if_pwm_cannot_be_zeroed);
+  RUN_TEST(test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile);
+  RUN_TEST(test_manual_fallback_rejects_pump_overlap_or_active_low_relay);
+  RUN_TEST(test_absent_v6_frees_bit4_and_rejects_commands_to_the_absent_valve);
   return UNITY_END();
 }

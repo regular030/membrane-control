@@ -1,15 +1,17 @@
-# Adam Nimbus scale: USB-B, COM6 and 9600
+# Connect the Adam Nimbus scale over USB
 
-The current scale is **Adam Nimbus NBL 8201e**. Its display changes normally.
-It is connected through its square **USB-B I/O** port and currently appears as
-**COM6** on the lab PC. The ESP32 uses its own separate port. The former green
-USB-to-RS232 adapter is not the current connection.
+On 5 November 2026, the user reported that the **Adam Nimbus NBL 8201e**
+was reading in the app with default settings. The scale connects directly to
+the lab PC through its square **USB-B I/O** port. Windows previously listed it
+as **COM6**, separate from the ESP32's port.
 
-## Try app 0.1.15
+## Connect in the app
 
 1. Open **Connections and settings** with Simulation mode off.
-2. Under Balance, select **COM6**, **9600**, and the serial format matching the
-   balance's menu: **NONE = 8N1**, **EVEN = 7E1**, **ODD = 7O1**.
+2. Under **Balance**, select the scale's current COM port. The app defaults to
+   **9600 baud** and **NONE · 8N1**. If the scale uses different settings,
+   match its baud and parity in the app. **EVEN** uses **7E1** and **ODD** uses
+   **7O1**.
 3. Leave **Request weight every second** checked and click **Connect**.
    The app requests a weight when a fresh weight is not already streaming.
 4. Watch **Balance mass** on Dashboard. **Request reading** also sends a manual
@@ -22,7 +24,7 @@ The displayed mass and connection evidence still require actual valid data.
 ## If no weight arrives
 
 Open **Test scale / raw data** in the Balance section. This closes the main
-scale connection first so two windows cannot compete for COM6. Select the same
+scale connection first so two windows cannot compete for the port. Select the same
 port, baud and format, then **Connect** and **Request reading**. The window
 shows actual received bytes, decoded lines, parsed masses and errors, with both
 escaped text and hexadecimal data.
@@ -47,9 +49,6 @@ For a continuous output setup, the balance menu can use `CONTIN ON`,
 `STABLE OFF`, `PERIOD OFF` and `SINGLE`. The app's polling option also supports
 requesting readings without relying on continuous output. Close the diagnostic
 window before reconnecting the scale in the main app.
-
-These software changes were checked with fake serial data. A live COM6 test is
-still needed to confirm that this physical balance responds.
 
 Sources: [official Nimbus manual, sections 11 and 13.3](https://adamequipment.com.cn/media/docs/manuals/NBLe_i_UM_EN.pdf)
 and [pySerial control-line documentation](https://pyserial.readthedocs.io/en/latest/pyserial_api.html#serial.Serial.dtr).

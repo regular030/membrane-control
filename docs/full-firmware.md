@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.16 includes the complete controller source and compiled ESP32 images,
+Version 0.1.17 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.16-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.17-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -41,7 +41,8 @@ Setup prepares all four build targets without opening a COM port or uploading.
 For this rig, use **Flash normal controller** (`esp32-physical`), then the six
 Dashboard ON/OFF buttons. No separate pulse-test program/profile is required.
 V6 is absent: wire-array index 5 is reserved false, while V7 uses index 6.
-Unused relay bit 4 and bits 7-15 stay LOW. Firmware advertises the explicit
+Factory manual valve control keeps bit 4 and bits 7-15 LOW. A reviewed full
+profile may use a separately tested spare for pump start/stop. Firmware advertises the explicit
 `manual_valve_ids: [1,2,3,4,5,7]` and `valve_bits: [0,1,2,3,5,6]` mapping.
 See [six valves with normal firmware](normal-valves.md).
 App 0.1.14 adds **Set up valve mapping and firmware** in the valve-test window.
@@ -54,12 +55,12 @@ its README and manifest rather than treating `firmware.bin` as a complete image.
 
 ## Finish the physical hardware profile
 
-The selected Amazon EC Buying module uses a **PWM signal**, not I2C. Version
-0.1.13 adds this pump-command option alongside the existing GP8403 driver.
-Select the converter in the reviewed compiled profile; do not use a GP8403
-profile or assume that an upload completes the wiring. The guide and example
-profile explain the PWM pin, independent STOP contact and analog settling checks:
-[PWM converter setup](pwm-converter-setup.md).
+The installed Masterflex 75211-70 uses the Garosa 3.3P-10V PWM converter.
+The PWM backend is available alongside the earlier GP8403 option. Use a
+reviewed compiled profile with measured settling and a verified pump contact.
+The selected plan uses a spare 74HC595 relay with its bit still unassigned.
+GPIO26 is only for the external contact-driver alternative. See
+[PWM converter setup](pwm-converter-setup.md) for the wiring and checks.
 
 The firmware sources also include a standalone
 [`pwm-converter-bench` example](../firmware/examples/pwm-converter-bench/README.md)
@@ -83,7 +84,7 @@ start/stop interface and process pressure limit. See the
 The full source accepts a separately reviewed profile through
 `BASU_VERIFIED_PROFILE_HEADER`; the default remains unverified. An app checkbox
 does not replace that profile. Do not copy 5 V/10 V analog signals directly to
-ESP32 GPIOs, or interpret the DB15 connector as a voltage specification.
+ESP32 GPIOs, or use a connector number alone as a voltage specification.
 
 **Desired flow (mL/min)** is currently a saved comparison target. It does not
 implement automatic flow control or change firmware pump percentages. Establish

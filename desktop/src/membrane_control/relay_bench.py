@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from .device_status import MANUAL_VALVE_BITS
 from .transport import SerialTransport, close_transport
 
 
@@ -285,9 +286,12 @@ class RelayBenchSession:
             complete = same_probe and op['seen_active'] and status['state'] == 'ready'
         if complete:
             self.operation = None
-            self.message = ('Rest-pattern test completed. Only confirm if all relays stayed off.'
-                            if op['command'] == 'bench_probe' else
-                            'Ready for one 500 ms raw-bit pulse. Relay contacts are not monitored.')
+            if op['command'] == 'bench_probe':
+                self.message = 'Rest-pattern test completed. Only confirm if all relays stayed off.'
+            elif op['command'] == 'bench_pulse':
+                self.message = f"Bit {op['bit']} pulse finished. Record the bit if you observed the target contacts close."
+            else:
+                self.message = 'Ready for one 500 ms raw-bit pulse. Relay contacts are not monitored.'
 
     def _handle_packet(self, packet, now):
         if not isinstance(packet, dict):
@@ -480,6 +484,14 @@ class RelayBenchDialog(QDialog):
         self.observation_checkbox = QCheckBox('All relays stayed off during the rest-pattern test')
         self.observation_checkbox.clicked.connect(self._observation_clicked)
         layout.addWidget(self.observation_checkbox)
+        self.pump_finder_checkbox = QCheckBox('Find pump relay (spare bits only)')
+        self.pump_finder_checkbox.toggled.connect(self._render)
+        layout.addWidget(self.pump_finder_checkbox)
+        self.pump_finder_hint = QLabel('With all loads disconnected, check continuity across COM and NO '
+                                      'on the relay chosen for the pump. Pulse one enabled bit at a time. '
+                                      'Record the bit and the printed relay number when the contact closes.')
+        self.pump_finder_hint.setWordWrap(True)
+        layout.addWidget(self.pump_finder_hint)
         grid = QGridLayout()
         self.pulse_buttons = []
         for bit in range(16):
@@ -591,6 +603,8 @@ class RelayBenchDialog(QDialog):
             self._render()
 
     def pulse(self, bit):
+        if self.pump_finder_checkbox.isChecked() and bit in MANUAL_VALVE_BITS:
+            return
         self._act(lambda: self.session.pulse(bit))
 
     def _tick(self):
@@ -618,8 +632,12 @@ class RelayBenchDialog(QDialog):
                                 (self.observation_checkbox, session.observed)):
             with QSignalBlocker(checkbox):
                 checkbox.setChecked(value)
-        for button in self.pulse_buttons:
-            button.setEnabled(live and session.can_pulse)
+        finding_pump = self.pump_finder_checkbox.isChecked()
+        self.pump_finder_checkbox.setEnabled(live and not session.busy)
+        self.pump_finder_hint.setVisible(finding_pump)
+        can_pulse = live and session.can_pulse
+        for bit, button in enumerate(self.pulse_buttons):
+            button.setEnabled(can_pulse and (not finding_pump or bit not in MANUAL_VALVE_BITS))
         self.status_label.setText(session.error or session.message)
         if session.fresh:
             status = session.status

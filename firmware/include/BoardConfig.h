@@ -59,6 +59,7 @@ struct BoardConfig {
   AnalogConfig pumpFeedback;
   double pressureLimitPsi = NAN;
   uint32_t sensorMaxAgeMs = 1000;
+  int pumpContactBit = -1;  // Reviewed spare 595 bit; leave -1 for a separate GPIO contact.
 };
 
 inline bool outputCapablePin(int pin) {
@@ -83,6 +84,10 @@ inline bool boardUsesAds(const BoardConfig& config) {
 
 inline bool boardUsesI2c(const BoardConfig& config) {
   return config.pumpCommandSource == PumpCommandSource::Gp8403 || boardUsesAds(config);
+}
+
+inline bool hasAbsentValve6(const BoardConfig& config) {
+  return config.relayKind == RelayKind::ShiftRegister595 && config.valveBits[kValve6Slot] == -1;
 }
 
 inline const char* pumpCommandSourceName(PumpCommandSource source) {
@@ -130,7 +135,12 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
     used[pin] = true;
     return true;
   };
-  if (!reserve(config.pumpContactPin)) return "pump contact pin invalid, reserved or conflicting";
+  if (config.pumpContactBit == -1) {
+    if (!reserve(config.pumpContactPin)) return "pump contact pin invalid, reserved or conflicting";
+  } else if (config.pumpContactBit < 0 || config.pumpContactPin != -1 ||
+             config.relayKind != RelayKind::ShiftRegister595 || !config.pumpContactActiveHigh) {
+    return "pump RUN bit requires a 595 relay chain, active-high RUN and no contact GPIO";
+  }
   if (boardUsesI2c(config) || config.i2cSdaPin != -1 || config.i2cSclPin != -1) {
     if (!reserve(config.i2cSdaPin) || !reserve(config.i2cSclPin))
       return "I2C pins invalid or conflicting";
@@ -149,9 +159,19 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
         !reserve(config.shiftLatchPin) || !reserve(config.shiftOePin))
       return "74HC595 pins invalid or conflicting";
     std::array<bool, 16> mapped{};
-    for (int bit : config.valveBits) {
+    for (std::size_t slot = 0; slot < kValveCount; ++slot) {
+      if (slot == kValve6Slot && hasAbsentValve6(config)) {
+        if (config.safeValves[slot]) return "absent V6 must be off in the safe valve state";
+        continue;
+      }
+      const int bit = config.valveBits[slot];
       if (bit < 0 || bit >= config.shiftBitCount || mapped[bit]) return "74HC595 valve bits invalid or duplicated";
       mapped[bit] = true;
+    }
+    if (config.pumpContactBit >= 0) {
+      const int bit = config.pumpContactBit;
+      if (bit >= config.shiftBitCount || mapped[bit] || (config.shiftUnusedLevels & (1U << bit)))
+        return "pump RUN bit must be spare, in range and LOW at rest";
     }
   } else return "unknown relay interface";
   bool usesAds = false;
@@ -177,6 +197,7 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
 inline uint16_t shiftLevels(const BoardConfig& config, const Outputs& outputs) {
   uint16_t levels = config.shiftUnusedLevels;
   for (std::size_t i = 0; i < kValveCount; ++i) {
+    if (i == kValve6Slot && hasAbsentValve6(config)) continue;
     const bool high = outputs.valves[i] == config.valveActiveHigh[i];
     const uint16_t bit = static_cast<uint16_t>(1U << config.valveBits[i]);
     levels = high ? (levels | bit) : (levels & ~bit);

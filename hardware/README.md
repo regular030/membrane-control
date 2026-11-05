@@ -1,12 +1,12 @@
 # Hardware baseline
 
 **Current installed valve map, version 0.1.16:** V1, V2, V3, V4, V5 and V7
-use bits 0, 1, 2, 3, 5 and 6. There is no V6 and bit 4 is unused. Use the
+use bits 0, 1, 2, 3, 5 and 6. There is no V6. Bit 4 has no valve assignment. Use the
 [normal valve guide](../docs/normal-valves.md) for sensor-independent ON/OFF
 controls. Earlier seven-valve planning below does not override this map.
 
-Planning baseline updated 26 October 2026. No complete physical wiring profile
-is commissioned yet.
+The installed pump is now the 75211-70 DB25. Its full hardware profile still
+requires commissioning.
 
 See the [25 October relay-board pin plan](relay-board-pin-plan.md) for the
 seller's shift-register GPIO assignments, proposed UART/PWM/analog connections
@@ -16,9 +16,9 @@ and the unresolved board-input voltage discrepancy.
 
 | Equipment | Interface or role |
 | --- | --- |
-| Seven Granzow H4B19-00Y valves | Photos identify 110-120 VAC, 50/60 Hz, 8 W coils |
-| Cole-Parmer 75211-30 digital gear-pump drive | Current DB15 interface; user reports 60-3600 RPM and 0.1 HP |
-| Masterflex L/S pump | Later DB25 profile; exact drive model needed |
+| Six installed Granzow H4B19-00Y valves | Photos identify 110-120 VAC, 50/60 Hz, 8 W coils |
+| Masterflex 75211-70 digital gear pump | Installed DB25 drive. See its model-specific wiring below |
+| Cole-Parmer 75211-30 digital gear-pump drive | Historical DB15 interface |
 | Omega PX309-100G5V | 0-100 psi gauge, 0-5 V analog output |
 | McMillan 101-3T-CM-A2 | Flow measurement; 12-15 V supply, 0-5 V and pulse options |
 | Adam Nimbus NBL 8201e balance | Current: USB-B I/O directly to computer; a second Windows COM port now appears; weight receipt remains to be checked |
@@ -28,39 +28,17 @@ The previously listed Omega USB pressure sensor is not required for the initial 
 
 ## Pump signals
 
-See [pump input/output clarification](pump-interface.md): **pump VOUT goes to
-a protected ADC; the selected PWM-to-voltage converter drives pump VIN**. DB15 alone does not establish
-either signal's range. The user has now identified **75211-30**; the matching
-manufacturer manual confirms the model's 0-10 V voltage-control interface.
+The [pump wiring guide](pump-interface.md) covers the **75211-70** and the
+[Garosa 3.3P-10V converter](https://www.amazon.ca/Voltage-Module-Voltage-Converter-Digital-Analog/dp/B07WZNV1V2). Garosa AO+/AO- drive DB25 1/3.
+Its PWM input uses ESP32 GPIO25 and GND, and its power pair takes regulated
+24 V DC. DB25 14/5 provide an optional running command voltage output.
+Check its reference paths before connecting the divider.
 
-Cable tags show a 0-10 V speed command, separate 0-10 V speed output and remote
-start/stop. Their old DB15 signal numbers agree with the 75211-30 diagram, but
-the generic GROUND tag identifies pin 12, the start/stop return. The analog
-return pins 3 and 5 still need tracing in the harness. The new DB25 annotations
-refer to a future interface, not this drive's connector.
-
-The 75211-30 manual documents command **DB15 1(+)/3(-)**, speed feedback
-**9(+)/5(-)** and remote contact **10/12**. This replaces the earlier inference
-from labels alone. Check the drive's selected mode, harness continuity and
-conditioning before connecting a replacement controller. Pin 12 is not shown
-as the common return for both analog signals.
-
-The selected purchase is **one EC Buying B0CPJGFCGR PWM-to-0-10 V converter**
-from [Amazon Canada](https://www.amazon.ca/EC-Buying-Converter-Adjustable-Conversion/dp/B0CPJGFCGR).
-Use proposed GPIO25 for PWM and the separate GPIO26-driven isolated pump stop
-interface, subject to review of the exposed header and compiled profile. The
-converter is nonisolated and its stated supply maximum is 12 V; verify the
-existing regulated supply and reference arrangement. It does not require an
-extra DAC or Arduino. Price and delivery to the lab remain unverified.
-
-Follow the [order list](procurement.md#order-for-the-selected-pump-interface)
-and [unloaded wiring/bench handoff](pump-interface.md#connecting-the-ec-buying-converter-when-it-arrives).
-OUT goes toward pump command 1/3; feedback 9/5 and the isolated stop contact
-10/12 are separate paths. The firmware backend is selected in a reviewed
-production profile; it does not unlock a shipped unverified board or remove
-the required pressure/safety checks.
-
-A related [Masterflex family manual](https://documents.thermofisher.com/TFS-Assets/MBD/manuals/Thermo-Scientific-Dry-Bags-Peristaltic-Pump-Complex-Drive-DB3000A-Operating-Manual-GLOBAL-EN-low-res.pdf), printed page 3-23, has separate analog-input return, analog-output reference and digital-control reference pins. This is why a generic ground tag cannot establish all return connections. It is not verification of the installed models.
+Start/stop uses the COM/NO terminals of a mapped spare onboard relay across
+DB25 15/17. Its bit remains unassigned. GPIO26 is available for a separate
+isolated contact driver as an alternative. The factory full profile remains
+locked. The earlier DB15 pump and EC Buying converter are documented
+separately in the pump guide.
 
 ## Analog acquisition
 
@@ -81,14 +59,13 @@ if required. The previous green USB-to-RS232 adapter is no longer the selected
 path. USB-A **Display** is for the remote display. Use one PC connection path
 at a time and retain the balance's own power supply.
 
-Select the balance's COM port separately from the ESP32's port. The current app expects **9600 baud, NONE parity / 8N1** by default; the scale and app must match. Enable continuous single-line mass output with units and CRLF line endings. Follow the [Adam manual](https://adamequipment.com.cn/media/docs/manuals/NBLe_i_UM_EN.pdf), including restarting after serial-setting changes. See [balance USB setup](balance-usb-setup.md) for both connection paths. The app listens for weights without sending print/poll commands and marks readings stale after more than 3 seconds without a valid reading.
+Select the balance's COM port separately from the ESP32's port. The current app expects **9600 baud, NONE parity / 8N1** by default; the scale and app must match. Enable continuous single-line mass output with units and CRLF line endings. Follow the [Adam manual](https://adamequipment.com.cn/media/docs/manuals/NBLe_i_UM_EN.pdf), including restarting after serial-setting changes. See [balance USB setup](balance-usb-setup.md) for both connection paths. The app can listen for streamed readings and request a weight when polling is enabled. See the [scale connection guide](../docs/scale-connection.md).
 
 The documented single-line mass stream has weight and unit but no per-reading stability flag. Do not manufacture stability status. Stable-only output can withhold samples while collecting liquid and trigger stale-data status; use continuous output without stable-only filtering for the current acquisition setup.
 
 ## Items to resolve before energizing
 
-- Cole-Parmer drive revision, harness continuity and signal-specific returns;
-  the later Masterflex pump's exact model is still needed.
+- Masterflex DB25 harness continuity, spare relay bit and signal references.
 - Board schematic, relay GPIO/polarity and startup output behavior.
 - Valve contact rating for the actual AC inductive load and wiring protection.
 - Power-supply voltage/current and total controller/interface demand.

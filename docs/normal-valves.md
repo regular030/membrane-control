@@ -18,7 +18,7 @@ names; V7 must not be relabelled V6.
 
 ## Install and use
 
-1. Install **MembraneControl-Setup-0.1.16-windows-x64.exe**.
+1. Install the latest **MembraneControl Setup** from [GitHub Releases](https://github.com/regular030/membrane-control/releases).
 2. Close the app's controller connection. Open the installed **Flash normal
    controller** shortcut, choose the ESP32 port (currently COM5), and follow
    its upload and IO0/EN instructions. This uploads `esp32-physical`, the normal
