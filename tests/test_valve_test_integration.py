@@ -84,7 +84,7 @@ def test_valve_entry_is_discoverable_but_cannot_open_in_simulation(screen, monke
     window._open_valve_test()  # The programmatic entry must enforce the same gate.
     assert controller.simulation and controller.driver is driver
     assert window._valve_test_dialog is None
-    assert 'Simulation mode off' in window.statusBar().currentMessage()
+    assert 'hardware mode' in window.statusBar().currentMessage()
 
 
 @pytest.mark.parametrize('operation', ['running', 'manual', 'starting', 'manual_pending', 'stopping'])

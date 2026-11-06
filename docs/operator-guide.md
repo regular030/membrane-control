@@ -1,8 +1,8 @@
 # Use the app
 
-New user? Start with the [five-minute demo](START-HERE.md).
-The app opens with **Simulation mode** checked. Its demo needs no USB equipment
-and does not control the physical rig.
+New user? Follow [Start here](START-HERE.md) to connect the rig. For practice,
+launch the executable with `--demo` to use generated readings and disabled
+physical outputs.
 
 ## Run a demo and save its results
 

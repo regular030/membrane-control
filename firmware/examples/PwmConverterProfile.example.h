@@ -30,9 +30,24 @@ inline BoardConfig compiledBoardConfig() {
   config.pressure.source = AnalogSource::NativeAdc1;
   config.pressure.pin = 34;  // Requires a separately protected/scaled input.
   config.pressure.calibrationVerified = false;
+  // Certificate endpoints: 0 psi at 0.005 V, 100 psi at 5.004 V.
+  // Candidate coefficients assume the documented 5:1 input divider.
+  config.pressure.unitsPerVolt = 100.0 * 5.0 / (5.004 - 0.005);
+  config.pressure.offset = -0.005 * config.pressure.unitsPerVolt / 5.0;
+  config.pressure.minPinVolts = 0.150;  // Lower end of the production 11 dB ADC range.
+  config.pressure.maxPinVolts = 5.004 / 5.0;
+  config.pressure.minValue = 0;
+  config.pressure.maxValue = 100;
   config.flow.source = AnalogSource::NativeAdc1;
   config.flow.pin = 36;  // SVP, through its own conditioned analog input.
   config.flow.calibrationVerified = false;
+  // Certificate: 20 mL/min at 1.01 V, 50 at 2.48 V, 100 at 5.00 V.
+  // Nominal scale anchored at the 100 mL/min full-scale point.
+  config.flow.unitsPerVolt = 100.0;
+  config.flow.minPinVolts = 0.150;  // 13 mL/min is below the production ADC range.
+  config.flow.maxPinVolts = 1.000;
+  config.flow.minValue = 13;
+  config.flow.maxValue = 100;
   config.pumpFeedback.source = AnalogSource::NativeAdc1;
   config.pumpFeedback.pin = 39;  // SVN, through its own conditioned analog input.
   config.pumpFeedback.calibrationVerified = false;
