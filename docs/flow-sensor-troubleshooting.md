@@ -77,14 +77,25 @@ The calibrated Dashboard metrics, charts, and pressure interlock still require
 a reviewed hardware profile. If the live check is missing, verify that the
 controller is connected and running **Flash normal controller** from 0.1.19.
 
-## Zero the live pressure and flow display
+## Set up the pressure and flow readings
 
-With the pump stopped, no flow, and the reference pressure gauge at zero,
-click **Zero pressure and flow** under the Dashboard's live sensor check. The
-app records the current pressure and flow pin voltages and displays changes
-from that reference in mV. **Clear zero** removes the reference. It also clears
-when the controller reconnects. This reference belongs to the live display.
-The calibrated charts and pressure limit continue to use the reviewed profile.
+With either normal controller build connected, open **Sensor setup** from
+Dashboard or **Connections and settings**. You can see the live pin voltages
+without starting a run. The pressure input is **IO34**, flow is **SVP/GPIO36**,
+and optional pump feedback is **SVN/GPIO39**. Compare each input to your meter
+across its divider's **S** and **−** terminals.
+
+For a baseline, stop the pump, verify zero pressure and no flow, then capture
+the zero for each channel. This shows how many millivolts the signal moves
+from that baseline. To estimate pressure or flow in physical units, capture
+two different steady readings for that sensor and enter each measured
+reference in psi or mL/min. For flow, measure the volume collected and the
+elapsed time. Use **Copy setup readings** before leaving the session to save
+the reference points and calculated scale and offset for the rig's profile.
+Factory certificates list the sensor voltage before the divider. Use them to
+compare expected and actual voltages, and use independent measurements when
+capturing the installed circuit's references. These setup references are temporary;
+the run charts and pressure limit use the commissioned firmware profile.
 
 ## Read the connection status
 

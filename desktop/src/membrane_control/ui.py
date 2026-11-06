@@ -29,6 +29,7 @@ from .models import MAX_STEPS, Recipe
 from .device_status import device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
+from .sensor_setup import SensorSetupDialog
 from .valve_test import ValveTestDialog
 
 
@@ -153,6 +154,7 @@ class MainWindow(QMainWindow):
         self._relay_bench_dialog = None
         self._valve_test_dialog = None
         self._balance_diagnostics_dialog = None
+        self._sensor_setup_dialog = None
         self._shutdown_started = False
         self._updating = False
         self._last_log = ""
@@ -282,6 +284,8 @@ class MainWindow(QMainWindow):
         self.readiness_label = _label("", "muted", True)
         self.readiness_label.setAccessibleName("What to do next")
         readiness.addWidget(self.readiness_label, 1)
+        self.sensor_setup_button = _button("Sensor setup", self._open_sensor_setup)
+        readiness.addWidget(self.sensor_setup_button)
         self.next_step_button = _button("Start here", lambda: self.tabs.setCurrentIndex(self._next_step_index))
         readiness.addWidget(self.next_step_button)
         outer.addLayout(readiness)
@@ -600,6 +604,8 @@ class MainWindow(QMainWindow):
             f"Copy recent serial events from {self.controller.esp32_log_path}")
         cform.addRow(self.copy_esp32_log_button)
         self.sensor_test_button = _button("Read sensor inputs", self._read_sensor_inputs)
+        self.connections_sensor_setup_button = _button("Sensor setup", self._open_sensor_setup)
+        cform.addRow(self.connections_sensor_setup_button)
         self.sensor_test_button.setToolTip("Read the protected ESP32 input voltages with valves and pump stopped.")
         cform.addRow(self.sensor_test_button)
         self.sensor_test_detail = _label("", "muted", True)
@@ -1112,6 +1118,16 @@ class MainWindow(QMainWindow):
     def _read_sensor_inputs(self):
         self._action(self.controller.read_sensor_inputs, "Requested a sensor voltage check")
 
+    def _open_sensor_setup(self):
+        if self._shutdown_started:
+            return
+        if self._sensor_setup_dialog is None:
+            self._sensor_setup_dialog = SensorSetupDialog(self.controller, self)
+        self._sensor_setup_dialog.refresh()
+        self._sensor_setup_dialog.show()
+        self._sensor_setup_dialog.raise_()
+        self._sensor_setup_dialog.activateWindow()
+
     def _zero_live_sensors(self):
         answer = QMessageBox.question(
             self, "Zero pressure and flow",
@@ -1619,6 +1635,8 @@ class MainWindow(QMainWindow):
                 )
             self.sensor_test_detail.setText(sensor_note)
             live_mv = snap.get("live_sensor_voltages", {}) if sensor_test_available and fresh else {}
+            if self._sensor_setup_dialog is not None and self._sensor_setup_dialog.isVisible():
+                self._sensor_setup_dialog.refresh()
             sensor_zero = snap.get("live_sensor_zero", {})
             self.live_sensor_detail.setVisible(bool(live_mv))
             self.live_sensor_zero_controls.setVisible(bool(live_mv))
@@ -1652,7 +1670,7 @@ class MainWindow(QMainWindow):
             elif snap.get('valve_control_ready'):
                 inputs = snap.get("sensor_inputs", {})
                 if all(inputs.get(key, {}).get("source") == "disabled" for key in ("pressure", "flow")):
-                    hardware_text = ("Manual valves are ready. The Dashboard shows a separate sensor check when available. "
+                    hardware_text = ("Manual valves are ready. Open Sensor setup to check live input voltages. "
                                      "Calibrated pressure and flow still need a reviewed profile.")
                 else:
                     hardware_text = "Six valve controls ready. Manual valves can operate without sensor readings."
@@ -1730,6 +1748,9 @@ class MainWindow(QMainWindow):
         if self._shutdown_started:
             return
         self._shutdown_started = True
+        if self._sensor_setup_dialog is not None:
+            self._sensor_setup_dialog.close()
+            self._sensor_setup_dialog = None
         try:
             self.timer.stop()
         except RuntimeError:

@@ -157,6 +157,85 @@ def test_zero_controls_show_relative_voltages_and_allow_reset(screen, monkeypatc
     assert "Change since zero" not in window.live_sensor_detail.text()
 
 
+def test_sensor_setup_is_discoverable_and_shows_live_inputs_without_other_sensors(screen):
+    window, controller, now = screen
+    window.sensor_setup_button.click()
+    dialog = window._sensor_setup_dialog
+    assert dialog.isVisible()
+    assert "Turn Simulation mode off" in dialog.connection_status.text()
+    assert not dialog.zero_button.isEnabled()
+
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    controller.snapshot.update(controller_connected=True, sensor_test_available=True,
+        live_sensor_voltages={"pressure": 200, "flow": 142, "pump_feedback": 142})
+    window._update_view(dict(controller.snapshot))
+    assert "200 mV" in dialog.live_labels["pressure"].text()
+    assert "142 mV" in dialog.live_labels["flow"].text()
+    assert "below ADC range" not in dialog.live_labels["flow"].text()
+    assert "below ADC range" in dialog.live_labels["pump_feedback"].text()
+    assert dialog.zero_button.isEnabled()
+    dialog.close()
+    window.connections_sensor_setup_button.click()
+    assert window._sensor_setup_dialog is dialog and dialog.isVisible()
+
+
+def test_sensor_setup_compares_explicit_reference_points_without_changing_run_data(screen, monkeypatch):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    controller.snapshot.update(controller_connected=True, sensor_test_available=True,
+        live_sensor_voltages={"pressure": 90, "flow": 142, "pump_feedback": 142})
+    window.sensor_setup_button.click()
+    dialog = window._sensor_setup_dialog
+    assert "psi" in dialog.reference_label.text()
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Ok)
+    dialog.zero_button.click()
+    assert "Zero baseline 90 mV" in dialog.points_detail.text()
+    dialog.reference_value.setText("20")
+    dialog.reference_button.click()
+    assert "outside its usable voltage range" in dialog.action_status.text()
+
+    for mv, psi in [(200, 20), (600, 60)]:
+        controller.snapshot["live_sensor_voltages"]["pressure"] = mv
+        dialog.reference_value.setText(str(psi))
+        dialog.reference_button.click()
+    controller.snapshot["live_sensor_voltages"]["pressure"] = 400
+    window._update_view(dict(controller.snapshot))
+    assert "setup estimate 40.00 psi" in dialog.live_labels["pressure"].text()
+    assert "Change from zero +310 mV" in dialog.points_detail.text()
+    assert controller.snapshot["pressure_psi"] is None
+    assert controller.snapshot["hardware_verified"] is False
+    assert not window.start_button.isEnabled()
+    dialog.copy_button.click()
+    report = QApplication.clipboard().text()
+    assert "Reference: 200 mV at 20 psi" in report
+    assert "Reference: 600 mV at 60 psi" in report
+    assert "Two-point fit: 100 psi/V at ESP32, offset 0 psi" in report
+
+    controller.disconnect_controller(request_stop=False)
+    window._update_view(dict(controller.snapshot))
+    assert dialog.live_labels["pressure"].text() == "Waiting"
+    assert not dialog.clear_button.isEnabled()
+    assert not dialog.copy_button.isEnabled()
+
+
+def test_sensor_setup_keeps_live_view_during_manual_valves_but_blocks_capture(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    controller.snapshot.update(controller_connected=True, sensor_test_available=True,
+        state="manual_valves", live_sensor_voltages={"pressure": 200, "flow": 142, "pump_feedback": 142})
+    window.sensor_setup_button.click()
+    dialog = window._sensor_setup_dialog
+    dialog.reference_value.setText("20")
+    assert "200 mV" in dialog.live_labels["pressure"].text()
+    assert not dialog.reference_button.isEnabled() and not dialog.zero_button.isEnabled()
+    now[0] += 2.1
+    window._update_view(dict(controller.snapshot))
+    assert dialog.live_labels["pressure"].text() == "Waiting"
+
+
 def test_copy_esp32_log_copies_persistent_diagnostics(screen, monkeypatch):
     window, controller, _ = screen
     monkeypatch.setattr(controller, "esp32_log_text", lambda: '{"event":"telemetry_stale"}')

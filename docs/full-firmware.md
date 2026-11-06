@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.22 includes the complete controller source and compiled ESP32 images,
+Version 0.1.23 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.22-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.23-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -14,6 +14,7 @@ The portable application ZIP also contains it. Setup installs it in
 | `esp32-relay-bench` | Real unloaded relay pulses through the board's candidate shift-register interface. Separate test window; no sensors, pump or experiments. |
 | `esp32-valve-test` | Sensor-free, one-at-a-time solenoid pulses using a separate reviewed valve profile. No pump or sensor protection; the supplied factory profile stays locked. |
 | `esp32-physical` | Normal controller. The six installed valves V1-V5/V7 use bits 0, 1, 2, 3, 5, 6 and work manually without sensors or profile forms. The factory image shows live sensor voltages during manual valve operation and while idle. Full pump/experiment operation still needs its configured interfaces and inputs. |
+| `esp32-bluetooth-physical` | Normal controller over Bluetooth. Setup builds this from source with the same hardware profile as the wired controller. |
 
 All targets are for the ESP32-WROOM/classic ESP32 profile used by this project.
 The full controller source is `firmware/src/main.cpp`; its I/O implementation is
@@ -78,6 +79,32 @@ operation. An ESP32 power drop can interrupt both links. This trial checks
 Bluetooth communication while the controller is powered and idle or simulated.
 [ESP32 Bluetooth Classic SPP](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/bluetooth.html)
 · [Windows SPP support](https://learn.microsoft.com/en-us/windows-hardware/drivers/bluetooth/general-bluetooth-support-in-windows)
+
+## Run the normal controller over Bluetooth
+
+1. Use the same lab PC and ESP32 that passed the **MembraneControl-Bench** test.
+   Keep the Windows pairing. If the board is new, pair and run the unloaded
+   Bluetooth test first. The normal Bluetooth firmware uses the one existing
+   bond saved on the ESP32.
+2. Isolate the valve and pump loads. Close the app connection, open **Flash
+   normal controller (Bluetooth)** from Setup 0.1.23, and select the **wired**
+   USB-to-UART COM port for upload. Use the helper's IO0/EN steps. Keep the
+   flash settings and use a regular upload so the saved pairing is preserved.
+3. Turn off desktop **Simulation**. In **Connections and settings**, select
+   the same **outgoing Bluetooth COM port** that worked in the bench test.
+   Windows may still list the saved name as `MembraneControl-Bench`. The
+   app should show **Connected**. Verify one unloaded relay, then check that
+   disconnecting the app releases the relay before using the rig.
+4. Use the six manual valve controls and **Sensor setup**. The Bluetooth
+   build uses the same pump, run and sensor profile as the wired controller.
+   A reconnect starts a new session with outputs in their configured safe state.
+
+If Windows connects to the port but the app gets no reply, capture the wired
+boot log at 115200 baud. If the boot log reports no enrolled bench bond, use
+the Bluetooth test to pair on that PC again. If it reports multiple bonds,
+use the wired normal controller until the board is enrolled to a single lab
+PC. The Bluetooth normal build does not enroll a new PC while able to control
+outputs. The wired normal build is available from **Flash normal controller**.
 
 ## Finish the physical hardware profile
 

@@ -16,6 +16,13 @@ static_assert(BASU_DRY_RUN == 1, "Bluetooth is only available for simulated oper
 #include <atomic>
 #include <freertos/queue.h>
 #endif
+#ifdef BASU_BLUETOOTH_PHYSICAL
+#ifdef BASU_BLUETOOTH_DRY_RUN
+#error Physical and simulated Bluetooth transports are mutually exclusive
+#endif
+static_assert(BASU_DRY_RUN == 0, "Protected Bluetooth requires physical mode");
+#include "ProtectedSpp.h"
+#endif
 
 namespace {
 constexpr bool kSimulation = BASU_DRY_RUN != 0;
@@ -79,17 +86,50 @@ bool bluetoothSessionCurrent() {
 }
 #endif
 
-void writeDocument(const JsonDocument& document) {
-#ifdef BASU_BLUETOOTH_DRY_RUN
+#ifdef BASU_BLUETOOTH_PHYSICAL
+basu::BluetoothLinkToken physicalBluetoothToken;
+basu::BluetoothCommandLease physicalBluetoothLease;
+
+bool physicalBluetoothCurrent() {
+  return physicalBluetoothToken.handle && physicalBluetoothToken == basu::protectedSpp::current();
+}
+
+void stopBluetoothSession() {
+  physicalBluetoothLease.reset();
+  lastManualValvesReceiptId = 0;
+  controller.endControlSession();
+  hardware.safeStop();
+}
+
+void syncBluetoothSession() {
+  const auto token = basu::protectedSpp::current();
+  if (token == physicalBluetoothToken) return;
+  physicalBluetoothToken = token;
+  lineLength = 0;
+  discardingOversize = false;
+  stopBluetoothSession();
+}
+#endif
+
+void writeDocument(const JsonDocument& document, bool telemetry = false) {
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  if (!physicalBluetoothCurrent()) return;
+#elif defined(BASU_BLUETOOTH_DRY_RUN)
   if (!bluetoothSessionCurrent()) return;
-  char frame[1024];
+#endif
+  // Only the controller loop serializes frames. Keep this buffer off its
+  // stack and write the complete bounded frame to either transport at once.
+  static char frame[1024];
   if (measureJson(document) >= sizeof(frame)) return;
   const std::size_t length = serializeJson(document, frame, sizeof(frame));
   frame[length] = '\n';
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  static_assert(sizeof(frame) == basu::protectedSpp::kFrameBytes);
+  basu::protectedSpp::send(physicalBluetoothToken, frame, length + 1, telemetry);
+#elif defined(BASU_BLUETOOTH_DRY_RUN)
   bluetooth.write(reinterpret_cast<const uint8_t*>(frame), length + 1);
 #else
-  serializeJson(document, Serial);
-  Serial.write('\n');
+  Serial.write(reinterpret_cast<const uint8_t*>(frame), length + 1);
 #endif
 }
 
@@ -138,6 +178,9 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
     for (int bit : hardware.manualValveBits()) bits.add(bit);
     document["pump_command_source"] = basu::pumpCommandSourceName(board.pumpCommandSource);
     document["controller_mode"] = kSimulation ? "dry_run" : "physical";
+#ifdef BASU_BLUETOOTH_PHYSICAL
+    document["transport"] = "bluetooth_spp";
+#endif
     if (kSimulation || hardware.ready()) document["hardware_status"] = nullptr;
     else document["hardware_status"] = std::string(hardware.error()).substr(0, 160);
     JsonObject sensorInputs = document["sensor_inputs"].to<JsonObject>();
@@ -159,6 +202,9 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
 }
 
 void handleLine(uint32_t now) {
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  if (!physicalBluetoothCurrent()) return;
+#endif
   now = millis();
   controller.tick(now);
   if (controller.state() == basu::State::Fault) hardware.safeStop();
@@ -169,6 +215,20 @@ void handleLine(uint32_t now) {
   if (const char* envelopeError = basu::parseEnvelope(request.as<JsonVariantConst>(), id, command)) {
     reply(id, envelopeError); return;
   }
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  if (!physicalBluetoothCurrent()) return;
+  const bool actuates = command == "start" || command == "manual" || command == "manual_valves";
+  if (command == "hello") {
+    stopBluetoothSession();
+    physicalBluetoothLease.hello();
+  } else if (command != "stop" && !physicalBluetoothLease.identified()) {
+    reply(id, "hello required"); return;
+  } else if (actuates && !physicalBluetoothLease.mayActuate(now)) {
+    reply(id, "fresh Bluetooth heartbeat required"); return;
+  } else if (command == "heartbeat") {
+    physicalBluetoothLease.heartbeat(now);
+  }
+#endif
   const char* error = nullptr;
   if (command == "hello") {
 #ifdef BASU_BLUETOOTH_DRY_RUN
@@ -206,6 +266,9 @@ void handleLine(uint32_t now) {
     reply(id, error, false, error ? nullptr : &result);
     return;
   } else error = "unknown command";
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  if (!physicalBluetoothCurrent()) return;
+#endif
   // Apply before acknowledging an actuator command. Failure is a latched fault.
   // A serial batch can take time: do not backdate a newly written PWM command's
   // settling interval to the loop timestamp captured before reading the batch.
@@ -229,7 +292,11 @@ void handleLine(uint32_t now) {
 void readSerial(uint32_t now) {
   // Bounded work per loop prevents a continuous malformed stream starving safety.
   unsigned int budget = 512;
-#ifdef BASU_BLUETOOTH_DRY_RUN
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  uint8_t byte = 0;
+  while (budget-- && basu::protectedSpp::read(physicalBluetoothToken, byte)) {
+    const char ch = static_cast<char>(byte);
+#elif defined(BASU_BLUETOOTH_DRY_RUN)
   const uint32_t generation = bluetoothGeneration.load();
   if (generation != currentBluetoothGeneration) {
     currentBluetoothGeneration = generation;
@@ -284,7 +351,9 @@ void updateMeasurements(uint32_t now) {
 }
 
 void writeTelemetry(uint32_t now) {
-#ifdef BASU_BLUETOOTH_DRY_RUN
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  if (!physicalBluetoothLease.identified() || !physicalBluetoothCurrent()) return;
+#elif defined(BASU_BLUETOOTH_DRY_RUN)
   if (!bluetoothHello || !bluetoothSessionCurrent()) return;
 #endif
   JsonDocument document;
@@ -320,7 +389,7 @@ void writeTelemetry(uint32_t now) {
   else document["fault"] = controller.fault();
   document["hardware_verified"] = controller.hardwareVerified();
   document["simulation"] = kSimulation;
-  writeDocument(document);
+  writeDocument(document, true);
 }
 }  // namespace
 
@@ -344,14 +413,23 @@ void setup() {
   bluetooth.register_callback(bluetoothEvent);
   if (!bluetooth.begin("MembraneControl-Bench")) Serial.println("Bluetooth dry run: failed to start");
 #endif
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  if (const char* error = basu::protectedSpp::begin()) Serial.println(error);
+#endif
 }
 
 void loop() {
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  syncBluetoothSession();
+#endif
   uint32_t now = millis();
   updateMeasurements(now);
   controller.tick(now);
   if (!kSimulation && controller.state() == basu::State::Fault) hardware.safeStop();
   readSerial(now);
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  syncBluetoothSession();
+#endif
   now = millis();
   controller.tick(now);
   const bool valveOnly = controller.state() == basu::State::ManualValves;

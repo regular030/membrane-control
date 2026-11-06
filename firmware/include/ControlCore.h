@@ -182,6 +182,12 @@ class Controller {
     if (state_ == State::ManualValves) stop();
   }
 
+  void endControlSession() {
+    stop();
+    loaded_ = false;
+    cycle_ = 0;
+  }
+
   // A stop never clears a latched fault and is valid in every state.
   void stop() {
     resetOutputs();

@@ -2,7 +2,7 @@
 param(
     [string]$InstallRoot = '',
     [string]$Port = '',
-    [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')]
+    [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical')]
     [string]$Firmware = 'esp32-dry-run',
     [switch]$Plan,
     [switch]$DefinitionsOnly
@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 function Get-DryRunFlashPlan {
     param([string]$Root, [string]$ComPort,
-        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')][string]$Firmware = 'esp32-dry-run')
+        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical')][string]$Firmware = 'esp32-dry-run')
     # ValidateSet is case-insensitive in Windows PowerShell 5.1; PlatformIO
     # environment names must still receive their canonical spelling.
     $Firmware = $Firmware.ToLowerInvariant()
@@ -25,23 +25,27 @@ function Get-DryRunFlashPlan {
     if (-not (Test-Path -LiteralPath $python -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $firmwareRoot 'platformio.ini') -PathType Leaf)) {
         throw 'The installed firmware tools are missing. Run Membrane Control Setup again first.'
     }
+    $normalController = $Firmware -in @('esp32-physical', 'esp32-bluetooth-physical')
     return [PSCustomObject]@{ python=$python; core=(Join-Path $destination 'tools/platformio'); port=$name;
         arguments=@('-I', '-m', 'platformio', '--no-ansi', 'run', '-d', $firmwareRoot, '-e', $Firmware, '-t', 'upload', '--upload-port', $name);
         environment=$Firmware; selected_firmware=$Firmware; replaces_existing_firmware=$true;
-        commissioning_required=($Firmware -in @('esp32-valve-test', 'esp32-physical'));
+        requires_existing_bluetooth_bond=($Firmware -eq 'esp32-bluetooth-physical');
+        commissioning_required=($normalController -or $Firmware -eq 'esp32-valve-test');
         physical_outputs_locked_by_default=($Firmware -eq 'esp32-valve-test');
-        manual_valve_count=$(if ($Firmware -eq 'esp32-physical') { 6 } else { 0 });
-        manual_valve_control_ready_by_default=($Firmware -eq 'esp32-physical') }
+        manual_valve_count=$(if ($normalController) { 6 } else { 0 });
+        manual_valve_control_ready_by_default=$normalController }
 }
 
 function Invoke-DryRunFlash {
     param([string]$Root, [string]$ComPort, [switch]$PlanOnly,
-        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')][string]$Firmware = 'esp32-dry-run')
+        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical')][string]$Firmware = 'esp32-dry-run')
     if ($PlanOnly) {
         Get-DryRunFlashPlan -Root $Root -ComPort $ComPort -Firmware $Firmware | ConvertTo-Json -Depth 4
         return
     }
     $bluetoothTest = $Firmware -eq 'esp32-bluetooth-dry-run'
+    $bluetoothNormal = $Firmware -eq 'esp32-bluetooth-physical'
+    $normalController = $bluetoothNormal -or $Firmware -eq 'esp32-physical'
     Write-Host ("This uploads " + $Firmware + " and REPLACES the selected board's existing program.") -ForegroundColor Yellow
     if ($bluetoothTest) {
         Write-Host 'BLUETOOTH DRY RUN uses simulated measurements and never operates the pump or valves.'
@@ -53,8 +57,13 @@ function Invoke-DryRunFlash {
         Write-Host 'VALVE TEST (SETUP REQUIRED): the shipped valve profile is unverified and physical outputs are locked.' -ForegroundColor Yellow
         Write-Host 'This is a separate physical valve-test program, not dry run or the unloaded raw relay test. It has no sensor, DAC, pump or experiment controls.'
         Write-Host 'Disconnect every external wire from all relay COM, NO and NC contacts for this initial upload. Read docs/valve-test.md before preparing a reviewed valve profile or connecting loads.'
-    } elseif ($Firmware -eq 'esp32-physical') {
+    } elseif ($normalController) {
         Write-Host 'NORMAL CONTROLLER: V1,V2,V3,V4,V5,V7 = relay bits 0,1,2,3,5,6. No V6; bit4 unused.'
+        if ($bluetoothNormal) {
+            Write-Host 'BLUETOOTH NORMAL CONTROLLER CAN OPERATE REAL EQUIPMENT.' -ForegroundColor Yellow
+            Write-Host 'First use Flash ESP32 Bluetooth test on this board. Pair and test its outgoing COM port on the one Windows PC that will control the rig.'
+            Write-Host 'This optional firmware builds on demand using the same installed BoardProfile.h as the wired controller. Upload through wired USB-UART and retain the existing Bluetooth bond. Do not erase the ESP32 flash or remove the Windows pairing.'
+        }
         Write-Host 'Dashboard valve ON/OFF controls do not need pressure, flow, scale, a DAC or the separate valve-test profile.'
         Write-Host 'Pump/experiment operation remains separate and requires its configured inputs and pump interface.'
     } else {
@@ -94,8 +103,15 @@ function Invoke-DryRunFlash {
         } elseif ($Firmware -eq 'esp32-valve-test') {
             Write-Host 'Follow docs/valve-test.md in the installation folder. The shipped valve-test profile must report unverified and keep physical outputs locked.'
             Write-Host 'A reviewed valve profile and its commissioning checks are required before connecting loads. This target does not use sensors or control the pump, DAC or an experiment.'
-        } elseif ($Firmware -eq 'esp32-physical') {
-            Write-Host 'Open the app, turn Simulation mode off, connect this controller port and use Dashboard V1-V5 and V7 ON/OFF. No sensor connection or extra profile form is required for manual valves.'
+        } elseif ($normalController) {
+            if ($bluetoothNormal) {
+                Write-Host 'The ESP32 now advertises MembraneControl. Keep the existing Windows pairing. Its outgoing COM port may still show the old MembraneControl-Bench name.'
+                Write-Host 'In Membrane Control, turn Simulation mode off, refresh the controller port list, and connect to the existing Outgoing Bluetooth COM port. The app must report Connected.'
+                Write-Host 'If the board cannot connect with the existing bond, return to Flash ESP32 Bluetooth test to establish and verify the bond before uploading this program again.'
+            } else {
+                Write-Host 'Open the app, turn Simulation mode off and connect this controller port.'
+            }
+            Write-Host 'Use Dashboard V1-V5 and V7 ON/OFF. No sensor connection or extra profile form is required for manual valves.'
             Write-Host 'Finish the reviewed hardware profile, sensor calibration, pump interface and process-safe wiring before real operation. Uploading this target alone does not commission the rig.'
         } else {
             Write-Host 'Open the app, turn Simulation mode off and select this controller port. It must report Connected (dry run).'

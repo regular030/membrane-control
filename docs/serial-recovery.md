@@ -61,6 +61,15 @@ dropout, separate the rig's load wiring from the test and check boot and idle
 serial output at 115200 baud. If the relay board stays connected unloaded,
 have the lab check the valve circuit and its supply before retrying under load.
 
+In the November 6 wired test, COM5 received several malformed frames near
+manual switching. Matching telemetry receipts recovered those valve replies
+and uptime continued to advance. After the V5 OFF command, the app received
+neither a matching reply nor further telemetry, including a reply to Stop.
+There is no boot record after that dropout in the supplied capture. Normal
+Bluetooth control in 0.1.23 can bypass the USB-to-UART data path while testing
+the same controller, but a simultaneous loss still calls for checking the
+board supply and reset log. See [normal Bluetooth setup](full-firmware.md#run-the-normal-controller-over-bluetooth).
+
 ## Bare relay board recovery
 
 In **Bare relay board test**, select the ESP32 port and click **Recover

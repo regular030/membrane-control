@@ -738,6 +738,8 @@ class AppController:
                 if (type(reset_reason) is str and 0 < len(reset_reason) <= 48 and reset_reason.isascii()
                         and all(character.isalnum() or character in "_-" for character in reset_reason)):
                     reply_details["reset_reason"] = reset_reason
+                if packet.get("transport") == "bluetooth_spp":
+                    reply_details["transport"] = "bluetooth_spp"
                 self._esp32_event("hello_identified", firmware_version=str(packet.get("firmware_version", "unknown"))[:120],
                                   **reply_details)
                 self._log("Controller identified: " + str(packet.get("firmware_version", "unknown")))

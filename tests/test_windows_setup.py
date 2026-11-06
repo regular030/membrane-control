@@ -77,7 +77,7 @@ def test_plan_validates_hashes_and_has_no_install_or_environment_side_effects(pa
     assert plan["pythonVersion"] == "3.14.10"
     assert plan["flashes_board"] is False and plan["installs_drivers"] is False
     assert plan["firmware_targets"] == ["esp32-dry-run", "esp32-relay-bench", "esp32-valve-test", "esp32-physical"]
-    assert plan["optional_firmware_targets"] == ["esp32-bluetooth-dry-run"]
+    assert plan["optional_firmware_targets"] == ["esp32-bluetooth-dry-run", "esp32-bluetooth-physical"]
     assert plan["valve_test"] == {"environment": "esp32-valve-test",
         "commissioning_required": True, "physical_outputs_locked_by_default": True,
         "shipped_profile_verified": False}
@@ -222,11 +222,13 @@ def prepare_flash_target(target):
     python.write_bytes(b"never executed")
     firmware = target / "firmware/platformio.ini"
     firmware.parent.mkdir()
-    firmware.write_text("[env:esp32-dry-run]\n[env:esp32-bluetooth-dry-run]\n[env:esp32-relay-bench]\n[env:esp32-valve-test]\n[env:esp32-physical]", encoding="utf-8")
+    firmware.write_text("[env:esp32-dry-run]\n[env:esp32-bluetooth-dry-run]\n[env:esp32-relay-bench]\n"
+        "[env:esp32-valve-test]\n[env:esp32-physical]\n[env:esp32-bluetooth-physical]\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize("selected", [None, "esp32-dry-run", "esp32-relay-bench", "ESP32-BLUETOOTH-DRY-RUN",
-    "ESP32-RELAY-BENCH", "esp32-valve-test", "ESP32-VALVE-TEST", "esp32-physical", "ESP32-PHYSICAL"])
+    "ESP32-RELAY-BENCH", "esp32-valve-test", "ESP32-VALVE-TEST", "esp32-physical", "ESP32-PHYSICAL",
+    "ESP32-BLUETOOTH-PHYSICAL"])
 def test_flash_plan_selects_only_allowed_target_and_preserves_paths_as_arguments(payload, selected):
     _, _, target = payload
     prepare_flash_target(target)
@@ -234,37 +236,40 @@ def test_flash_plan_selects_only_allowed_target_and_preserves_paths_as_arguments
     result = run_ps(definitions(FLASH) + f"Invoke-DryRunFlash -Root {ps_quote(target)} -ComPort ' com4 ' -PlanOnly" + parameter)
     plan = json.loads(result.stdout)
     expected = (selected or "esp32-dry-run").lower()
+    normal = expected in {"esp32-physical", "esp32-bluetooth-physical"}
     assert plan["port"] == "COM4" and plan["environment"] == expected
     assert plan["selected_firmware"] == expected
     assert plan["arguments"][plan["arguments"].index("-e") + 1] == expected
     assert plan["arguments"][-3:] == ["upload", "--upload-port", "COM4"]
     assert str(target / "firmware") in plan["arguments"]
-    assert plan["commissioning_required"] is (expected in {"esp32-valve-test", "esp32-physical"})
+    assert plan["requires_existing_bluetooth_bond"] is (expected == "esp32-bluetooth-physical")
+    assert plan["commissioning_required"] is (normal or expected == "esp32-valve-test")
     assert plan["physical_outputs_locked_by_default"] is (expected == "esp32-valve-test")
-    assert plan['manual_valve_control_ready_by_default'] is (expected == 'esp32-physical')
-    assert plan['manual_valve_count'] == (6 if expected == 'esp32-physical' else 0)
+    assert plan['manual_valve_control_ready_by_default'] is normal
+    assert plan['manual_valve_count'] == (6 if normal else 0)
     assert "--no-ansi" in plan["arguments"]
     assert not (target / "logs").exists()
 
 
-@pytest.mark.parametrize(("firmware", "locked"), [
-    ("esp32-valve-test", True), ("esp32-bluetooth-dry-run", False),
+@pytest.mark.parametrize(("firmware", "commissioning", "locked"), [
+    ("esp32-valve-test", True, True), ("esp32-bluetooth-dry-run", False, False),
+    ("esp32-bluetooth-physical", True, False),
 ])
-def test_flash_script_entry_point_returns_plan_without_upload(payload, firmware, locked):
+def test_flash_script_entry_point_returns_plan_without_upload(payload, firmware, commissioning, locked):
     _, _, target = payload
     prepare_flash_target(target)
     result = run_ps(f"& {ps_quote(FLASH)} -InstallRoot {ps_quote(target)} -Port COM17 "
         f"-Plan -Firmware {firmware}")
     plan = json.loads(result.stdout)
     assert plan["selected_firmware"] == firmware
-    assert plan["commissioning_required"] is locked
+    assert plan["commissioning_required"] is commissioning
     assert plan["physical_outputs_locked_by_default"] is locked
     assert plan["arguments"][-3:] == ["upload", "--upload-port", "COM17"]
     assert not (target / "logs").exists()  # The deliberately invalid executable was never run.
 
 
 @pytest.mark.parametrize("target", ["esp32-physical;whoami", "esp32-relay-bench;whoami", "esp32-bluetooth-dry-run;whoami",
-    "esp32-valve-test;whoami", "esp32-valve-test extra", "other"])
+    "esp32-bluetooth-physical;whoami", "esp32-valve-test;whoami", "esp32-valve-test extra", "other"])
 def test_flash_rejects_unsupported_firmware_before_any_work(payload, target):
     _, _, destination = payload
     result = run_ps(definitions(FLASH) + f"Invoke-DryRunFlash -Root {ps_quote(destination)} -ComPort COM4 -PlanOnly -Firmware {ps_quote(target)}", check=False)
@@ -276,7 +281,8 @@ def test_flash_rejects_unsupported_firmware_before_any_work(payload, target):
     assert not destination.exists()
 
 
-@pytest.mark.parametrize("selected", ["esp32-dry-run", "esp32-bluetooth-dry-run", "esp32-relay-bench", "esp32-valve-test", "esp32-physical"])
+@pytest.mark.parametrize("selected", ["esp32-dry-run", "esp32-bluetooth-dry-run", "esp32-relay-bench",
+    "esp32-valve-test", "esp32-physical", "esp32-bluetooth-physical"])
 def test_any_upload_can_be_cancelled_without_executing_the_fake_tool(payload, selected):
     _, _, target = payload
     prepare_flash_target(target)
@@ -299,26 +305,38 @@ def test_any_upload_can_be_cancelled_without_executing_the_fake_tool(payload, se
         assert "COM, NO and NC" in result.stdout
         assert "docs/valve-test.md" in result.stdout
         assert "Dry-run firmware uses generated" not in result.stdout
-    elif selected == "esp32-physical":
+    elif selected in {"esp32-physical", "esp32-bluetooth-physical"}:
         assert "NORMAL CONTROLLER" in result.stdout
         assert "V1,V2,V3,V4,V5,V7 = relay bits 0,1,2,3,5,6" in result.stdout
         assert "do not need pressure, flow, scale" in result.stdout
         assert "physical outputs are locked" not in result.stdout
         assert "Dry-run firmware uses generated" not in result.stdout
+        if selected == "esp32-bluetooth-physical":
+            assert "CAN OPERATE REAL EQUIPMENT" in result.stdout
+            assert "First use Flash ESP32 Bluetooth test" in result.stdout
+            assert "same installed BoardProfile.h" in result.stdout
+            assert "Do not erase the ESP32 flash" in result.stdout
 
 
-def test_bluetooth_flash_success_explains_how_to_find_the_outgoing_com(payload):
+@pytest.mark.parametrize("firmware", ["esp32-bluetooth-dry-run", "esp32-bluetooth-physical"])
+def test_bluetooth_flash_success_explains_how_to_find_the_outgoing_com(payload, firmware):
     _, _, target = payload
     result = run_ps(definitions(FLASH) +
         "function Read-Host { return 'FLASH' }; "
         "function Invoke-FakeUpload { $global:LASTEXITCODE = 0; 'fake upload' }; "
         "function Get-DryRunFlashPlan { [PSCustomObject]@{python='Invoke-FakeUpload';"
         "core='fake';port='COM4';arguments=@()} }; "
-        f"Invoke-DryRunFlash -Root {ps_quote(target)} -ComPort COM4 -Firmware esp32-bluetooth-dry-run")
+        f"Invoke-DryRunFlash -Root {ps_quote(target)} -ComPort COM4 -Firmware {firmware}")
     assert "fake upload" in result.stdout
-    assert "pair MembraneControl-Bench" in result.stdout
-    assert "Outgoing COM port for MembraneControl-Bench" in result.stdout
-    assert "Connected (dry run)" in result.stdout
+    if firmware == "esp32-bluetooth-physical":
+        assert "now advertises MembraneControl." in result.stdout
+        assert "Keep the existing Windows pairing" in result.stdout
+        assert "existing Outgoing Bluetooth COM port" in result.stdout
+        assert "Connected (dry run)" not in result.stdout
+    else:
+        assert "pair MembraneControl-Bench" in result.stdout
+        assert "Outgoing COM port for MembraneControl-Bench" in result.stdout
+        assert "Connected (dry run)" in result.stdout
 
 
 def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(payload):
@@ -326,11 +344,13 @@ def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(p
     result = run_ps(definitions() + f"@(Get-SetupShortcutSpecs -Destination {ps_quote(destination)}) | ConvertTo-Json -Depth 4")
     shortcuts = {item["Name"]: item for item in json.loads(result.stdout)}
     assert set(shortcuts) == {"Membrane Control", "Flash ESP32 dry run", "Flash ESP32 Bluetooth test", "Flash relay board test",
-        "Flash valve test (setup required)", "Flash full controller (setup required)", "Flash normal controller", "USB driver help"}
+        "Flash valve test (setup required)", "Flash full controller (setup required)", "Flash normal controller",
+        "Flash normal controller (Bluetooth)", "USB driver help"}
     assert shortcuts["Membrane Control"]["Target"] == str(destination / "MembraneControl.exe")
     assert shortcuts["Membrane Control"]["Arguments"] == ""
     for name, target in [("Flash ESP32 dry run", "esp32-dry-run"), ("Flash relay board test", "esp32-relay-bench"),
         ("Flash ESP32 Bluetooth test", "esp32-bluetooth-dry-run"),
+        ("Flash normal controller (Bluetooth)", "esp32-bluetooth-physical"),
         ("Flash valve test (setup required)", "esp32-valve-test"),
         ("Flash full controller (setup required)", "esp32-physical")]:
         spec = shortcuts[name]
