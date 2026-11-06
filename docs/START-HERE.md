@@ -3,9 +3,9 @@
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and open **Assets**. Download the file ending in
    **windows-x64.exe**. Do not choose **Source code (zip)**.
-2. Double-click the EXE. In **Connections and settings**, connect the ESP32
-   and the scale. The lab defaults are **COM8** for the ESP32 and **COM6** for
-   the scale when detected.
+2. Double-click the EXE. The app tries **COM8** for the ESP32 and **COM6** for
+   the scale when detected. Use **Connections and settings** to check the
+   connection status, reconnect, or choose other ports.
 3. On **Dashboard**, choose a lab-approved **Preset** and click **Start run**
    once the controller reports that the hardware is ready.
 4. Watch the graphs, then click **Stop run**.

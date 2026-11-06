@@ -96,3 +96,26 @@ def test_refresh_is_only_on_tab_entry_or_explicit_button_not_a_timer(ports_scree
     window.tabs.setCurrentIndex(1)
     window.tabs.setCurrentIndex(window.connections_tab_index)
     assert len(enumerations) == before + 2
+
+
+def test_startup_connects_only_detected_lab_defaults(ports_screen, monkeypatch):
+    window, controller, ports, _ = ports_screen
+    calls = []
+    monkeypatch.setattr(controller, 'connect_controller', lambda port: calls.append(('ESP32', port)))
+    monkeypatch.setattr(controller, 'connect_balance',
+                        lambda port, baud, **options: calls.append(('scale', port, baud, options)))
+    ports.extend([('COM6', 'Scale adapter'), ('COM8', 'ESP32 Bluetooth')])
+    window._refresh_ports()
+    window.connect_lab_defaults()
+    assert calls == []  # Demo never opens hardware ports.
+
+    controller.set_simulation(False)
+    window.connect_lab_defaults()
+    assert calls == [('ESP32', 'COM8'), ('scale', 'COM6', 9600,
+                                        {'serial_format': '8N1', 'polling': True})]
+
+    calls.clear()
+    ports.remove(('COM6', 'Scale adapter'))
+    window._refresh_ports()
+    window.connect_lab_defaults()
+    assert calls == [('ESP32', 'COM8')]

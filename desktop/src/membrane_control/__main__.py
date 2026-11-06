@@ -65,6 +65,8 @@ def main():
         QMessageBox.critical(window, "Application error", str(value) + "\nA stop was requested. Check the system before continuing.")
     sys.excepthook = exception_handler
     window.show()
+    if not args.demo:
+        QTimer.singleShot(0, window.connect_lab_defaults)
     if args.screenshot:
         def capture():
             args.screenshot.parent.mkdir(parents=True, exist_ok=True)

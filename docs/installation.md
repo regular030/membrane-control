@@ -44,9 +44,9 @@ The separate [ESP32 setup guide](https://github.com/regular030/membrane-control/
    **Connect** button. Select the scale's own port and connect it separately.
 5. Read the status messages. A responding board may still be in **dry run**.
 
-Connect the instruments explicitly after restarting. The app selects COM8
-for the ESP32 and COM6 for the scale when detected. Check the assignments if
-the equipment moved or its connection changed.
+At startup, the app tries COM8 for the ESP32 and COM6 for the scale when
+detected. Check the assignments and connection status if the equipment
+moved or its connection changed.
 If no port appears, stop at USB detection: try a known data cable, another USB
 socket and the correct driver. A firmware upload cannot work before Windows
 recognizes the board. Do not choose a port belonging to another lab instrument.

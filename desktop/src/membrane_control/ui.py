@@ -1,8 +1,7 @@
 """Qt desktop interface for the membrane controller.
 
-Device access and experiment execution live in AppController. The UI never
-opens serial ports or changes outputs except through an explicit controller
-action initiated by the user.
+Device access and experiment execution live in AppController. Connecting
+devices at startup does not start a run or apply output commands.
 """
 from __future__ import annotations
 
@@ -33,6 +32,9 @@ from .relay_bench import RelayBenchDialog
 from .sensor_setup import ADC_RANGE_MV, SensorSetupDialog
 from .valve_test import ValveTestDialog
 
+
+LAB_CONTROLLER_PORT = "COM8"
+LAB_BALANCE_PORT = "COM6"
 
 METRICS = {
     "flow_ml_min": ("Flow", "mL/min", "flow"),
@@ -238,7 +240,7 @@ class MainWindow(QMainWindow):
         self._build_connections()
         self._build_history()
         self._build_help()
-        self.statusBar().showMessage("Ready. Open Connections and settings to connect the rig.")
+        self.statusBar().showMessage("Ready. Check device status in Connections and settings.")
 
         self._load_presets()
         current = getattr(controller, "recipe", None)
@@ -607,7 +609,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(18, 15, 18, 15)
-        layout.addWidget(_label("Connect devices explicitly. Detecting a USB adapter alone does not establish a responding controller.", "muted", True))
+        layout.addWidget(_label("The app tries COM8 for the ESP32 and COM6 for the scale on startup. Use the controls below to reconnect or choose other ports.", "muted", True))
         devices = QHBoxLayout()
         controller_box = QGroupBox("ESP32 controller")
         cform = QFormLayout(controller_box)
@@ -1103,7 +1105,8 @@ class MainWindow(QMainWindow):
     def _refresh_ports(self):
         try:
             ports = self.controller.list_ports()
-            for combo, preferred in ((self.controller_port, "COM8"), (self.balance_port, "COM6")):
+            for combo, preferred in ((self.controller_port, LAB_CONTROLLER_PORT),
+                                     (self.balance_port, LAB_BALANCE_PORT)):
                 previous = combo.currentData()
                 combo.clear()
                 combo.addItem("Select a serial port" if ports else "No serial ports found", None)
@@ -1120,10 +1123,19 @@ class MainWindow(QMainWindow):
         if index == self.connections_tab_index and not self._shutdown_started:
             self._refresh_ports()
 
-    def _connect_controller(self):
+    def connect_lab_defaults(self):
+        if self._shutdown_started or self.controller.simulation:
+            return
+        if self.controller_port.currentData() == LAB_CONTROLLER_PORT:
+            self._connect_controller(show_dialog=False)
+        if self.balance_port.currentData() == LAB_BALANCE_PORT:
+            self._connect_balance(show_dialog=False)
+
+    def _connect_controller(self, *, show_dialog=True):
         port = self.controller_port.currentData()
         if port:
-            self._action(lambda: self.controller.connect_controller(port), "Controller connection requested")
+            self._action(lambda: self.controller.connect_controller(port), "Controller connection requested",
+                         show_dialog=show_dialog)
         else:
             self.statusBar().showMessage("Select a controller serial port first", 6000)
 
@@ -1173,11 +1185,12 @@ class MainWindow(QMainWindow):
     def _clear_live_sensor_zero(self):
         self._action(self.controller.clear_live_sensor_zero, "Live sensor zero cleared")
 
-    def _connect_balance(self):
+    def _connect_balance(self, *, show_dialog=True):
         port = self.balance_port.currentData()
         if port:
             self._action(lambda: self.controller.connect_balance(port, int(self.balance_baud.currentText()),
-                serial_format=self.balance_format.currentData(), polling=self.balance_polling.isChecked()), "Balance connection requested")
+                serial_format=self.balance_format.currentData(), polling=self.balance_polling.isChecked()),
+                "Balance connection requested", show_dialog=show_dialog)
         else:
             self.statusBar().showMessage("Select a balance serial port first", 6000)
 
