@@ -323,6 +323,10 @@ class AppController:
             raise ValueError("Balance and controller need different ports")
         self.disconnect_balance()
         options = {"raw": True}
+        # The lab Nimbus responds on COM6 with DTR inactive. Asserting DTR
+        # through its adapter coincides with repeated busy indications.
+        if port.upper() == "COM6":
+            options["dtr"] = False
         if serial_format != "8N1":
             options["serial_format"] = serial_format
         self.balance = SerialTransport(port, baud, **options)

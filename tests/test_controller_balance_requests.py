@@ -95,6 +95,21 @@ def test_default_format_still_supports_original_transport_constructor(app, monke
     assert calls == [("FAKE-OLD", 9600, True)]
 
 
+def test_lab_scale_leaves_dtr_inactive_and_accepts_weight_after_print_echo(app):
+    controller, _ = app
+    controller.connect_balance("COM6")
+    balance = controller.balance
+    assert balance.options == {"dtr": False}
+    balance.events.extend([
+        {"type": "port_open"},
+        {"type": "mass_line", "line": "!KP"},
+        {"type": "mass_line", "line": "0.6 g"},
+    ])
+    controller.tick()
+    assert controller.snapshot["mass_g"] == 0.6
+    assert controller.snapshot["balance_connected"]
+
+
 def test_initial_fixed_read_request_waits_for_port_open_and_does_not_fake_mass(app):
     controller, clock = app
     controller.connect_balance("FAKE-SCALE")
