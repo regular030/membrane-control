@@ -2,7 +2,7 @@
 param(
     [string]$InstallRoot = '',
     [string]$Port = '',
-    [ValidateSet('esp32-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')]
+    [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')]
     [string]$Firmware = 'esp32-dry-run',
     [switch]$Plan,
     [switch]$DefinitionsOnly
@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 function Get-DryRunFlashPlan {
     param([string]$Root, [string]$ComPort,
-        [ValidateSet('esp32-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')][string]$Firmware = 'esp32-dry-run')
+        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')][string]$Firmware = 'esp32-dry-run')
     # ValidateSet is case-insensitive in Windows PowerShell 5.1; PlatformIO
     # environment names must still receive their canonical spelling.
     $Firmware = $Firmware.ToLowerInvariant()
@@ -36,13 +36,17 @@ function Get-DryRunFlashPlan {
 
 function Invoke-DryRunFlash {
     param([string]$Root, [string]$ComPort, [switch]$PlanOnly,
-        [ValidateSet('esp32-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')][string]$Firmware = 'esp32-dry-run')
+        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical')][string]$Firmware = 'esp32-dry-run')
     if ($PlanOnly) {
         Get-DryRunFlashPlan -Root $Root -ComPort $ComPort -Firmware $Firmware | ConvertTo-Json -Depth 4
         return
     }
+    $bluetoothTest = $Firmware -eq 'esp32-bluetooth-dry-run'
     Write-Host ("This uploads " + $Firmware + " and REPLACES the selected board's existing program.") -ForegroundColor Yellow
-    if ($Firmware -eq 'esp32-relay-bench') {
+    if ($bluetoothTest) {
+        Write-Host 'BLUETOOTH DRY RUN uses simulated measurements and never operates the pump or valves.'
+        Write-Host 'This optional firmware builds on demand. Upload through the wired ESP32 USB-UART COM port. Pair Bluetooth after the upload.'
+    } elseif ($Firmware -eq 'esp32-relay-bench') {
         Write-Host 'RELAY BOARD TEST OPERATES REAL RELAYS. Disconnect every external wire from all relay COM, NO and NC contacts.' -ForegroundColor Yellow
         Write-Host 'Use only the standalone Srliya 16-channel relay board, not the Freenove camera board. Sensors and pump interfaces are not needed for this bench test.'
     } elseif ($Firmware -eq 'esp32-valve-test') {
@@ -59,7 +63,7 @@ function Invoke-DryRunFlash {
     if ($Firmware -ne 'esp32-physical') { Write-Host 'Keep the pump and valve loads disconnected. Confirm the actual board supply rating before powering it.' }
     Write-Host 'Close Arduino Serial Monitor/Plotter, the app''s controller connection and any other program using this COM port.'
     Write-Host 'For an external-UART board without automatic reset: hold IO0, press and release EN/RESET, then release IO0 before continuing.'
-    if ([string]::IsNullOrWhiteSpace($ComPort)) { $ComPort = Read-Host 'Controller COM port from Windows Device Manager (for example COM3)' }
+    if ([string]::IsNullOrWhiteSpace($ComPort)) { $ComPort = Read-Host 'Wired controller USB-UART COM port from Windows Device Manager (for example COM3)' }
     $flash = Get-DryRunFlashPlan -Root $Root -ComPort $ComPort -Firmware $Firmware
     if ((Read-Host ("Type FLASH to upload " + $Firmware + ' to ' + $flash.port + ', or anything else to cancel')) -cne 'FLASH') {
         Write-Host 'Cancelled. No board was opened or flashed.'
@@ -80,7 +84,11 @@ function Invoke-DryRunFlash {
         } finally { $ErrorActionPreference = $savedPreference }
         if ($code -ne 0) { throw "Upload failed (exit $code). Close other COM-port programs, verify the port and retry. Log: $log" }
         Write-Host ($Firmware + ' upload completed. With IO0 released, press EN/RESET to run the program if the adapter cannot reset the board automatically.')
-        if ($Firmware -eq 'esp32-relay-bench') {
+        if ($bluetoothTest) {
+            Write-Host 'In Windows Settings, open Bluetooth & devices, add a Bluetooth device, and pair MembraneControl-Bench.'
+            Write-Host 'In More Bluetooth settings, open the COM Ports tab. Use the Outgoing COM port for MembraneControl-Bench. Add an Outgoing port for that device if Windows has not listed one.'
+            Write-Host 'In Membrane Control, turn Simulation mode off, refresh the controller port list, and connect to that Outgoing Bluetooth COM port. The app must report Connected (dry run).'
+        } elseif ($Firmware -eq 'esp32-relay-bench') {
             Write-Host 'Open Connections and settings, then Relay board test. Keep all relay contacts disconnected and follow the rest-pattern check before testing individual bits.'
             Write-Host 'This tool switches unloaded relays. It does not verify valve movement, commission the rig or enable an experiment.'
         } elseif ($Firmware -eq 'esp32-valve-test') {

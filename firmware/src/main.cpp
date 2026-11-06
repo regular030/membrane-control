@@ -10,6 +10,13 @@
 #endif
 static_assert(BASU_DRY_RUN == 0 || BASU_DRY_RUN == 1, "BASU_DRY_RUN must be 0 or 1");
 
+#ifdef BASU_BLUETOOTH_DRY_RUN
+static_assert(BASU_DRY_RUN == 1, "Bluetooth is only available for simulated operation");
+#include <BluetoothSerial.h>
+#include <atomic>
+#include <freertos/queue.h>
+#endif
+
 namespace {
 constexpr bool kSimulation = BASU_DRY_RUN != 0;
 #ifdef BASU_VERIFIED_PROFILE_HEADER
@@ -36,6 +43,55 @@ bool discardingOversize = false;
 uint32_t lastTelemetryMs = 0;
 uint32_t lastSimulationSampleMs = 0;
 uint32_t lastManualValvesReceiptId = 0;
+
+#ifdef BASU_BLUETOOTH_DRY_RUN
+BluetoothSerial bluetooth;
+QueueHandle_t bluetoothInput = nullptr;
+uint32_t bluetoothClient = 0;  // Accessed only by the SPP callback task.
+// Odd generations have a client. Open, close and receive overflow invalidate
+// partial input and simulated state before the next command is handled.
+std::atomic<uint32_t> bluetoothGeneration{0};
+uint32_t currentBluetoothGeneration = 0;
+bool bluetoothHello = false;
+
+void bluetoothEvent(esp_spp_cb_event_t event, esp_spp_cb_param_t* data) {
+  if (event == ESP_SPP_SRV_OPEN_EVT && data->srv_open.status == ESP_SPP_SUCCESS && !bluetoothClient) {
+    xQueueReset(bluetoothInput);
+    bluetoothClient = data->srv_open.handle;
+    bluetoothGeneration.fetch_add(1);
+  } else if (event == ESP_SPP_CLOSE_EVT && data->close.handle == bluetoothClient) {
+    bluetoothGeneration.fetch_add(1);
+    bluetoothClient = 0;
+    xQueueReset(bluetoothInput);
+  } else if (event == ESP_SPP_DATA_IND_EVT && bluetoothClient && data->data_ind.handle == bluetoothClient) {
+    for (std::size_t index = 0; index < data->data_ind.len; ++index) {
+      if (xQueueSend(bluetoothInput, data->data_ind.data + index, 0) != pdTRUE) {
+        bluetoothGeneration.fetch_add(2);
+        xQueueReset(bluetoothInput);
+        break;
+      }
+    }
+  }
+}
+
+bool bluetoothSessionCurrent() {
+  return (currentBluetoothGeneration & 1U) && currentBluetoothGeneration == bluetoothGeneration.load();
+}
+#endif
+
+void writeDocument(const JsonDocument& document) {
+#ifdef BASU_BLUETOOTH_DRY_RUN
+  if (!bluetoothSessionCurrent()) return;
+  char frame[1024];
+  if (measureJson(document) >= sizeof(frame)) return;
+  const std::size_t length = serializeJson(document, frame, sizeof(frame));
+  frame[length] = '\n';
+  bluetooth.write(reinterpret_cast<const uint8_t*>(frame), length + 1);
+#else
+  serializeJson(document, Serial);
+  Serial.write('\n');
+#endif
+}
 
 const char* resetReasonName(esp_reset_reason_t reason) {
   switch (reason) {
@@ -99,8 +155,7 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
     document["hardware_verified"] = controller.hardwareVerified();
     document["simulation"] = kSimulation;
   }
-  serializeJson(document, Serial);
-  Serial.write('\n');
+  writeDocument(document);
 }
 
 void handleLine(uint32_t now) {
@@ -116,10 +171,16 @@ void handleLine(uint32_t now) {
   }
   const char* error = nullptr;
   if (command == "hello") {
+#ifdef BASU_BLUETOOTH_DRY_RUN
+    bluetoothHello = true;
+#endif
     lastManualValvesReceiptId = 0;
     if (controller.state() == basu::State::ManualValves) { controller.onHello(); hardware.safeStop(); }
     reply(id, nullptr, true); return;
   }
+#ifdef BASU_BLUETOOTH_DRY_RUN
+  if (!bluetoothHello && command != "stop") { reply(id, "hello required"); return; }
+#endif
   if (command == "heartbeat") controller.heartbeat(now);
   else if (command == "stop") {
     lastManualValvesReceiptId = 0;
@@ -168,8 +229,25 @@ void handleLine(uint32_t now) {
 void readSerial(uint32_t now) {
   // Bounded work per loop prevents a continuous malformed stream starving safety.
   unsigned int budget = 512;
+#ifdef BASU_BLUETOOTH_DRY_RUN
+  const uint32_t generation = bluetoothGeneration.load();
+  if (generation != currentBluetoothGeneration) {
+    currentBluetoothGeneration = generation;
+    bluetoothHello = false;
+    lineLength = 0;
+    discardingOversize = false;
+    lastManualValvesReceiptId = 0;
+    controller = basu::Controller(makeSafety());
+    controller.setValveControlReady(hardware.valveControlReady());
+  }
+  uint8_t byte = 0;
+  while (budget-- && bluetoothSessionCurrent() && xQueueReceive(bluetoothInput, &byte, 0) == pdTRUE) {
+    if (!bluetoothSessionCurrent()) break;
+    const char ch = static_cast<char>(byte);
+#else
   while (budget-- && Serial.available()) {
     const char ch = static_cast<char>(Serial.read());
+#endif
     if (ch == '\n') {
       if (discardingOversize) reply(0, "line exceeds 8192 bytes");
       else if (lineLength > 0) { line[lineLength] = '\0'; handleLine(now); }
@@ -206,6 +284,9 @@ void updateMeasurements(uint32_t now) {
 }
 
 void writeTelemetry(uint32_t now) {
+#ifdef BASU_BLUETOOTH_DRY_RUN
+  if (!bluetoothHello || !bluetoothSessionCurrent()) return;
+#endif
   JsonDocument document;
   document["v"] = 1;
   document["type"] = "telemetry";
@@ -239,8 +320,7 @@ void writeTelemetry(uint32_t now) {
   else document["fault"] = controller.fault();
   document["hardware_verified"] = controller.hardwareVerified();
   document["simulation"] = kSimulation;
-  serializeJson(document, Serial);
-  Serial.write('\n');
+  writeDocument(document);
 }
 }  // namespace
 
@@ -252,6 +332,18 @@ void setup() {
   controller.setValveControlReady(hardware.valveControlReady());
   // Pump/sensor setup remains separate from the confirmed six-valve capability.
   if (!initialized && board.verifiedBoardConfig) controller.latchFault(hardware.error());
+#ifdef BASU_BLUETOOTH_DRY_RUN
+  bluetoothInput = xQueueCreate(basu::kMaxLineBytes + 1, sizeof(uint8_t));
+  if (bluetoothInput == nullptr) {
+    Serial.println("Bluetooth dry run: could not allocate receive queue");
+    return;
+  }
+  // Consume data in the event callback so the default untagged 512-byte queue
+  // cannot mix input from different connection handles.
+  bluetooth.onData([](const uint8_t*, std::size_t) {});
+  bluetooth.register_callback(bluetoothEvent);
+  if (!bluetooth.begin("MembraneControl-Bench")) Serial.println("Bluetooth dry run: failed to start");
+#endif
 }
 
 void loop() {

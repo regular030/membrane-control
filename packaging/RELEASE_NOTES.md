@@ -1,9 +1,7 @@
-Membrane Control 0.1.21 adds a pressure and flow zero reference to the live sensor display.
+Membrane Control 0.1.22 adds an optional Bluetooth Classic connection test for the ESP32-WROOM relay board.
 
 Developed for **Dr. Onita Basu's lab at Carleton University**.
 
-Download **MembraneControl-Setup-0.1.21-windows-x64.exe** from Assets. If your board already shows live sensor inputs, install the desktop app and keep the firmware you have.
+Install **MembraneControl-Setup-0.1.22-windows-x64.exe**, then run **Flash ESP32 Bluetooth test** with the wired USB-to-UART COM port and the loads isolated. Pair with **MembraneControl-Bench** in Windows and select its outgoing Bluetooth COM port in the app. The firmware reports simulated data and outputs.
 
-With the pump stopped, no flow, and the reference gauge at zero, click **Zero pressure and flow** under the Dashboard's live sensor readings. The app shows how many millivolts each reading has changed since that reference. Use **Clear zero** to remove it. Reconnecting clears the reference.
-
-The factory firmware and calibrated profile continue to handle the actual outputs and pressure limit. See the [sensor guide](https://github.com/regular030/membrane-control/blob/v0.1.21/docs/flow-sensor-troubleshooting.md#zero-the-live-pressure-and-flow-display).
+To return to the rig's wired controller, run **Flash normal controller** with the wired port. See the [Bluetooth test instructions](https://github.com/regular030/membrane-control/blob/v0.1.22/docs/full-firmware.md#test-the-connection-over-bluetooth).

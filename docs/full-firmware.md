@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.21 includes the complete controller source and compiled ESP32 images,
+Version 0.1.22 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.21-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.22-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -52,6 +52,32 @@ The helper builds from installed source before upload, so a reviewed custom
 profile can be rebuilt later. The separate firmware ZIP includes precompiled
 images, offsets and checksums for tools that can flash raw ESP32 binaries; follow
 its README and manifest rather than treating `firmware.bin` as a complete image.
+
+## Test the connection over Bluetooth
+
+Use the **Flash ESP32 Bluetooth test** shortcut from Setup 0.1.22. It compiles
+the optional `esp32-bluetooth-dry-run` firmware from the installed source and
+uploads it over the existing USB-to-UART adapter. The Bluetooth firmware
+simulates readings and outputs so you can check the wireless link with the
+valve and pump loads isolated.
+
+1. Close the app connection. Run the shortcut and select the **wired COM
+   port**. Complete the usual IO0/EN upload steps.
+2. In Windows, open **Settings → Bluetooth & devices → Add device → Bluetooth**
+   and pair with **MembraneControl-Bench**.
+3. Open **Bluetooth & devices → Devices → More Bluetooth settings → COM Ports**.
+   Select the **outgoing** port for MembraneControl-Bench. If Windows has
+   not assigned one, use **Add → Outgoing** to create it.
+4. Open Membrane Control. Turn off desktop Simulation mode, then select the
+   Bluetooth COM port in **Connections and settings**. The app should report
+   **Connected (dry run)**. Check that the telemetry keeps updating, then
+   disconnect and reconnect once.
+
+Use **Flash normal controller** with the wired COM port to return to regular
+operation. An ESP32 power drop can interrupt both links. This trial checks
+Bluetooth communication while the controller is powered and idle or simulated.
+[ESP32 Bluetooth Classic SPP](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/bluetooth.html)
+· [Windows SPP support](https://learn.microsoft.com/en-us/windows-hardware/drivers/bluetooth/general-bluetooth-support-in-windows)
 
 ## Finish the physical hardware profile
 
