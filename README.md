@@ -15,6 +15,7 @@ connections, ESP32 GPIO25/34/36/39, and the confirmed pump relay bit 15.
 Open **Sensor setup** to see live inputs and capture references. Use **Copy
 ESP32 log** in Connections and settings after a dropout. The normal controller
 can also use the lab PC's [existing Bluetooth pairing](docs/full-firmware.md#run-the-normal-controller-over-bluetooth).
+For troubleshooting from the PC connected to the controller, open the [Bluetooth debug handoff](docs/lab-pc-handoff.md).
 
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    and download the Windows `.exe` under **Assets**. For a fresh PC including
