@@ -1,9 +1,9 @@
-Membrane Control 0.1.23 adds normal ESP32 controller operation over Bluetooth and a **Sensor setup** window for live inputs and reference checks.
+Membrane Control 0.1.24 lets the normal ESP32 Bluetooth firmware use the saved bench pairing and adds a shareable connection report.
 
 Developed for **Dr. Onita Basu's lab at Carleton University**.
 
-- Install **MembraneControl-Setup-0.1.23-windows-x64.exe**. With the loads isolated, use **Flash normal controller (Bluetooth)** to upload over the wired USB-to-UART port. Keep the existing pairing from **Flash ESP32 Bluetooth test**, then connect to its outgoing Bluetooth COM port in the app. The normal build uses real manual valve outputs and the same hardware profile as the wired controller.
-- Open **Sensor setup** on Dashboard or under **Connections and settings** to see live pressure, flow and pump feedback pin voltages. Capture a per-sensor zero and two measured reference points, then copy the readings and calculated fit for the rig's profile.
-- Firmware discards the previous control session when Bluetooth disconnects. Wired firmware writes each reply as one complete serial frame. Hardware testing on the lab rig remains pending.
+- Install **MembraneControl-Setup-0.1.24-windows-x64.exe** and run **Flash normal controller (Bluetooth)** with the valve and pump loads isolated. Flash over USB and try the existing outgoing Bluetooth COM port first.
+- If the controller reports a missing bond on its wired boot log, use **Flash ESP32 Bluetooth test** to enroll the lab PC and verify that the board saves one bond before reflashing the normal Bluetooth firmware.
+- Under **Connections and settings**, **Copy connection diagnostics** collects the selected and detected COM ports, current status and recent ESP32 connection events for troubleshooting.
 
-[Bluetooth controller instructions](https://github.com/regular030/membrane-control/blob/v0.1.23/docs/full-firmware.md#run-the-normal-controller-over-bluetooth) · [Sensor setup instructions](https://github.com/regular030/membrane-control/blob/v0.1.23/docs/flow-sensor-troubleshooting.md#set-up-the-pressure-and-flow-readings)
+[Bluetooth controller instructions](https://github.com/regular030/membrane-control/blob/v0.1.24/docs/full-firmware.md#run-the-normal-controller-over-bluetooth) · [Sensor setup instructions](https://github.com/regular030/membrane-control/blob/v0.1.24/docs/flow-sensor-troubleshooting.md#set-up-the-pressure-and-flow-readings)

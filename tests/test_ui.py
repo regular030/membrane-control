@@ -1,4 +1,5 @@
 """Offscreen Qt integration checks for operator controls; no hardware required."""
+import json
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -8,6 +9,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 
+from membrane_control import __version__
 from membrane_control.controller import AppController
 from membrane_control.ui import MainWindow
 from membrane_control.models import Recipe, Step
@@ -241,6 +243,57 @@ def test_copy_esp32_log_copies_persistent_diagnostics(screen, monkeypatch):
     monkeypatch.setattr(controller, "esp32_log_text", lambda: '{"event":"telemetry_stale"}')
     window.copy_esp32_log_button.click()
     assert QApplication.clipboard().text() == '{"event":"telemetry_stale"}'
+
+
+def test_copy_connection_diagnostics_includes_ports_status_and_sanitized_events(screen, monkeypatch):
+    window, controller, _ = screen
+    controller.set_simulation(False)
+    controller.snapshot["controller_status"] = "Port opened; no supported controller HELLO received within 8 seconds"
+    window.controller_port.addItem("COM8", "COM8")
+    window.controller_port.setCurrentIndex(window.controller_port.findData("COM8"))
+    monkeypatch.setattr(controller, "list_ports", lambda: [
+        ("COM8", r"Standard Serial over Bluetooth link BTHENUM\Dev_ABCDEF012345 01:23:45:67:89:AB"),
+        ("COM12", "USB-to-UART bridge serial number=private_serial Pairing code: 123456"),
+    ])
+    event = {"event": "link_lost", "port": "COM8", "request_id": 12,
+             "transport": "bluetooth_spp", "reason": "No response; token=private_token",
+             "app_instance": "private_app_id", "hardware_id": "private_hwid", "mass_g": 391.5}
+    monkeypatch.setattr(controller, "esp32_log_text", lambda: json.dumps(event) + "\ninvalid data")
+    monkeypatch.setattr(controller, "connect_controller", lambda *_: pytest.fail("Opened a controller port"))
+
+    window.copy_connection_diagnostics_button.click()
+
+    report = QApplication.clipboard().text()
+    assert f"App version: {__version__}" in report
+    assert "Mode: Hardware" in report
+    assert "Selected controller port: COM8" in report
+    assert "Port opened; no supported controller HELLO" in report
+    assert "COM8  Standard Serial over Bluetooth link" in report
+    assert "COM12  USB-to-UART bridge" in report
+    captured = json.loads(report.split("Recent ESP32 events:\n")[1])
+    assert captured == {"event": "link_lost", "port": "COM8", "request_id": 12,
+                        "transport": "bluetooth_spp", "reason": "No response; [redacted]"}
+    for private in ("ABCDEF012345", "01:23:45:67:89:AB", "BTHENUM", "private_", "123456", "invalid data"):
+        assert private not in report
+    assert controller.driver is None and controller.balance is None
+
+
+def test_copy_connection_diagnostics_reports_port_scan_failure_without_losing_events(screen, monkeypatch):
+    window, controller, _ = screen
+
+    def failed_scan():
+        raise OSError("Internal adapter details")
+
+    monkeypatch.setattr(controller, "list_ports", failed_scan)
+    monkeypatch.setattr(controller, "esp32_log_text", lambda: '{"event":"port_open_error","port":"COM8"}')
+
+    window.copy_connection_diagnostics_button.click()
+
+    report = QApplication.clipboard().text()
+    assert "Port scan failed (OSError)" in report
+    assert "Selected controller port: None" in report
+    assert "port_open_error" in report
+    assert "Internal adapter details" not in report
 
 
 def test_timer_failure_requests_stop_once_and_blocks_start(screen, monkeypatch):

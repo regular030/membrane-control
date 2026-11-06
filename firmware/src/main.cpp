@@ -14,6 +14,7 @@ static_assert(BASU_DRY_RUN == 0 || BASU_DRY_RUN == 1, "BASU_DRY_RUN must be 0 or
 static_assert(BASU_DRY_RUN == 1, "Bluetooth is only available for simulated operation");
 #include <BluetoothSerial.h>
 #include <atomic>
+#include <esp_gap_bt_api.h>
 #include <freertos/queue.h>
 #endif
 #ifdef BASU_BLUETOOTH_PHYSICAL
@@ -83,6 +84,10 @@ void bluetoothEvent(esp_spp_cb_event_t event, esp_spp_cb_param_t* data) {
 
 bool bluetoothSessionCurrent() {
   return (currentBluetoothGeneration & 1U) && currentBluetoothGeneration == bluetoothGeneration.load();
+}
+
+void reportBenchBondCount() {
+  Serial.printf("Bluetooth bench saved bonds: %d\r\n", esp_bt_gap_get_bond_device_num());
 }
 #endif
 
@@ -410,8 +415,13 @@ void setup() {
   // Consume data in the event callback so the default untagged 512-byte queue
   // cannot mix input from different connection handles.
   bluetooth.onData([](const uint8_t*, std::size_t) {});
+  bluetooth.onAuthComplete([](bool success) {
+    if (success) reportBenchBondCount();
+    else Serial.println("Bluetooth bench pairing failed");
+  });
   bluetooth.register_callback(bluetoothEvent);
   if (!bluetooth.begin("MembraneControl-Bench")) Serial.println("Bluetooth dry run: failed to start");
+  else reportBenchBondCount();
 #endif
 #ifdef BASU_BLUETOOTH_PHYSICAL
   if (const char* error = basu::protectedSpp::begin()) Serial.println(error);

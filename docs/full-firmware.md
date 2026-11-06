@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.23 includes the complete controller source and compiled ESP32 images,
+Version 0.1.24 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.23-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.24-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -87,7 +87,7 @@ Bluetooth communication while the controller is powered and idle or simulated.
    Bluetooth test first. The normal Bluetooth firmware uses the one existing
    bond saved on the ESP32.
 2. Isolate the valve and pump loads. Close the app connection, open **Flash
-   normal controller (Bluetooth)** from Setup 0.1.23, and select the **wired**
+   normal controller (Bluetooth)** from Setup 0.1.24, and select the **wired**
    USB-to-UART COM port for upload. Use the helper's IO0/EN steps. Keep the
    flash settings and use a regular upload so the saved pairing is preserved.
 3. Turn off desktop **Simulation**. In **Connections and settings**, select
@@ -99,12 +99,20 @@ Bluetooth communication while the controller is powered and idle or simulated.
    build uses the same pump, run and sensor profile as the wired controller.
    A reconnect starts a new session with outputs in their configured safe state.
 
-If Windows connects to the port but the app gets no reply, capture the wired
-boot log at 115200 baud. If the boot log reports no enrolled bench bond, use
-the Bluetooth test to pair on that PC again. If it reports multiple bonds,
-use the wired normal controller until the board is enrolled to a single lab
-PC. The Bluetooth normal build does not enroll a new PC while able to control
-outputs. The wired normal build is available from **Flash normal controller**.
+If Windows opens the port but the app gets no reply, click **Copy connection
+diagnostics** in **Connections and settings**. The report includes the selected
+port, detected ports and recent ESP32 connection events. Also capture the
+wired USB-to-UART boot log at 115200 baud with the loads isolated. Keep the
+Windows pairing for the first retry after upgrading from 0.1.23.
+
+If the boot log reports no enrolled bench bond, flash the Bluetooth test
+again. While that test is running, remove the stale Windows entry for this
+controller and pair `MembraneControl-Bench` using **Add device**. The test
+firmware prints the number of saved bonds on the wired console. Confirm it
+reports one bond and that the outgoing Bluetooth COM port works. Then flash
+the normal Bluetooth firmware again using the same board and PC. If it reports
+multiple bonds, use **Flash normal controller** for wired operation until the
+board is enrolled to a single lab PC.
 
 ## Finish the physical hardware profile
 

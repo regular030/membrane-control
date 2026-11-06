@@ -1,12 +1,15 @@
 #include "ProtectedSpp.h"
 
+#include <Arduino.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <esp_bt.h>
 #include <esp_bt_device.h>
 #include <esp_bt_main.h>
 #include <esp_gap_bt_api.h>
+#include <esp_idf_version.h>
 #include <esp_spp_api.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -15,10 +18,37 @@
 // The pinned Arduino core otherwise releases Bluetooth memory during startup.
 extern "C" bool btInUse() { return true; }
 
+// The public Classic GAP scan API cannot set pairability. This pinned
+// Bluedroid API also blocks Just Works before it bypasses the GAP callback.
+static_assert(ESP_IDF_VERSION == ESP_IDF_VERSION_VAL(4, 4, 7), "Review Classic pairing controls when updating ESP-IDF");
+extern "C" void BTA_DmSetVisibility(uint16_t discoverability, uint16_t connectability,
+                                    uint8_t pairability, uint8_t connectionFilter);
+
 namespace basu::protectedSpp {
 namespace {
 constexpr char kName[] = "MembraneControl";
 constexpr TickType_t kWriteTimeout = pdMS_TO_TICKS(1000);
+constexpr uint16_t kKeepScanMode = 0xffff;  // BTA_DM_IGNORE | BTA_DM_LE_IGNORE
+constexpr uint8_t kNonPairable = 0;        // BTA_DM_NON_PAIRABLE
+constexpr uint8_t kConnectPaired = 1;      // BTA_DM_CONN_PAIRED
+
+enum class Notice : uint8_t {
+  InitializationFailed, StartFailed, ScanFailed, Started, OpenFailed,
+  WrongPeer, Busy, Accepted, PairingDenied, AuthenticationFailed, LinkInvalidated,
+};
+constexpr const char* kNoticeMessages[] = {
+  "Bluetooth: serial initialization failed",
+  "Bluetooth: protected serial service failed to start",
+  "Bluetooth: could not request discoverability",
+  "Bluetooth: protected serial service started for one saved bond",
+  "Bluetooth: serial connection could not open",
+  "Bluetooth: serial connection rejected for a different device",
+  "Bluetooth: serial connection busy; reopen the outgoing port",
+  "Bluetooth: saved device opened the protected serial connection",
+  "Bluetooth: new pairing denied; use the unloaded Bluetooth bench image to pair",
+  "Bluetooth: saved device authentication failed; check the bench bond",
+  "Bluetooth: serial session stopped after an I/O failure",
+};
 
 struct Frame {
   BluetoothLinkToken token;
@@ -38,9 +68,15 @@ bool callingSdk = false;
 bool writing = false;
 bool congested = false;
 std::size_t writingLength = 0;
+std::atomic<uint32_t> notices{0};
+
+void report(Notice notice) {
+  notices.fetch_or(1U << static_cast<unsigned>(notice), std::memory_order_relaxed);
+}
 
 void invalidateLocked(BluetoothLinkToken token) {
   if (!link.invalidate(token)) return;
+  report(Notice::LinkInvalidated);
   head = used = 0;
   pendingDisconnect = token.handle;
 }
@@ -55,7 +91,17 @@ void invalidate(BluetoothLinkToken token) {
 // outside the controller loop so radio congestion cannot stall the watchdog.
 void transmit(void*) {
   Frame frame{};
+  uint32_t reported = 0;
   for (;;) {
+    // The worker prints each event class once per boot. Radio callbacks and
+    // the controller loop only set bits and never wait on diagnostic UART I/O.
+    const uint32_t observed = notices.load(std::memory_order_relaxed);
+    const uint32_t fresh = observed & ~reported;
+    reported = observed;
+    if (fresh) {
+      for (unsigned index = 0; index < std::size(kNoticeMessages); ++index)
+        if (fresh & (1U << index)) Serial.println(kNoticeMessages[index]);
+    }
     portENTER_CRITICAL(&lock);
     const uint32_t disconnect = pendingDisconnect;
     pendingDisconnect = 0;
@@ -101,26 +147,40 @@ void onGap(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* data) {
   // Enrollment happens on the unloaded bench image. Physical firmware never
   // grants a new bond through PIN or numeric confirmation prompts.
   if (event == ESP_BT_GAP_PIN_REQ_EVT) {
+    report(Notice::PairingDenied);
     esp_bt_pin_code_t empty{};
     esp_bt_gap_pin_reply(data->pin_req.bda, false, 0, empty);
   } else if (event == ESP_BT_GAP_CFM_REQ_EVT) {
+    report(Notice::PairingDenied);
     esp_bt_gap_ssp_confirm_reply(data->cfm_req.bda, false);
   } else if (event == ESP_BT_GAP_KEY_REQ_EVT) {
+    report(Notice::PairingDenied);
     esp_bt_gap_ssp_passkey_reply(data->key_req.bda, false, 0);
+  } else if (event == ESP_BT_GAP_AUTH_CMPL_EVT && data->auth_cmpl.stat != ESP_BT_STATUS_SUCCESS &&
+             std::memcmp(enrolledPeer, data->auth_cmpl.bda, sizeof(enrolledPeer)) == 0) {
+    report(Notice::AuthenticationFailed);
   }
 }
 
 void onSpp(esp_spp_cb_event_t event, esp_spp_cb_param_t* data) {
-  if (event == ESP_SPP_INIT_EVT && data->init.status == ESP_SPP_SUCCESS) {
-    constexpr esp_spp_sec_t security = ESP_SPP_SEC_AUTHENTICATE | ESP_SPP_SEC_ENCRYPT;
-    esp_spp_start_srv(security, ESP_SPP_ROLE_SLAVE, 0, kName);
+  if (event == ESP_SPP_INIT_EVT) {
+    // In pinned IDF 4.4.7, ENCRYPT also requires authentication of the saved
+    // link key. Explicit AUTHENTICATE additionally asks SSP to upgrade a
+    // bench Just Works bond to MITM pairing, which physical mode rejects.
+    if (data->init.status != ESP_SPP_SUCCESS) report(Notice::InitializationFailed);
+    else if (esp_spp_start_srv(ESP_SPP_SEC_ENCRYPT, ESP_SPP_ROLE_SLAVE, 0, kName) != ESP_OK)
+      report(Notice::StartFailed);
     return;
   }
-  if (event == ESP_SPP_START_EVT && data->start.status == ESP_SPP_SUCCESS) {
-    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+  if (event == ESP_SPP_START_EVT) {
+    if (data->start.status != ESP_SPP_SUCCESS) report(Notice::StartFailed);
+    else if (esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE) != ESP_OK)
+      report(Notice::ScanFailed);
+    else report(Notice::Started);
     return;
   }
-  if (event == ESP_SPP_SRV_OPEN_EVT && data->srv_open.status == ESP_SPP_SUCCESS) {
+  if (event == ESP_SPP_SRV_OPEN_EVT) {
+    if (data->srv_open.status != ESP_SPP_SUCCESS) { report(Notice::OpenFailed); return; }
     const auto handle = data->srv_open.handle;
     const bool enrolled = std::memcmp(enrolledPeer, data->srv_open.rem_bda, sizeof(enrolledPeer)) == 0;
     portENTER_CRITICAL(&lock);
@@ -130,7 +190,11 @@ void onSpp(esp_spp_cb_event_t event, esp_spp_cb_param_t* data) {
       writing = congested = false;
     }
     portEXIT_CRITICAL(&lock);
-    if (!accepted) esp_spp_disconnect(handle);
+    if (accepted) report(Notice::Accepted);
+    else {
+      report(enrolled ? Notice::Busy : Notice::WrongPeer);
+      if (handle) esp_spp_disconnect(handle);
+    }
     return;
   }
 
@@ -168,6 +232,7 @@ const char* begin() {
   if (esp_bt_controller_init(&config) != ESP_OK || esp_bt_controller_enable(ESP_BT_MODE_BTDM) != ESP_OK ||
       esp_bluedroid_init() != ESP_OK || esp_bluedroid_enable() != ESP_OK)
     return "Bluetooth initialization failed";
+  BTA_DmSetVisibility(kKeepScanMode, kKeepScanMode, kNonPairable, kConnectPaired);
   int bonds = esp_bt_gap_get_bond_device_num();
   if (bonds == 0) return "Bluetooth physical control locked: no enrolled bench bond";
   if (bonds > 1) return "Bluetooth physical control locked: multiple enrolled bench bonds";

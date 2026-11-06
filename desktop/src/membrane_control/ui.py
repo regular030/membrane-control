@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 import pyqtgraph as pg
 
 from .models import MAX_STEPS, Recipe
+from .connection_diagnostics import connection_diagnostics
 from .device_status import device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
@@ -603,6 +604,9 @@ class MainWindow(QMainWindow):
         self.copy_esp32_log_button.setToolTip(
             f"Copy recent serial events from {self.controller.esp32_log_path}")
         cform.addRow(self.copy_esp32_log_button)
+        self.copy_connection_diagnostics_button = _button("Copy connection diagnostics", self._copy_connection_diagnostics)
+        self.copy_connection_diagnostics_button.setToolTip("Copy the app version, COM port list, controller status and recent ESP32 events.")
+        cform.addRow(self.copy_connection_diagnostics_button)
         self.sensor_test_button = _button("Read sensor inputs", self._read_sensor_inputs)
         self.connections_sensor_setup_button = _button("Sensor setup", self._open_sensor_setup)
         cform.addRow(self.connections_sensor_setup_button)
@@ -1114,6 +1118,18 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("ESP32 log copied. Paste it into your troubleshooting message.", 6000)
         else:
             self.statusBar().showMessage("No ESP32 connection events have been logged yet.", 6000)
+
+    def _copy_connection_diagnostics(self):
+        report = connection_diagnostics(
+            selected_port=self.controller_port.currentData(),
+            active_port=getattr(self.controller.driver, "port", None),
+            status=self.controller.snapshot.get("controller_status") or "",
+            simulation=self.controller.simulation,
+            list_ports=self.controller.list_ports,
+            history=self.controller.esp32_log_text(),
+        )
+        QApplication.clipboard().setText(report)
+        self.statusBar().showMessage("Connection diagnostics copied. Paste them into a text file or troubleshooting message.", 6000)
 
     def _read_sensor_inputs(self):
         self._action(self.controller.read_sensor_inputs, "Requested a sensor voltage check")
