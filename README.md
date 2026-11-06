@@ -3,7 +3,7 @@
 Developed for membrane research in **Dr. Onita Basu's lab at Carleton University**.
 
 A Windows app for viewing membrane experiment readings, running valve/pump
-sequences and saving results. **Start with the demo. No USB devices are needed.**
+sequences and saving results.
 
 ## First time here?
 
@@ -22,8 +22,10 @@ For troubleshooting from the PC connected to the controller, open the [Bluetooth
    Python and ESP32 firmware tools, choose **MembraneControl-Setup**.
    **Source code (zip)** contains the code, not the ready-to-run app.
 2. Double-click the EXE. If using Setup, wait for completion and open the new
-   **Membrane Control** shortcut. Leave **Simulation mode** checked.
-3. Choose a **Preset**, then click **Start run**.
+   **Membrane Control** shortcut.
+3. Open **Connections and settings** and connect the lab devices. The ESP32
+   defaults to **COM8** and the scale to **COM6** when those ports are detected.
+   Review the sequence and choose the approved **Preset** before starting a run.
 4. Click **Stop run**, then **Export CSV** to save the results.
 5. Use **Run history** to find and export earlier runs.
 
@@ -60,7 +62,7 @@ This is a prototype. The real wiring, sensor calibration and valve/pump
 operation still need bench verification. The CIP, CWF and Fouling demo presets
 are examples, not recovered or approved LabVIEW procedures.
 
-Simulation mode uses generated readings. An ESP32 connected with **dry-run
+Launching with `--demo` uses generated readings. An ESP32 connected with **dry-run
 firmware** also generates readings and does not operate the outputs. Seeing a
 USB device, connecting the ESP32, or checking a recipe-review box does not make
 the rig ready. Follow the lab's setup and approval process before physical use.

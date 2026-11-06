@@ -34,6 +34,29 @@ def screen(qt_app, tmp_path):
     window.close()
 
 
+def test_hardware_launch_preselects_lab_ports_and_preserves_manual_selections(qt_app, tmp_path):
+    controller = AppController(tmp_path, simulation=False)
+    ports = [("COM4", "Other adapter"), ("COM6", "Balance"), ("COM8", "ESP32")]
+    controller.list_ports = lambda: ports
+    window = MainWindow(controller)
+    try:
+        assert controller.driver is None and controller.balance is None
+        assert not controller.snapshot["simulation"]
+        assert window.controller_port.currentData() == "COM8"
+        assert window.balance_port.currentData() == "COM6"
+
+        window.controller_port.setCurrentIndex(window.controller_port.findData("COM4"))
+        window._refresh_ports()
+        assert window.controller_port.currentData() == "COM4"
+
+        ports[:] = [("COM8", "ESP32")]
+        window._refresh_ports()
+        assert window.controller_port.currentData() == "COM8"
+        assert window.balance_port.currentData() is None
+    finally:
+        window.close()
+
+
 def test_manual_outputs_keep_stop_available_and_lock_mode(screen):
     window, controller, now = screen
     controller.set_manual([True, False, False, False, False, False, False], 20)
@@ -43,7 +66,6 @@ def test_manual_outputs_keep_stop_available_and_lock_mode(screen):
     assert controller.snapshot["state"] == "manual"
     assert window.stop_button.isEnabled()
     assert not window.start_button.isEnabled()
-    assert not window.simulation_check.isEnabled()
     assert not window.steps_table.isEnabled()
     assert window.valve_buttons[0].isEnabled()
     assert window.manual_apply.isEnabled()
@@ -56,7 +78,6 @@ def test_start_pending_blocks_second_start_but_keeps_stop(screen):
     window._update_view(dict(controller.snapshot))
     assert not window.start_button.isEnabled()
     assert window.stop_button.isEnabled()
-    assert not window.simulation_check.isEnabled()
     assert not window.valve_buttons[0].isEnabled()
     assert not window.import_button.isEnabled()
     assert window.state_chip.text() == "STARTING"
@@ -69,7 +90,7 @@ def test_dry_run_firmware_does_not_change_desktop_connection_mode(screen):
                                hardware_verified=False, pressure_psi=0)
     controller.last_telemetry = now[0]
     window._update_view(dict(controller.snapshot))
-    assert not window.simulation_check.isChecked()
+    assert not controller.simulation
     assert window.controller_disconnect.isEnabled()
     assert window.balance_connect.isEnabled()
     assert "DRY RUN FIRMWARE" in window.banner.text()
@@ -123,16 +144,34 @@ def test_live_sensor_estimates_stay_separate_and_hide_on_disconnect(screen):
     window._update_view(dict(controller.snapshot))
     assert not window.live_sensor_detail.isHidden()
     text = window.live_sensor_detail.text()
-    assert "nominal estimates" in text
     assert "ESP32 sample at 0.25 s" in text
     controller.last_controller_uptime = 500
     window._update_view(dict(controller.snapshot))
     assert "ESP32 sample at 0.50 s" in window.live_sensor_detail.text()
-    assert "18.0 psi" in text
-    assert "14.2 mL/min" in text
-    assert "Pump feedback 142 mV (outside estimate range)" in text
+    assert "Pressure 180 mV" in text
+    assert "Flow 142 mV" in text
+    assert "Pump feedback 142 mV" in text
     assert controller.snapshot["pressure_psi"] is None
     assert controller.snapshot["flow_ml_min"] is None
+    assert window._metric_labels["pressure_psi"].text() == "≈17.90"
+    assert window._metric_units["pressure_psi"].text() == "psi · estimated · 180 mV at ESP32"
+    assert window._metric_labels["flow_ml_min"].text() == "≈14.2"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min · estimated · 142 mV at ESP32"
+    assert window._metric_labels["pump_feedback_v"].text() == "—"
+    assert window._metric_units["pump_feedback_v"].text() == "No V reading · 142 mV at ESP32 · outside ADC range"
+    window._update_view(dict(controller.snapshot,
+                             live_sensor_voltages={"pressure": 78, "flow": 1010, "pump_feedback": 500}))
+    assert window._metric_units["pressure_psi"].text() == "No psi reading · 78 mV at ESP32 · outside ADC range"
+    assert window._metric_units["flow_ml_min"].text() == "No mL/min reading · 1010 mV at ESP32 · outside estimate range"
+    assert window._metric_labels["pump_feedback_v"].text() == "≈2.50"
+    assert window._metric_units["pump_feedback_v"].text() == "V · estimated · 500 mV at ESP32"
+    window._update_view(dict(controller.snapshot, pressure_psi=18.01))
+    assert window._metric_labels["pressure_psi"].text() == "18.01"
+    assert window._metric_units["pressure_psi"].text() == "psi"
+    now[0] += 3
+    window._update_view(dict(controller.snapshot))
+    assert window._metric_labels["flow_ml_min"].text() == "Waiting"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min"
     controller.disconnect_controller(request_stop=False)
     window._update_view(dict(controller.snapshot))
     assert window.live_sensor_detail.isHidden()
@@ -164,7 +203,7 @@ def test_sensor_setup_is_discoverable_and_shows_live_inputs_without_other_sensor
     window.sensor_setup_button.click()
     dialog = window._sensor_setup_dialog
     assert dialog.isVisible()
-    assert "Turn Simulation mode off" in dialog.connection_status.text()
+    assert "Open the app in hardware mode" in dialog.connection_status.text()
     assert not dialog.zero_button.isEnabled()
 
     controller.set_simulation(False)
@@ -354,13 +393,12 @@ def test_save_as_refreshes_custom_preset_dropdown(screen, monkeypatch):
     assert window.preset_combo.currentData() == "My saved sequence"
 
 
-def test_stop_pending_locks_start_and_mode(screen):
+def test_stop_pending_locks_start_and_manual_apply(screen):
     window, controller, _ = screen
     controller.stop_run()
     window._update_view(dict(controller.snapshot))
     assert not window.start_button.isEnabled()
     assert window.stop_button.isEnabled()
-    assert not window.simulation_check.isEnabled()
     assert not window.manual_apply.isEnabled()
     assert window.state_chip.text() == "STOPPING"
 
@@ -418,7 +456,7 @@ def test_dashboard_device_panel_dry_run_firmware_can_have_real_scale(screen):
     assert labels["balance"].text() == "Connected"
     assert labels["balance"].property("statusLevel") == "success"
     assert all(labels[key].text() == "Simulated" for key in ("pressure", "flow", "pump_feedback", "outputs"))
-    assert not window.simulation_check.isChecked()
+    assert not controller.simulation
 
 
 def test_compact_window_keeps_device_panel_visible_and_controls_unclipped(screen, qt_app):
@@ -528,7 +566,6 @@ def test_manual_pending_locks_changes_but_keeps_stop(screen):
     assert window.stop_button.isEnabled()
     assert not window.start_button.isEnabled()
     assert not window.manual_apply.isEnabled()
-    assert not window.simulation_check.isEnabled()
     assert not window.steps_table.isEnabled()
     assert window.state_chip.text() == "APPLYING"
 

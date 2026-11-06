@@ -20,8 +20,7 @@ Python runtime and application libraries it needs.
    `MembraneControl-0.1.11-windows-x64.exe` or the matching portable app ZIP.
    **Source code (zip)** is for developers and does not contain the EXE.
 3. If you chose the portable ZIP, right-click it and choose **Extract All**.
-4. Open the EXE. Leave **Simulation mode** checked and follow
-   [Start here](START-HERE.md).
+4. Open the EXE and follow [Start here](START-HERE.md).
 
 First startup can take a little longer. The app includes its own libraries and
 can run the demo without internet or USB equipment. It does not install device
@@ -40,14 +39,14 @@ The separate [ESP32 setup guide](https://github.com/regular030/membrane-control/
 1. Power the equipment and connect its USB **data** cable.
 2. Open Windows **Device Manager > Ports (COM & LPT)**. Note the COM number
    belonging to each device, such as `COM4`.
-3. In the app, stop any run, uncheck **Simulation mode**, and open
-   **Connections and settings**.
+3. In the app, stop any run and open **Connections and settings**.
 4. Click **Refresh serial ports**, select the known ESP32 port and click its
    **Connect** button. Select the scale's own port and connect it separately.
 5. Read the status messages. A responding board may still be in **dry run**.
 
-After restarting the PC, the app opens in Simulation mode again. Connect the
-instruments explicitly; do not assume their COM numbers stayed the same.
+Connect the instruments explicitly after restarting. The app selects COM8
+for the ESP32 and COM6 for the scale when detected. Check the assignments if
+the equipment moved or its connection changed.
 If no port appears, stop at USB detection: try a known data cable, another USB
 socket and the correct driver. A firmware upload cannot work before Windows
 recognizes the board. Do not choose a port belonging to another lab instrument.
