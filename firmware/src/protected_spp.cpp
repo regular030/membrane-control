@@ -26,11 +26,15 @@ extern "C" void BTA_DmSetVisibility(uint16_t discoverability, uint16_t connectab
 
 namespace basu::protectedSpp {
 namespace {
-constexpr char kName[] = "MembraneControl";
+// Windows provisions the outgoing port against the bench's Classic SPP service.
+constexpr char kDeviceName[] = "MembraneControl-Bench";
+constexpr char kServiceName[] = "ESP32SPP";
+// Match the Class of Device set by the pinned Arduino BluetoothSerial library.
+constexpr esp_bt_cod_t kSerialDeviceClass{0, 4, 1, 0x16};
 constexpr TickType_t kWriteTimeout = pdMS_TO_TICKS(1000);
 constexpr uint16_t kKeepScanMode = 0xffff;  // BTA_DM_IGNORE | BTA_DM_LE_IGNORE
 constexpr uint8_t kNonPairable = 0;        // BTA_DM_NON_PAIRABLE
-constexpr uint8_t kConnectPaired = 1;      // BTA_DM_CONN_PAIRED
+constexpr uint8_t kConnectAll = 0;         // BTA_DM_CONN_ALL
 
 enum class Notice : uint8_t {
   InitializationFailed, StartFailed, ScanFailed, Started, OpenFailed,
@@ -168,7 +172,7 @@ void onSpp(esp_spp_cb_event_t event, esp_spp_cb_param_t* data) {
     // link key. Explicit AUTHENTICATE additionally asks SSP to upgrade a
     // bench Just Works bond to MITM pairing, which physical mode rejects.
     if (data->init.status != ESP_SPP_SUCCESS) report(Notice::InitializationFailed);
-    else if (esp_spp_start_srv(ESP_SPP_SEC_ENCRYPT, ESP_SPP_ROLE_SLAVE, 0, kName) != ESP_OK)
+    else if (esp_spp_start_srv(ESP_SPP_SEC_ENCRYPT, ESP_SPP_ROLE_SLAVE, 0, kServiceName) != ESP_OK)
       report(Notice::StartFailed);
     return;
   }
@@ -232,7 +236,10 @@ const char* begin() {
   if (esp_bt_controller_init(&config) != ESP_OK || esp_bt_controller_enable(ESP_BT_MODE_BTDM) != ESP_OK ||
       esp_bluedroid_init() != ESP_OK || esp_bluedroid_enable() != ESP_OK)
     return "Bluetooth initialization failed";
-  BTA_DmSetVisibility(kKeepScanMode, kKeepScanMode, kNonPairable, kConnectPaired);
+  // Bluedroid restores a saved key as known, but the paired-only ACL filter
+  // requires it to be authenticated before SPP has a chance to authenticate it.
+  // Keep pairing disabled and require encrypted SPP from the saved peer.
+  BTA_DmSetVisibility(kKeepScanMode, kKeepScanMode, kNonPairable, kConnectAll);
   int bonds = esp_bt_gap_get_bond_device_num();
   if (bonds == 0) return "Bluetooth physical control locked: no enrolled bench bond";
   if (bonds > 1) return "Bluetooth physical control locked: multiple enrolled bench bonds";
@@ -247,7 +254,9 @@ const char* begin() {
   uint8_t ioCapability = ESP_BT_IO_CAP_IO;
   if (esp_bt_gap_register_callback(onGap) != ESP_OK ||
       esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &ioCapability, sizeof(ioCapability)) != ESP_OK ||
-      esp_bt_dev_set_device_name(kName) != ESP_OK || esp_spp_register_callback(onSpp) != ESP_OK ||
+      esp_bt_dev_set_device_name(kDeviceName) != ESP_OK ||
+      esp_bt_gap_set_cod(kSerialDeviceClass, ESP_BT_INIT_COD) != ESP_OK ||
+      esp_spp_register_callback(onSpp) != ESP_OK ||
       esp_spp_init(ESP_SPP_MODE_CB) != ESP_OK)
     return "Bluetooth protected serial service could not start";
   return nullptr;

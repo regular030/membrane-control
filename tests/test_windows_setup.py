@@ -329,7 +329,7 @@ def test_bluetooth_flash_success_explains_how_to_find_the_outgoing_com(payload, 
         f"Invoke-DryRunFlash -Root {ps_quote(target)} -ComPort COM4 -Firmware {firmware}")
     assert "fake upload" in result.stdout
     if firmware == "esp32-bluetooth-physical":
-        assert "now advertises MembraneControl." in result.stdout
+        assert "keeps the Bluetooth name MembraneControl-Bench" in result.stdout
         assert "Keep the existing Windows pairing" in result.stdout
         assert "existing Outgoing Bluetooth COM port" in result.stdout
         assert "Connected (dry run)" not in result.stdout
