@@ -30,7 +30,7 @@ constexpr char kName[] = "MembraneControl";
 constexpr TickType_t kWriteTimeout = pdMS_TO_TICKS(1000);
 constexpr uint16_t kKeepScanMode = 0xffff;  // BTA_DM_IGNORE | BTA_DM_LE_IGNORE
 constexpr uint8_t kNonPairable = 0;        // BTA_DM_NON_PAIRABLE
-constexpr uint8_t kConnectPaired = 1;      // BTA_DM_CONN_PAIRED
+constexpr uint8_t kConnectAll = 0;         // BTA_DM_CONN_ALL
 
 enum class Notice : uint8_t {
   InitializationFailed, StartFailed, ScanFailed, Started, OpenFailed,
@@ -232,7 +232,10 @@ const char* begin() {
   if (esp_bt_controller_init(&config) != ESP_OK || esp_bt_controller_enable(ESP_BT_MODE_BTDM) != ESP_OK ||
       esp_bluedroid_init() != ESP_OK || esp_bluedroid_enable() != ESP_OK)
     return "Bluetooth initialization failed";
-  BTA_DmSetVisibility(kKeepScanMode, kKeepScanMode, kNonPairable, kConnectPaired);
+  // Bluedroid restores a saved key as known, but the paired-only ACL filter
+  // requires it to be authenticated before SPP has a chance to authenticate it.
+  // Keep pairing disabled and require encrypted SPP from the saved peer.
+  BTA_DmSetVisibility(kKeepScanMode, kKeepScanMode, kNonPairable, kConnectAll);
   int bonds = esp_bt_gap_get_bond_device_num();
   if (bonds == 0) return "Bluetooth physical control locked: no enrolled bench bond";
   if (bonds > 1) return "Bluetooth physical control locked: multiple enrolled bench bonds";

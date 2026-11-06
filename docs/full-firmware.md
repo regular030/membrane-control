@@ -99,6 +99,13 @@ Bluetooth communication while the controller is powered and idle or simulated.
    build uses the same pump, run and sensor profile as the wired controller.
    A reconnect starts a new session with outputs in their configured safe state.
 
+If the outgoing Bluetooth COM port is missing, check **More Bluetooth settings
+→ COM Ports**. If Windows still lists the paired controller, use **Add →
+Outgoing** to restore its port. If the pairing is also missing, return to the
+unloaded Bluetooth test to pair and verify the outgoing port before flashing
+the normal Bluetooth firmware again. The wired COM port on the Bluetooth
+firmware carries boot diagnostics.
+
 If Windows opens the port but the app gets no reply, click **Copy connection
 diagnostics** in **Connections and settings**. The report includes the selected
 port, detected ports and recent ESP32 connection events. Also capture the
