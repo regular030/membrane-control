@@ -1,4 +1,4 @@
-"""Start the desktop app. Demo is always the default; hardware never auto-connects."""
+"""Start the desktop app in hardware mode unless Demo is requested explicitly."""
 import argparse
 import logging
 from logging.handlers import RotatingFileHandler
@@ -22,7 +22,7 @@ def _run_event_loop(app, window):
 
 def main():
     parser = argparse.ArgumentParser(description="Membrane Control")
-    parser.add_argument("--demo", action="store_true", help="Use simulated devices (default)")
+    parser.add_argument("--demo", action="store_true", help="Use simulated devices")
     parser.add_argument("--data-dir", type=Path, help="Operator data directory")
     parser.add_argument("--screenshot", type=Path, help="Save a UI screenshot after startup")
     parser.add_argument("--quit-after", type=float, help="Exit after a number of seconds (testing)")
@@ -52,7 +52,7 @@ def main():
     app.setPalette(palette)
     app.setApplicationName("Membrane Control")
     app.setOrganizationName("Basu Lab")
-    controller = AppController(data_dir)
+    controller = AppController(data_dir, simulation=args.demo)
     window = MainWindow(controller)
     def exception_handler(kind, value, traceback):
         logging.critical("Application error", exc_info=(kind, value, traceback))
@@ -65,6 +65,8 @@ def main():
         QMessageBox.critical(window, "Application error", str(value) + "\nA stop was requested. Check the system before continuing.")
     sys.excepthook = exception_handler
     window.show()
+    if not args.demo:
+        QTimer.singleShot(0, window.connect_lab_defaults)
     if args.screenshot:
         def capture():
             args.screenshot.parent.mkdir(parents=True, exist_ok=True)

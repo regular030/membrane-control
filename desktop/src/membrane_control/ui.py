@@ -1,8 +1,7 @@
 """Qt desktop interface for the membrane controller.
 
-Device access and experiment execution live in AppController. The UI never
-opens serial ports or changes outputs except through an explicit controller
-action initiated by the user.
+Device access and experiment execution live in AppController. Connecting
+devices at startup does not start a run or apply output commands.
 """
 from __future__ import annotations
 
@@ -30,8 +29,36 @@ from .connection_diagnostics import connection_diagnostics
 from .device_status import device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
-from .sensor_setup import SensorSetupDialog
+from .sensor_setup import ADC_RANGE_MV, SensorSetupDialog
 from .valve_test import ValveTestDialog
+
+
+LAB_CONTROLLER_PORT = "COM8"
+LAB_BALANCE_PORT = "COM6"
+
+METRICS = {
+    "flow_ml_min": ("Flow", "mL/min", "flow"),
+    "pressure_psi": ("Pressure", "psi", "pressure"),
+    "pump_feedback_v": ("Pump feedback", "V", "pump_feedback"),
+    "flux_lmh": ("Flux", "L/m²/h", None),
+    "mass_g": ("Balance mass", "g", None),
+}
+
+# Diagnostic estimates use the documented 5:1 dividers and certificate spans.
+# They are for display only and never enter the controller's measurements.
+SENSOR_ESTIMATE_RANGES_MV = {"pressure": (100, 1000), "flow": (130, 1000), "pump_feedback": (150, 2000)}
+
+
+def _sensor_estimate(channel: str, raw_mv: int) -> float | None:
+    low, high = SENSOR_ESTIMATE_RANGES_MV[channel]
+    if not low <= raw_mv <= high:
+        return None
+    sensor_volts = raw_mv / 200
+    if channel == "pressure":
+        return (sensor_volts - 0.005) * 100 / (5.004 - 0.005)
+    if channel == "flow":
+        return sensor_volts * 20
+    return sensor_volts
 
 
 STYLE = """
@@ -171,6 +198,7 @@ class MainWindow(QMainWindow):
         self._curves: dict[str, Any] = {}
         self._plots: dict[str, Any] = {}
         self._metric_labels: dict[str, QLabel] = {}
+        self._metric_units: dict[str, QLabel] = {}
         self.device_status_labels: dict[str, QLabel] = {}
         self._device_status_names: dict[str, QLabel] = {}
         self._device_status_containers: dict[str, QWidget] = {}
@@ -212,7 +240,7 @@ class MainWindow(QMainWindow):
         self._build_connections()
         self._build_history()
         self._build_help()
-        self.statusBar().showMessage("Ready. Simulation is the default; no hardware connection is opened automatically.")
+        self.statusBar().showMessage("Ready. Check device status in Connections and settings.")
 
         self._load_presets()
         current = getattr(controller, "recipe", None)
@@ -240,12 +268,6 @@ class MainWindow(QMainWindow):
         row.addLayout(title, 1)
         self.state_chip = _label("IDLE", "stateChip")
         row.addWidget(self.state_chip)
-        self.simulation_check = QCheckBox("Simulation mode")
-        self.simulation_check.setAccessibleName("Enable simulation mode")
-        self.simulation_check.setChecked(True)
-        self.simulation_check.toggled.connect(self._toggle_simulation)
-        row.addSpacing(12)
-        row.addWidget(self.simulation_check)
         self.help_button = _button("Start here", lambda: self.tabs.setCurrentIndex(4))
         self.help_button.setAccessibleName("Open the beginner guide")
         row.addWidget(self.help_button)
@@ -333,7 +355,7 @@ class MainWindow(QMainWindow):
         valve_layout.addLayout(valve_row)
         outer.addWidget(self.valve_controls)
         metric_row = QHBoxLayout()
-        for key, title, unit in [("flow_ml_min", "Flow", "mL/min"), ("pressure_psi", "Pressure", "psi"), ("flux_lmh", "Flux", "L/m²/h"), ("mass_g", "Balance mass", "g")]:
+        for key, (title, unit, _) in METRICS.items():
             frame = QFrame()
             frame.setObjectName("metricCard")
             card = QVBoxLayout(frame)
@@ -343,9 +365,11 @@ class MainWindow(QMainWindow):
             value = _label("Waiting", "metricValue")
             value.setAccessibleName(f"Current {title.lower()}")
             card.addWidget(value)
-            card.addWidget(_label(unit, "metricUnit"))
+            unit_label = _label(unit, "metricUnit", True)
+            card.addWidget(unit_label)
             self._metric_labels[key] = value
-            metric_row.addWidget(frame)
+            self._metric_units[key] = unit_label
+            metric_row.addWidget(frame, 1)
         outer.addLayout(metric_row)
         self.live_sensor_detail = _label("", "muted", True)
         self.live_sensor_detail.setAccessibleName("Live diagnostic sensor inputs")
@@ -585,7 +609,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(18, 15, 18, 15)
-        layout.addWidget(_label("Connect devices explicitly. Detecting a USB adapter alone does not establish a responding controller.", "muted", True))
+        layout.addWidget(_label("The app tries COM8 for the ESP32 and COM6 for the scale on startup. Use the controls below to reconnect or choose other ports.", "muted", True))
         devices = QHBoxLayout()
         controller_box = QGroupBox("ESP32 controller")
         cform = QFormLayout(controller_box)
@@ -615,7 +639,7 @@ class MainWindow(QMainWindow):
         self.sensor_test_detail = _label("", "muted", True)
         cform.addRow(self.sensor_test_detail)
         self.relay_bench_button = _button("1. Bare relay board test", self._open_relay_bench)
-        self.relay_bench_button.setToolTip("Turn Simulation mode off first. Separate tool for REAL relays on a bare board with every contact load disconnected.")
+        self.relay_bench_button.setToolTip("Separate tool for real relays on a bare board with every contact load disconnected.")
         cform.addRow(self.relay_bench_button)
         self.valve_test_button = _button("2. Legacy valve pulse test", self._open_valve_test)
         self.valve_test_button.setToolTip("Older separate pulse-test firmware. For this six-valve rig, use the normal Dashboard toggles instead.")
@@ -711,7 +735,7 @@ class MainWindow(QMainWindow):
         self.history_table.setAlternatingRowColors(True)
         self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.history_table, 1)
-        self.history_empty = _label("No runs recorded yet. Start a simulation to explore the full recording workflow.", "muted", True)
+        self.history_empty = _label("No runs recorded yet. Completed runs appear here.", "muted", True)
         layout.addWidget(self.history_empty)
         row = QHBoxLayout()
         row.addWidget(_button("Refresh history", self._refresh_history))
@@ -730,15 +754,14 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(22, 18, 22, 18)
         layout.setSpacing(14)
-        title = _label("Start with a practice run")
+        title = _label("Start here")
         self._set_zoom_style(title, "font-size: 17pt; font-weight: 600;")
         layout.addWidget(title)
         layout.addWidget(_label("Developed for membrane research in Dr. Onita Basu's lab at Carleton University.", "muted", True))
-        layout.addWidget(_label("Leave Simulation mode checked while learning. The app makes up readings and no real equipment moves.", "", True))
         layout.addWidget(_label("To fit more on a smaller screen, press Ctrl + - to zoom out. Use Ctrl + + or Ctrl + = to zoom in, and Ctrl + 0 to return to 100%. The zoom percentage is shown at the bottom right.", "muted", True))
-        practice = QGroupBox("Three steps to try the app")
+        practice = QGroupBox("Three steps for a reviewed run")
         steps = QVBoxLayout(practice)
-        for text in ("1. Open Dashboard, choose CWF under Preset, then click Start run.",
+        for text in ("1. Connect the rig, review the sequence, then choose the reviewed preset on Dashboard and click Start run.",
                      "2. Watch the readings and graphs. Click Stop run when you want to stop.",
                      "3. Open Run history. The newest run is selected for you. Click Export selected run and choose where to save the CSV file; Excel can open it."):
             steps.addWidget(_label(text, "", True))
@@ -750,14 +773,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(practice)
         modes = QGroupBox("What the three modes mean")
         mode_layout = QVBoxLayout(modes)
-        for text in ("Computer simulation: Simulation mode is checked. Everything is pretend, so you do not need the rig or USB cables.",
-                     "Connected board test, also called dry run: Simulation mode is unchecked and a real ESP32 is connected. Its test program still makes up sensor readings and does not move valves or the pump. A connected scale may still provide real weights.",
+        for text in ("Computer simulation: start the app with --demo for generated readings without the rig.",
+                     "Connected board test, also called dry run: a connected ESP32 generates test readings. Its test program keeps the valves and pump off. A connected scale may still provide real weights.",
                      "Real equipment: the controller must report that equipment setup is approved. A trained operator must also review the sequence and check the pressure and required scale readings. The sequence review box alone cannot enable real equipment."):
             mode_layout.addWidget(_label(text, "", True))
         layout.addWidget(modes)
         equipment = QGroupBox("When you are ready to connect the rig")
         equipment_layout = QVBoxLayout(equipment)
-        equipment_layout.addWidget(_label("Ask the lab maintainer to finish and check the controller setup first. Then uncheck Simulation mode, open Connections and settings, and select the ESP32 and scale USB connections. Windows names these connections COM ports. The scale baud rate must match the setting on the scale.", "", True))
+        equipment_layout.addWidget(_label("Ask the lab maintainer to finish and check the controller setup first. Then open Connections and settings and connect the ESP32 and scale. The default lab ports are COM8 for the ESP32 and COM6 for the scale. The scale baud rate must match the setting on the scale.", "", True))
         equipment_layout.addWidget(_label("The Dashboard explains why Start run is unavailable and gives you the next action. ON and OFF are commands, not proof that equipment moved. Stop run is a software stop; use the lab's physical stop procedure in an emergency.", "", True))
         buttons = QHBoxLayout()
         buttons.addWidget(_button("Open connections", lambda: self.tabs.setCurrentIndex(2)))
@@ -1079,24 +1102,20 @@ class MainWindow(QMainWindow):
         self.dashboard_scroll.verticalScrollBar().setValue(0)
         self.valve_controls.setFocus()
 
-    def _toggle_simulation(self, enabled: bool):
-        if not hasattr(self, "banner"):
-            return
-        self._action(lambda: self.controller.set_simulation(enabled), "Simulation mode enabled" if enabled else "Hardware mode selected")
-
     def _refresh_ports(self):
         try:
             ports = self.controller.list_ports()
-            for combo in (self.controller_port, self.balance_port):
+            for combo, preferred in ((self.controller_port, LAB_CONTROLLER_PORT),
+                                     (self.balance_port, LAB_BALANCE_PORT)):
                 previous = combo.currentData()
                 combo.clear()
+                combo.addItem("Select a serial port" if ports else "No serial ports found", None)
                 for device, description in ports:
                     combo.addItem(f"{device}  {description}", device)
-                if combo.count() == 0:
-                    combo.addItem("No serial ports found", None)
                 index = combo.findData(previous)
-                if index >= 0:
-                    combo.setCurrentIndex(index)
+                if index <= 0:
+                    index = combo.findData(preferred)
+                combo.setCurrentIndex(max(0, index))
         except Exception as exc:
             self.statusBar().showMessage(f"Could not list serial ports: {exc}", 10000)
 
@@ -1104,10 +1123,19 @@ class MainWindow(QMainWindow):
         if index == self.connections_tab_index and not self._shutdown_started:
             self._refresh_ports()
 
-    def _connect_controller(self):
+    def connect_lab_defaults(self):
+        if self._shutdown_started or self.controller.simulation:
+            return
+        if self.controller_port.currentData() == LAB_CONTROLLER_PORT:
+            self._connect_controller(show_dialog=False)
+        if self.balance_port.currentData() == LAB_BALANCE_PORT:
+            self._connect_balance(show_dialog=False)
+
+    def _connect_controller(self, *, show_dialog=True):
         port = self.controller_port.currentData()
         if port:
-            self._action(lambda: self.controller.connect_controller(port), "Controller connection requested")
+            self._action(lambda: self.controller.connect_controller(port), "Controller connection requested",
+                         show_dialog=show_dialog)
         else:
             self.statusBar().showMessage("Select a controller serial port first", 6000)
 
@@ -1157,11 +1185,12 @@ class MainWindow(QMainWindow):
     def _clear_live_sensor_zero(self):
         self._action(self.controller.clear_live_sensor_zero, "Live sensor zero cleared")
 
-    def _connect_balance(self):
+    def _connect_balance(self, *, show_dialog=True):
         port = self.balance_port.currentData()
         if port:
             self._action(lambda: self.controller.connect_balance(port, int(self.balance_baud.currentText()),
-                serial_format=self.balance_format.currentData(), polling=self.balance_polling.isChecked()), "Balance connection requested")
+                serial_format=self.balance_format.currentData(), polling=self.balance_polling.isChecked()),
+                "Balance connection requested", show_dialog=show_dialog)
         else:
             self.statusBar().showMessage("Select a balance serial port first", 6000)
 
@@ -1222,7 +1251,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Close the valve test before opening the bare relay test.", 10000)
             return
         if self.controller.simulation:
-            self.statusBar().showMessage("Turn Simulation mode off before opening the real relay board test.", 10000)
+            self.statusBar().showMessage("Open the app in hardware mode to use the real relay board test.", 10000)
             return
         if self.controller._active():
             self.statusBar().showMessage("Stop the current operation before opening the relay board test.", 10000)
@@ -1273,7 +1302,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Close the existing equipment test before opening another.", 10000)
             return
         if self.controller.simulation:
-            self.statusBar().showMessage("Turn Simulation mode off before opening the real valve test.", 10000)
+            self.statusBar().showMessage("Open the app in hardware mode to use the real valve test.", 10000)
             return
         if self.controller._active():
             self.statusBar().showMessage("Stop the current operation before opening the valve test.", 10000)
@@ -1564,9 +1593,6 @@ class MainWindow(QMainWindow):
             self.next_step_button.setText(next_button)
             self.next_step_button.setVisible(next_index is not None)
             self.state_chip.setText("STOPPING" if snap.get("stop_pending") else ("STARTING" if snap.get("start_pending") else ("APPLYING" if snap.get("manual_pending") else state.replace("_", " ").upper())))
-            with QSignalBlocker(self.simulation_check):
-                self.simulation_check.setChecked(desktop_simulation)
-            self.simulation_check.setEnabled(not operating)
             self.banner.setObjectName("simulationBanner" if simulation else "hardwareBanner")
             self._set_zoom_style(self.banner, "color: #79520a; background: #fff5dc; border: 1px solid #ead398; border-radius: 6px; padding: 10px;" if simulation else "color: #215265; background: #eaf3f7; border: 1px solid #cbdfe8; border-radius: 6px; padding: 10px;")
             if desktop_simulation:
@@ -1628,8 +1654,6 @@ class MainWindow(QMainWindow):
             if (state.upper() in {"RUNNING", "PAUSED", "STOPPING", "FAULT"} or snap.get("start_pending")
                     or snap.get("stop_pending") or (self._previous_state != state and state.upper() == "IDLE")):
                 self.manual_pump.setValue(float(snap.get("pump_percent") or 0))
-            for key, label in self._metric_labels.items():
-                label.setText(_number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2))
             self.controller_badge.setText(f"Controller: {'simulated' if desktop_simulation else ('connected' if connected else 'disconnected')}")
             self.balance_badge.setText(f"Balance: {'simulated' if desktop_simulation else ('connected' if balanced else 'disconnected')}")
             self.controller_detail.setText(str(snap.get("controller_status") or "No responding controller"))
@@ -1651,6 +1675,21 @@ class MainWindow(QMainWindow):
                 )
             self.sensor_test_detail.setText(sensor_note)
             live_mv = snap.get("live_sensor_voltages", {}) if sensor_test_available and fresh else {}
+            for key, (_, unit, channel) in METRICS.items():
+                value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
+                raw = live_mv.get(channel)
+                if value == "Waiting" and raw is not None:
+                    estimate = _sensor_estimate(channel, raw)
+                    if estimate is not None:
+                        value = "≈" + _number(estimate, 1 if channel == "flow" else 2)
+                        unit = f"{unit} · estimated · {raw} mV at ESP32"
+                    else:
+                        low, high = ADC_RANGE_MV[channel]
+                        status = "outside estimate range" if low <= raw <= high else "outside ADC range"
+                        value = "—"
+                        unit = f"No {unit} reading · {raw} mV at ESP32 · {status}"
+                self._metric_labels[key].setText(value)
+                self._metric_units[key].setText(unit)
             if self._sensor_setup_dialog is not None and self._sensor_setup_dialog.isVisible():
                 self._sensor_setup_dialog.refresh()
             sensor_zero = snap.get("live_sensor_zero", {})
@@ -1660,14 +1699,11 @@ class MainWindow(QMainWindow):
             self.clear_live_sensor_zero_button.setEnabled(bool(sensor_zero))
             if live_mv:
                 pressure, flow, feedback = (live_mv[key] for key in ("pressure", "flow", "pump_feedback"))
-                pressure_note = f" (≈{pressure / 10:.1f} psi)" if 100 <= pressure <= 1000 else " (outside estimate range)"
-                flow_note = f" (≈{flow / 10:.1f} mL/min)" if 130 <= flow <= 1000 else " (outside estimate range)"
-                feedback_note = f" (≈{feedback / 200:.2f} V at pump)" if 150 <= feedback <= 2000 else " (outside estimate range)"
                 uptime_ms = self.controller.last_controller_uptime
                 sample = f" · ESP32 sample at {uptime_ms / 1000:.2f} s" if uptime_ms is not None else ""
                 details = (
-                    f"Live sensor check{sample} · nominal estimates · Pressure {pressure} mV{pressure_note} · "
-                    f"Flow {flow} mV{flow_note} · Pump feedback {feedback} mV{feedback_note}")
+                    f"Live sensor check{sample} · Pressure {pressure} mV · "
+                    f"Flow {flow} mV · Pump feedback {feedback} mV")
                 if sensor_zero:
                     pressure_change = pressure - sensor_zero["pressure"]
                     flow_change = flow - sensor_zero["flow"]
