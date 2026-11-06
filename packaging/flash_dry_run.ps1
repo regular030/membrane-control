@@ -105,7 +105,7 @@ function Invoke-DryRunFlash {
             Write-Host 'A reviewed valve profile and its commissioning checks are required before connecting loads. This target does not use sensors or control the pump, DAC or an experiment.'
         } elseif ($normalController) {
             if ($bluetoothNormal) {
-                Write-Host 'The ESP32 now advertises MembraneControl. Keep the existing Windows pairing. Its outgoing COM port may still show the old MembraneControl-Bench name.'
+                Write-Host 'The ESP32 keeps the Bluetooth name MembraneControl-Bench. Keep the existing Windows pairing.'
                 Write-Host 'In Membrane Control, turn Simulation mode off, refresh the controller port list, and connect to the existing Outgoing Bluetooth COM port. The app must report Connected.'
                 Write-Host 'If the board cannot connect with the existing bond, return to Flash ESP32 Bluetooth test to establish and verify the bond before uploading this program again.'
             } else {

@@ -26,7 +26,11 @@ extern "C" void BTA_DmSetVisibility(uint16_t discoverability, uint16_t connectab
 
 namespace basu::protectedSpp {
 namespace {
-constexpr char kName[] = "MembraneControl";
+// Windows provisions the outgoing port against the bench's Classic SPP service.
+constexpr char kDeviceName[] = "MembraneControl-Bench";
+constexpr char kServiceName[] = "ESP32SPP";
+// Match the Class of Device set by the pinned Arduino BluetoothSerial library.
+constexpr esp_bt_cod_t kSerialDeviceClass{0, 4, 1, 0x16};
 constexpr TickType_t kWriteTimeout = pdMS_TO_TICKS(1000);
 constexpr uint16_t kKeepScanMode = 0xffff;  // BTA_DM_IGNORE | BTA_DM_LE_IGNORE
 constexpr uint8_t kNonPairable = 0;        // BTA_DM_NON_PAIRABLE
@@ -168,7 +172,7 @@ void onSpp(esp_spp_cb_event_t event, esp_spp_cb_param_t* data) {
     // link key. Explicit AUTHENTICATE additionally asks SSP to upgrade a
     // bench Just Works bond to MITM pairing, which physical mode rejects.
     if (data->init.status != ESP_SPP_SUCCESS) report(Notice::InitializationFailed);
-    else if (esp_spp_start_srv(ESP_SPP_SEC_ENCRYPT, ESP_SPP_ROLE_SLAVE, 0, kName) != ESP_OK)
+    else if (esp_spp_start_srv(ESP_SPP_SEC_ENCRYPT, ESP_SPP_ROLE_SLAVE, 0, kServiceName) != ESP_OK)
       report(Notice::StartFailed);
     return;
   }
@@ -250,7 +254,9 @@ const char* begin() {
   uint8_t ioCapability = ESP_BT_IO_CAP_IO;
   if (esp_bt_gap_register_callback(onGap) != ESP_OK ||
       esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &ioCapability, sizeof(ioCapability)) != ESP_OK ||
-      esp_bt_dev_set_device_name(kName) != ESP_OK || esp_spp_register_callback(onSpp) != ESP_OK ||
+      esp_bt_dev_set_device_name(kDeviceName) != ESP_OK ||
+      esp_bt_gap_set_cod(kSerialDeviceClass, ESP_BT_INIT_COD) != ESP_OK ||
+      esp_spp_register_callback(onSpp) != ESP_OK ||
       esp_spp_init(ESP_SPP_MODE_CB) != ESP_OK)
     return "Bluetooth protected serial service could not start";
   return nullptr;

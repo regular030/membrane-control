@@ -92,7 +92,7 @@ Bluetooth communication while the controller is powered and idle or simulated.
    flash settings and use a regular upload so the saved pairing is preserved.
 3. Turn off desktop **Simulation**. In **Connections and settings**, select
    the same **outgoing Bluetooth COM port** that worked in the bench test.
-   Windows may still list the saved name as `MembraneControl-Bench`. The
+   The normal Bluetooth firmware keeps the name `MembraneControl-Bench`. The
    app should show **Connected**. Verify one unloaded relay, then check that
    disconnecting the app releases the relay before using the rig.
 4. Use the six manual valve controls and **Sensor setup**. The Bluetooth
