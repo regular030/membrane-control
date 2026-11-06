@@ -529,6 +529,8 @@ def test_main_window_entry_requires_explicit_hardware_mode_and_idle(qt_app, tmp_
         controller.snapshot['state'] = 'idle'
         window._update_view(dict(controller.snapshot))
         assert window.relay_bench_button.isEnabled()
+        assert window.controller_port.currentData() is None
+        window.controller_port.setCurrentIndex(window.controller_port.findData('FAKE-ONLY'))
         window._open_relay_bench()
         assert opened[0]['selected_port'] == 'FAKE-ONLY'
         assert controller.snapshot['hardware_verified'] is False
