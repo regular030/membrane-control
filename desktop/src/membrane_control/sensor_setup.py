@@ -128,7 +128,7 @@ class SensorSetupDialog(QDialog):
             and not snapshot["fault"] and not any(snapshot.get(flag) for flag in
                 ("start_pending", "stop_pending", "manual_pending")))
         if self.controller.simulation:
-            note = "Turn Simulation mode off and connect the normal ESP32 controller to view sensors."
+            note = "Open the app in hardware mode and connect the normal ESP32 controller to view sensors."
         elif not connected:
             note = "Connect the normal ESP32 controller in Connections and settings."
         elif not fresh:

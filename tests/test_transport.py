@@ -141,9 +141,11 @@ def test_fragmented_json_and_recovery_after_bad_or_oversize_line(instrument):
 def test_balance_raw_crlf_and_no_json_requirement(instrument):
     worker = SerialTransport("BALANCE-TEST", raw=True)
     try:
-        instrument.input.put(b"   +123.4 g\r\n")
-        packets = wait_for(worker, lambda items: any(p["type"] == "mass_line" for p in items))
-        assert {"type": "mass_line", "line": "+123.4 g"} in packets
+        instrument.input.put(b"!KP\r      0.6 g  \r\n")
+        weight = {"type": "mass_line", "line": "0.6 g"}
+        packets = wait_for(worker, lambda items: weight in items)
+        assert {"type": "mass_line", "line": "!KP"} in packets
+        assert weight in packets
     finally:
         worker.close()
 

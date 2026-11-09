@@ -40,13 +40,14 @@ def items(combo):
 
 def test_newly_plugged_scale_port_appears_when_connections_tab_opens(ports_screen):
     window, controller, ports, enumerations = ports_screen
-    assert items(window.controller_port) == items(window.balance_port) == ['COM4']
+    assert items(window.controller_port) == items(window.balance_port) == [None, 'COM4']
     ports.append(('COM11', 'USB Serial Port'))
     before = len(enumerations)
     window.tabs.setCurrentIndex(window.connections_tab_index)
     assert len(enumerations) == before + 1
-    assert items(window.controller_port) == items(window.balance_port) == ['COM4', 'COM11']
-    assert window.controller_port.currentData() == 'COM4'
+    assert items(window.controller_port) == items(window.balance_port) == [None, 'COM4', 'COM11']
+    assert window.controller_port.currentData() is None
+    assert window.balance_port.currentData() is None
     assert controller.balance is None
     assert 'USB Serial Port' in window.balance_port_hint.text()
     assert 'own COM port' in window.balance_port_hint.text()
@@ -71,7 +72,8 @@ def test_refresh_preserves_selected_controller_and_scale_when_list_order_changes
 def test_missing_windows_scale_port_remains_missing(ports_screen):
     window, controller, ports, _ = ports_screen
     window.tabs.setCurrentIndex(window.connections_tab_index)
-    assert items(window.balance_port) == ['COM4']
+    assert items(window.balance_port) == [None, 'COM4']
+    assert window.balance_port.currentData() is None
     assert controller.balance is None and not controller.snapshot['balance_connected']
     ports.clear()
     window.tabs.setCurrentIndex(0)
@@ -94,3 +96,26 @@ def test_refresh_is_only_on_tab_entry_or_explicit_button_not_a_timer(ports_scree
     window.tabs.setCurrentIndex(1)
     window.tabs.setCurrentIndex(window.connections_tab_index)
     assert len(enumerations) == before + 2
+
+
+def test_startup_connects_only_detected_lab_defaults(ports_screen, monkeypatch):
+    window, controller, ports, _ = ports_screen
+    calls = []
+    monkeypatch.setattr(controller, 'connect_controller', lambda port: calls.append(('ESP32', port)))
+    monkeypatch.setattr(controller, 'connect_balance',
+                        lambda port, baud, **options: calls.append(('scale', port, baud, options)))
+    ports.extend([('COM6', 'Scale adapter'), ('COM8', 'ESP32 Bluetooth')])
+    window._refresh_ports()
+    window.connect_lab_defaults()
+    assert calls == []  # Demo never opens hardware ports.
+
+    controller.set_simulation(False)
+    window.connect_lab_defaults()
+    assert calls == [('ESP32', 'COM8'), ('scale', 'COM6', 9600,
+                                        {'serial_format': '8N1', 'polling': True})]
+
+    calls.clear()
+    ports.remove(('COM6', 'Scale adapter'))
+    window._refresh_ports()
+    window.connect_lab_defaults()
+    assert calls == [('ESP32', 'COM8')]

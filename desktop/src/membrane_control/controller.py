@@ -31,7 +31,7 @@ def _adc_pin_mv(value):
 
 
 class AppController:
-    def __init__(self, data_dir, clock=time.monotonic):
+    def __init__(self, data_dir, clock=time.monotonic, *, simulation=True):
         self.clock = clock
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -94,7 +94,7 @@ class AppController:
             "elapsed_s": 0.0, "run_id": None, "log": [], "recipe_name": self.recipe.name,
             "desired_flow_ml_min": self.recipe.desired_flow_ml_min,
             "step_name": "Ready", "start_pending": False, "manual_pending": False, "stop_pending": False}
-        self.set_simulation(True)
+        self.set_simulation(simulation)
 
     @staticmethod
     def _checked_settings(settings):
@@ -323,6 +323,10 @@ class AppController:
             raise ValueError("Balance and controller need different ports")
         self.disconnect_balance()
         options = {"raw": True}
+        # The lab Nimbus responds on COM6 with DTR inactive. Asserting DTR
+        # through its adapter coincides with repeated busy indications.
+        if port.upper() == "COM6":
+            options["dtr"] = False
         if serial_format != "8N1":
             options["serial_format"] = serial_format
         self.balance = SerialTransport(port, baud, **options)
