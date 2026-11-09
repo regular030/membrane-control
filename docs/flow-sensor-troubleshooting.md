@@ -56,12 +56,13 @@ pump feedback. Compare it with a meter across the corresponding divider's
 5 V signal. An unwired pin can float, and a zero can be a valid signal, so the
 voltage alone cannot identify a cable or confirm a good sensor.
 
-The live check also shows nominal estimates for the documented 5:1 wiring.
-The Omega PX309-100G5V and McMillan 101 range 3 use 0–5 V spans with 100 psig and
-100 mL/min full scale. The app shows a pressure estimate from 100–1000 mV and a
-flow estimate from 130–1000 mV. Optional pump feedback displays the estimated
-pre-divider voltage from 150–2000 mV. These estimates assume the documented
-models and divider ratio and need a meter, known pressure, and timed flow check.
+The Dashboard estimates pressure and flow from the factory certificate points
+using the documented 5:1 divider. For pressure it interpolates between 0 psig
+at 0.005 V, 50 psig at 2.502 V and 100 psig at 5.004 V. For flow it interpolates
+between 20 mL/min at 1.01 V, 50 mL/min at 2.48 V and 100 mL/min at 5.00 V.
+These are the voltages at the sensor output, before the divider. The app shows
+estimates where both the certificate points and the ESP32 input range support
+them. Optional pump feedback shows estimated voltage before its divider.
 [Omega exact model](https://www.dwyeromega.com/en-gb/general-purpose-stainless-steel-pressure-transducers/PX309/p/PX309-100G5V)
 · [McMillan operation manual](https://www.mcmflow.com/wp-content/uploads/2015/02/101-M002.pdf)
 
@@ -85,26 +86,24 @@ without starting a run. The pressure input is **IO34**, flow is **SVP/GPIO36**,
 and optional pump feedback is **SVN/GPIO39**. Compare each input to your meter
 across its divider's **S** and **−** terminals.
 
-For a baseline, stop the pump, verify zero pressure and no flow, then capture
-the zero for each channel. This shows how many millivolts the signal moves
-from that baseline. To estimate pressure or flow in physical units, capture
-two different steady readings for that sensor and enter each measured
-reference in psi or mL/min. For flow, measure the volume collected and the
-elapsed time. Use **Copy setup readings** before leaving the session to save
-the reference points and calculated scale and offset for the rig's profile.
-Factory certificates list the sensor voltage before the divider. Use them to
-compare expected and actual voltages, and use independent measurements when
-capturing the installed circuit's references. The Dashboard uses the measured
-fit for live estimates between the two captured points in the current
-connection. The run charts and pressure limit use the commissioned firmware
-profile.
+Stop the pump and verify zero pressure and no flow, then click **Zero pressure
+and flow** on the Dashboard. The app records the raw readings at that confirmed
+condition and displays the change in millivolts for the current connection.
+Live pressure and flow estimates use the certificate points automatically.
+
+If you have access to independent measurements, **Sensor setup** also accepts
+two steady reference points per sensor. The Dashboard uses that fit within its
+measured range for the current connection. **Copy setup readings** saves the
+references and fit for review. Run charts and pressure protection use the
+commissioned firmware profile.
 
 With the documented divider, the pressure certificate's near-zero output is
-around 1 mV at IO34. The factory pressure and flow input range starts at 100 mV.
-Use a meter for the zero check, then capture two measured points within the
-usable range. If the process needs accurate readings below that range, use a
-verified input circuit that can measure the required low voltages before
-commissioning the run profile.
+around 1 mV at IO34. The factory pressure and flow input range starts at 100 mV,
+so a zero capture records the condition you verified. An ESP32 reading below
+that range cannot establish the true voltage offset. The flow certificate has
+its first measured point at 20 mL/min. The Dashboard shows the corresponding
+range message below these limits. Commissioning near zero requires a verified
+input circuit that can measure the required low voltages.
 
 ## Read the connection status
 

@@ -29,7 +29,7 @@ from .connection_diagnostics import connection_diagnostics
 from .device_status import device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
-from .sensor_setup import ADC_RANGE_MV, SensorSetupDialog
+from .sensor_setup import SensorSetupDialog, observed_zero_baseline, sensor_display_estimate
 from .valve_test import ValveTestDialog
 
 
@@ -43,23 +43,6 @@ METRICS = {
     "flux_lmh": ("Flux", "L/m²/h", None),
     "mass_g": ("Balance mass", "g", None),
 }
-
-# Diagnostic estimates use the documented 5:1 dividers and certificate spans.
-# They are for display only and never enter the controller's measurements.
-SENSOR_ESTIMATE_RANGES_MV = {"pressure": (100, 1000), "flow": (130, 1000), "pump_feedback": (150, 2000)}
-
-
-def _sensor_estimate(channel: str, raw_mv: int) -> float | None:
-    low, high = SENSOR_ESTIMATE_RANGES_MV[channel]
-    if not low <= raw_mv <= high:
-        return None
-    sensor_volts = raw_mv / 200
-    if channel == "pressure":
-        return (sensor_volts - 0.005) * 100 / (5.004 - 0.005)
-    if channel == "flow":
-        return sensor_volts * 20
-    return sensor_volts
-
 
 STYLE = """
 QMainWindow, QWidget#appRoot { background: #f4f6f8; color: #182b3b; }
@@ -374,8 +357,8 @@ class MainWindow(QMainWindow):
         self.live_sensor_detail = _label("", "muted", True)
         self.live_sensor_detail.setAccessibleName("Live diagnostic sensor inputs")
         self.live_sensor_detail.setToolTip(
-            "Raw ESP32 pin voltages. Dashboard estimates use the 5:1 divider or two measured setup references. "
-            "Pressure and flow below 100 mV need a meter check. Calibrated readings, charts, and pressure protection are separate.")
+            "Pressure and flow estimates use the sensor certificates and an assumed 5:1 divider, or two measured references. "
+            "A zero baseline shows raw voltage change. Below 100 mV, check with a voltmeter.")
         self.live_sensor_detail.hide()
         outer.addWidget(self.live_sensor_detail)
         self.live_sensor_zero_controls = QWidget()
@@ -1173,17 +1156,25 @@ class MainWindow(QMainWindow):
         self._sensor_setup_dialog.activateWindow()
 
     def _zero_live_sensors(self):
+        driver = self.controller.driver
         answer = QMessageBox.question(
             self, "Zero pressure and flow",
             "Confirm the pump is stopped, there is no flow, and the pressure gauge reads zero. "
-            "This sets a reference for the live voltage display.",
+            "This captures the raw voltage at the observed zero condition. It does not change calibration.",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel)
         if answer == QMessageBox.StandardButton.Ok:
-            self._action(self.controller.zero_live_sensors, "Live sensor zero captured")
+            if self.controller.driver is not driver:
+                self.statusBar().showMessage("Controller connection changed. Verify zero before capturing again.", 6000)
+                return
+            captured = self._action(self.controller.zero_live_sensors, "Observed zero baseline captured")
+            if captured and self._sensor_setup_dialog is not None:
+                self._sensor_setup_dialog.clear_pressure_flow_zero()
 
     def _clear_live_sensor_zero(self):
         self._action(self.controller.clear_live_sensor_zero, "Live sensor zero cleared")
+        if self._sensor_setup_dialog is not None:
+            self._sensor_setup_dialog.clear_pressure_flow_zero()
 
     def _connect_balance(self, *, show_dialog=True):
         port = self.balance_port.currentData()
@@ -1681,32 +1672,28 @@ class MainWindow(QMainWindow):
                     sensor_setup.refresh()
                 else:
                     sensor_setup.sync_connection()
+            sensor_zero = sensor_setup.zero_baselines() if sensor_setup is not None else snap.get("live_sensor_zero", {})
             for key, (_, unit, channel) in METRICS.items():
                 value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
                 raw = live_mv.get(channel)
                 if value == "Waiting" and raw is not None:
-                    fit_active, estimate = sensor_setup.reference_estimate(channel, raw) if sensor_setup else (False, None)
-                    if not fit_active:
-                        estimate = _sensor_estimate(channel, raw)
+                    reference = sensor_setup.reference_estimate(channel, raw) if sensor_setup is not None else (False, None)
+                    zero_mv = sensor_zero.get(channel)
+                    estimate, source = sensor_display_estimate(channel, raw, reference, zero_mv)
                     if estimate is not None:
                         value = "≈" + _number(estimate, 1 if channel == "flow" else 2)
-                        source = "reference-based estimate" if fit_active else "estimated"
                         unit = f"{unit} · {source} · {raw} mV at ESP32"
                     else:
-                        low, high = ADC_RANGE_MV[channel]
-                        if fit_active:
-                            status = "outside reference range"
-                        else:
-                            status = "outside estimate range" if low <= raw <= high else "outside ADC range"
                         value = "—"
-                        unit = f"No {unit} reading · {raw} mV at ESP32 · {status}"
+                        unit = f"No {unit} reading · {raw} mV at ESP32 · {source}"
+                    if zero_mv is not None:
+                        unit += " · observed zero saved"
                 self._metric_labels[key].setText(value)
                 self._metric_units[key].setText(unit)
-            sensor_zero = snap.get("live_sensor_zero", {})
             self.live_sensor_detail.setVisible(bool(live_mv))
             self.live_sensor_zero_controls.setVisible(bool(live_mv))
             self.zero_live_sensors_button.setEnabled(bool(live_mv) and not operating and not fault and state == "idle")
-            self.clear_live_sensor_zero_button.setEnabled(bool(sensor_zero))
+            self.clear_live_sensor_zero_button.setEnabled(any(key in sensor_zero for key in ("pressure", "flow")))
             if live_mv:
                 pressure, flow, feedback = (live_mv[key] for key in ("pressure", "flow", "pump_feedback"))
                 uptime_ms = self.controller.last_controller_uptime
@@ -1714,10 +1701,9 @@ class MainWindow(QMainWindow):
                 details = (
                     f"Live sensor check{sample} · Pressure {pressure} mV · "
                     f"Flow {flow} mV · Pump feedback {feedback} mV")
-                if sensor_zero:
-                    pressure_change = pressure - sensor_zero["pressure"]
-                    flow_change = flow - sensor_zero["flow"]
-                    details += f"\nChange since zero · Pressure {pressure_change} mV · Flow {flow_change} mV"
+                for title, _, channel in METRICS.values():
+                    if channel in sensor_zero:
+                        details += f"\n{title} · {observed_zero_baseline(channel, sensor_zero[channel], live_mv[channel])}"
                 self.live_sensor_detail.setText(details)
             else:
                 self.live_sensor_detail.clear()

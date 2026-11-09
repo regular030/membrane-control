@@ -1,6 +1,7 @@
 """Read-only sensor commissioning tools for a normal controller connection."""
 from __future__ import annotations
 
+from itertools import pairwise
 import math
 
 from PySide6.QtCore import Qt
@@ -11,12 +12,55 @@ from PySide6.QtWidgets import (
 
 
 CHANNELS = {
-    "pressure": ("Pressure", "IO34", "psi", 0, 100, 1000, "pressure_psi"),
-    "flow": ("Flow", "SVP / IO36", "mL/min", 13, 100, 1000, "flow_ml_min"),
-    "pump_feedback": ("Pump voltage output", "SVN / IO39", "V", 0, 10, 2000, "pump_feedback_v"),
+    "pressure": ("Pressure", "IO34", "psi", 0, 100, "pressure_psi"),
+    "flow": ("Flow", "SVP / IO36", "mL/min", 13, 100, "flow_ml_min"),
+    "pump_feedback": ("Pump voltage output", "SVN / IO39", "V", 0, 10, "pump_feedback_v"),
 }
 # Factory firmware sets pressure and flow to 2.5 dB and pump feedback to 11 dB.
 ADC_RANGE_MV = {"pressure": (100, 1250), "flow": (100, 1250), "pump_feedback": (150, 2450)}
+# Certificate points are pre-divider volts and engineering units. Use the upper
+# recorded pressure zero of 0.005 V and round to the ESP32's millivolt resolution.
+CERTIFICATE_POINTS = {
+    key: tuple((round(volts * 1000 / 5), value) for volts, value in points)
+    for key, points in {
+        "pressure": ((0.005, 0), (2.502, 50), (5.004, 100)),
+        "flow": ((1.01, 20), (2.48, 50), (5.00, 100)),
+    }.items()
+}
+
+
+def _interpolate(mv, lower, upper):
+    low_mv, low_value = lower
+    high_mv, high_value = upper
+    return low_value + (high_value - low_value) * (mv - low_mv) / (high_mv - low_mv)
+
+
+def sensor_display_estimate(channel, mv, reference=(False, None), zero_mv=None):
+    """Return a display-only estimate and its source or unavailable reason."""
+    fit_active, estimate = reference
+    if fit_active:
+        return estimate, "reference-based estimate" if estimate is not None else "outside reference range"
+    low, high = ADC_RANGE_MV[channel]
+    if not low <= mv <= high:
+        return None, "outside ADC range"
+    if mv == zero_mv:
+        return None, "matches observed zero voltage"
+    if channel == "pump_feedback":
+        return (mv / 200, "nominal estimate") if mv <= 2000 else (None, "outside nominal range")
+    points = CERTIFICATE_POINTS[channel]
+    if mv < points[0][0]:
+        return None, "below certificate range (20 mL/min)"
+    for lower, upper in pairwise(points):
+        if mv <= upper[0]:
+            return _interpolate(mv, lower, upper), "certificate estimate"
+    return None, "above certificate range"
+
+
+def observed_zero_baseline(channel, zero_mv, current_mv=None):
+    low, high = ADC_RANGE_MV[channel]
+    note = "" if low <= zero_mv <= high else " (outside ADC range)"
+    change = f" · raw change {current_mv - zero_mv:+d} mV" if current_mv is not None else ""
+    return f"Observed zero baseline {zero_mv} mV{note}{change}"
 
 
 class SensorSetupDialog(QDialog):
@@ -33,10 +77,9 @@ class SensorSetupDialog(QDialog):
 
         layout = QVBoxLayout(self)
         introduction = QLabel(
-            "Check the three ESP32 inputs live. Capture a zero baseline or compare readings "
-            "with a gauge, timed flow collection, or voltmeter. Two measured references "
-            "set the Dashboard estimate for this connection. Run protection uses the "
-            "commissioned pressure input."
+            "Pressure and flow estimates use the sensor certificates and an assumed 5:1 divider. "
+            "Capture a zero to compare raw voltages. Two independent measured references are optional. "
+            "Run protection uses the commissioned pressure input."
         )
         introduction.setWordWrap(True)
         layout.addWidget(introduction)
@@ -123,6 +166,14 @@ class SensorSetupDialog(QDialog):
             self._driver = driver
         return connected
 
+    def zero_baselines(self):
+        return self.controller.snapshot["live_sensor_zero"] | self._zero
+
+    def clear_pressure_flow_zero(self):
+        self._zero.pop("pressure", None)
+        self._zero.pop("flow", None)
+        self.refresh()
+
     def refresh(self):
         snapshot = self.controller.snapshot
         connected = self.sync_connection()
@@ -144,26 +195,26 @@ class SensorSetupDialog(QDialog):
         elif not self._live:
             note = "Waiting for live input voltages. Use normal controller firmware with live sensor support."
         elif self._capture_ready:
-            note = "Live input voltages. Select a sensor and enter a reading from an independent reference."
+            note = "Live input voltages. Capture a zero baseline or enter an independent reference."
         else:
             note = "Live input voltages. Stop the controller and clear any fault before capturing points."
         uptime_ms = self.controller.last_controller_uptime
         if self._live and uptime_ms is not None:
             note += f" Latest ESP32 sample at {uptime_ms / 1000:.2f} s."
         self.connection_status.setText(note)
-        for key, (_, _, unit, _, _, max_mv, field) in CHANNELS.items():
+        zero_baselines = self.zero_baselines()
+        for key, (_, _, unit, _, _, field) in CHANNELS.items():
             value = self._live.get(key)
             if value is not None:
                 reading = f"{value} mV at the ESP32"
-                fit_active, estimate = self.reference_estimate(key, value)
+                zero = zero_baselines.get(key)
+                estimate, source = sensor_display_estimate(key, value, self.reference_estimate(key, value), zero)
                 if estimate is not None:
-                    reading += f" · reference-based estimate {estimate:.2f} {unit}"
-                elif fit_active:
-                    reading += " · outside reference range"
-                elif value < ADC_RANGE_MV[key][0]:
-                    reading += " · below ADC range"
-                elif value > max_mv:
-                    reading += " · above nominal input range"
+                    reading += f" · {source} {estimate:.2f} {unit}"
+                else:
+                    reading += f" · {source}"
+                if zero is not None:
+                    reading += " · observed zero saved"
             elif fresh and snapshot["hardware_verified"] and snapshot.get(field) is not None:
                 reading = f"{snapshot[field]:.2f} {unit}"
             else:
@@ -172,31 +223,28 @@ class SensorSetupDialog(QDialog):
 
         key = self.channel.currentData()
         unit = CHANNELS[key][2]
-        zero = self._zero.get(key)
+        zero = zero_baselines.get(key)
         references = self._references.get(key, ())
-        points = [f"Zero baseline {zero} mV"] if zero is not None else []
-        if zero is not None and key in self._live:
-            points.append(f"Change from zero {self._live[key] - zero:+d} mV")
+        points = [observed_zero_baseline(key, zero, self._live.get(key))] if zero is not None else []
         points.extend(f"Reference {index} · {mv} mV at {value:g} {unit}"
                       for index, (mv, value) in enumerate(references, start=1))
         self.points_detail.setText("\n".join(points) or
-            "Capture two different known readings to compare this input in engineering units. "
-            "A zero baseline only shows change in millivolts.")
+            "A zero baseline shows the raw voltage change. Two known readings can replace the certificate estimate for this connection.")
         can_capture_channel = self._capture_ready and key in self._live
         self.zero_button.setEnabled(can_capture_channel)
         self.reference_button.setEnabled(can_capture_channel and len(references) < 2
             and bool(self.reference_value.text().strip()))
-        self.clear_button.setEnabled(zero is not None or bool(references))
-        self.copy_button.setEnabled(bool(self._live or self._zero or self._references))
+        self.clear_button.setEnabled(key in self._zero or bool(references))
+        self.copy_button.setEnabled(bool(self._live or zero_baselines or self._references))
 
     def reference_estimate(self, key, current_mv):
         points = sorted(self._references.get(key, ()))
         if len(points) != 2:
             return False, None
-        (low_mv, low_value), (high_mv, high_value) = points
-        if not low_mv <= current_mv <= high_mv:
+        lower, upper = points
+        if not lower[0] <= current_mv <= upper[0]:
             return True, None
-        return True, low_value + (high_value - low_value) * (current_mv - low_mv) / (high_mv - low_mv)
+        return True, _interpolate(current_mv, lower, upper)
 
     def _capture_zero(self):
         self.refresh()
@@ -210,7 +258,7 @@ class SensorSetupDialog(QDialog):
         }[key]
         driver = self._driver
         answer = QMessageBox.question(self, "Confirm zero baseline",
-            f"Confirm {condition}. This records the current ESP32 millivolt baseline.",
+            f"Confirm {condition}. This records the observed voltage without changing calibration.",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel)
         self.refresh()
@@ -225,7 +273,7 @@ class SensorSetupDialog(QDialog):
         key = self.channel.currentData()
         if not self._capture_ready or key not in self._live:
             return
-        _, _, unit, minimum, maximum, _, _ = CHANNELS[key]
+        _, _, unit, minimum, maximum, _ = CHANNELS[key]
         try:
             reference = float(self.reference_value.text())
         except ValueError:
@@ -262,7 +310,8 @@ class SensorSetupDialog(QDialog):
 
     def _copy_report(self):
         self.refresh()
-        if not (self._live or self._zero or self._references):
+        zero_baselines = self.zero_baselines()
+        if not (self._live or zero_baselines or self._references):
             return
         rows = ["Membrane Control sensor setup", "Diagnostic values and reference points for review"]
         for key, (name, pin, unit, *_rest) in CHANNELS.items():
@@ -271,8 +320,8 @@ class SensorSetupDialog(QDialog):
             if value is not None:
                 note = " (below ADC range)" if value < ADC_RANGE_MV[key][0] else ""
                 rows.append(f"  Latest: {value} mV{note}")
-            if key in self._zero:
-                rows.append(f"  Zero baseline: {self._zero[key]} mV")
+            if key in zero_baselines:
+                rows.append(f"  {observed_zero_baseline(key, zero_baselines[key], value)}")
             for mv, reference in self._references.get(key, ()):
                 rows.append(f"  Reference: {mv} mV at {reference:g} {unit}")
             points = self._references.get(key, ())

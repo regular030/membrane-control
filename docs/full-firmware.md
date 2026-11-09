@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.25 includes the complete controller source and compiled ESP32 images,
+Version 0.1.26 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.25-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.26-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -87,7 +87,7 @@ Bluetooth communication while the controller is powered and idle or simulated.
    Bluetooth test first. The normal Bluetooth firmware uses the one existing
    bond saved on the ESP32.
 2. Isolate the valve and pump loads. Close the app connection, open **Flash
-   normal controller (Bluetooth)** from Setup 0.1.25, and select the **wired**
+   normal controller (Bluetooth)** from Setup, and select the **wired**
    USB-to-UART COM port for upload. Use the helper's IO0/EN steps. Keep the
    flash settings and use a regular upload so the saved pairing is preserved.
 3. Open the app in hardware mode. In **Connections and settings**, select

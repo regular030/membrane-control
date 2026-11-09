@@ -153,18 +153,26 @@ def test_live_sensor_estimates_stay_separate_and_hide_on_disconnect(screen):
     assert "Pump feedback 142 mV" in text
     assert controller.snapshot["pressure_psi"] is None
     assert controller.snapshot["flow_ml_min"] is None
-    assert window._metric_labels["pressure_psi"].text() == "≈17.90"
-    assert window._metric_units["pressure_psi"].text() == "psi · estimated · 180 mV at ESP32"
-    assert window._metric_labels["flow_ml_min"].text() == "≈14.2"
-    assert window._metric_units["flow_ml_min"].text() == "mL/min · estimated · 142 mV at ESP32"
+    assert window._metric_labels["pressure_psi"].text() == "≈17.94"
+    assert window._metric_units["pressure_psi"].text() == "psi · certificate estimate · 180 mV at ESP32"
+    assert window._metric_labels["flow_ml_min"].text() == "—"
+    assert "below certificate range (20 mL/min)" in window._metric_units["flow_ml_min"].text()
     assert window._metric_labels["pump_feedback_v"].text() == "—"
     assert window._metric_units["pump_feedback_v"].text() == "No V reading · 142 mV at ESP32 · outside ADC range"
     window._update_view(dict(controller.snapshot,
                              live_sensor_voltages={"pressure": 78, "flow": 1010, "pump_feedback": 500}))
     assert window._metric_units["pressure_psi"].text() == "No psi reading · 78 mV at ESP32 · outside ADC range"
-    assert window._metric_units["flow_ml_min"].text() == "No mL/min reading · 1010 mV at ESP32 · outside estimate range"
+    assert window._metric_units["flow_ml_min"].text() == "No mL/min reading · 1010 mV at ESP32 · above certificate range"
     assert window._metric_labels["pump_feedback_v"].text() == "≈2.50"
-    assert window._metric_units["pump_feedback_v"].text() == "V · estimated · 500 mV at ESP32"
+    assert window._metric_units["pump_feedback_v"].text() == "V · nominal estimate · 500 mV at ESP32"
+    window._update_view(dict(controller.snapshot,
+                             live_sensor_voltages={"pressure": 1001, "flow": 496, "pump_feedback": 500}))
+    assert window._metric_labels["pressure_psi"].text() == "≈100.00"
+    assert window._metric_labels["flow_ml_min"].text() == "≈50.0"
+    window._update_view(dict(controller.snapshot,
+                             live_sensor_voltages={"pressure": 1002, "flow": 202, "pump_feedback": 500}))
+    assert "above certificate range" in window._metric_units["pressure_psi"].text()
+    assert window._metric_labels["flow_ml_min"].text() == "≈20.0"
     window._update_view(dict(controller.snapshot, pressure_psi=18.01))
     assert window._metric_labels["pressure_psi"].text() == "18.01"
     assert window._metric_units["pressure_psi"].text() == "psi"
@@ -184,18 +192,28 @@ def test_zero_controls_show_relative_voltages_and_allow_reset(screen, monkeypatc
     controller.last_telemetry = now[0]
     controller.snapshot.update(
         controller_connected=True, sensor_test_available=True,
-        live_sensor_voltages={"pressure": 105, "flow": 103, "pump_feedback": 142},
+        live_sensor_voltages={"pressure": 78, "flow": 103, "pump_feedback": 142},
     )
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Ok)
     window._update_view(dict(controller.snapshot))
     window.zero_live_sensors_button.click()
+    window._update_view(dict(controller.snapshot))
+    assert window._metric_labels["pressure_psi"].text() == window._metric_labels["flow_ml_min"].text() == "—"
+    assert "outside ADC range · observed zero saved" in window._metric_units["pressure_psi"].text()
+    assert "matches observed zero voltage" in window._metric_units["flow_ml_min"].text()
+    window.sensor_setup_button.click()
+    dialog = window._sensor_setup_dialog
+    assert "Observed zero baseline 78 mV (outside ADC range)" in dialog.points_detail.text()
     controller.snapshot["live_sensor_voltages"]["pressure"] = 116
     window._update_view(dict(controller.snapshot))
-    assert "Change since zero · Pressure 11 mV · Flow 0 mV" in window.live_sensor_detail.text()
+    assert window._metric_labels["pressure_psi"].text() == "≈11.52"
+    assert "Pressure · Observed zero baseline 78 mV (outside ADC range) · raw change +38 mV" in window.live_sensor_detail.text()
+    assert "Flow · Observed zero baseline 103 mV · raw change +0 mV" in window.live_sensor_detail.text()
     assert "Pump feedback 142 mV" in window.live_sensor_detail.text()
     window.clear_live_sensor_zero_button.click()
     window._update_view(dict(controller.snapshot))
-    assert "Change since zero" not in window.live_sensor_detail.text()
+    assert "Observed zero baseline" not in window.live_sensor_detail.text()
+    assert "Observed zero baseline" not in dialog.points_detail.text()
 
 
 def test_sensor_setup_is_discoverable_and_shows_live_inputs_without_other_sensors(screen):
@@ -213,8 +231,8 @@ def test_sensor_setup_is_discoverable_and_shows_live_inputs_without_other_sensor
     window._update_view(dict(controller.snapshot))
     assert "200 mV" in dialog.live_labels["pressure"].text()
     assert "142 mV" in dialog.live_labels["flow"].text()
-    assert "below ADC range" not in dialog.live_labels["flow"].text()
-    assert "below ADC range" in dialog.live_labels["pump_feedback"].text()
+    assert "below certificate range (20 mL/min)" in dialog.live_labels["flow"].text()
+    assert "outside ADC range" in dialog.live_labels["pump_feedback"].text()
     assert dialog.zero_button.isEnabled()
     dialog.close()
     window.connections_sensor_setup_button.click()
@@ -232,7 +250,9 @@ def test_sensor_setup_compares_explicit_reference_points_without_changing_run_da
     assert "psi" in dialog.reference_label.text()
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Ok)
     dialog.zero_button.click()
-    assert "Zero baseline 90 mV" in dialog.points_detail.text()
+    assert "Observed zero baseline 90 mV (outside ADC range)" in dialog.points_detail.text()
+    window._update_view(dict(controller.snapshot))
+    assert "observed zero saved" in window._metric_units["pressure_psi"].text()
     dialog.reference_value.setText("20")
     dialog.reference_button.click()
     assert "outside its usable voltage range" in dialog.action_status.text()
@@ -244,7 +264,7 @@ def test_sensor_setup_compares_explicit_reference_points_without_changing_run_da
     controller.snapshot["live_sensor_voltages"]["pressure"] = 400
     window._update_view(dict(controller.snapshot))
     assert "reference-based estimate 40.00 psi" in dialog.live_labels["pressure"].text()
-    assert "Change from zero +310 mV" in dialog.points_detail.text()
+    assert "raw change +310 mV" in dialog.points_detail.text()
     assert controller.snapshot["pressure_psi"] is None
     assert controller.snapshot["hardware_verified"] is False
     assert not window.start_button.isEnabled()
@@ -304,7 +324,7 @@ def test_dashboard_reference_estimate_is_local_to_connection_and_measured_range(
     controller.last_telemetry = now[0]
     window._update_view(dict(controller.snapshot))
     assert window._metric_labels[metric].text().startswith("≈")
-    assert " · estimated · " in window._metric_units[metric].text()
+    assert " · certificate estimate · " in window._metric_units[metric].text()
 
 
 def test_sensor_setup_keeps_live_view_during_manual_valves_but_blocks_capture(screen):
