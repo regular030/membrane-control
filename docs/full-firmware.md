@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.24 includes the complete controller source and compiled ESP32 images,
+Version 0.1.25 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.24-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.25-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -69,7 +69,7 @@ valve and pump loads isolated.
 3. Open **Bluetooth & devices → Devices → More Bluetooth settings → COM Ports**.
    Select the **outgoing** port for MembraneControl-Bench. If Windows has
    not assigned one, use **Add → Outgoing** to create it.
-4. Open Membrane Control. Turn off desktop Simulation mode, then select the
+4. Open Membrane Control in hardware mode, then select the
    Bluetooth COM port in **Connections and settings**. The app should report
    **Connected (dry run)**. Check that the telemetry keeps updating, then
    disconnect and reconnect once.
@@ -87,10 +87,10 @@ Bluetooth communication while the controller is powered and idle or simulated.
    Bluetooth test first. The normal Bluetooth firmware uses the one existing
    bond saved on the ESP32.
 2. Isolate the valve and pump loads. Close the app connection, open **Flash
-   normal controller (Bluetooth)** from Setup 0.1.24, and select the **wired**
+   normal controller (Bluetooth)** from Setup 0.1.25, and select the **wired**
    USB-to-UART COM port for upload. Use the helper's IO0/EN steps. Keep the
    flash settings and use a regular upload so the saved pairing is preserved.
-3. Turn off desktop **Simulation**. In **Connections and settings**, select
+3. Open the app in hardware mode. In **Connections and settings**, select
    the same **outgoing Bluetooth COM port** that worked in the bench test.
    The normal Bluetooth firmware keeps the name `MembraneControl-Bench`. The
    app should show **Connected**. Verify one unloaded relay, then check that

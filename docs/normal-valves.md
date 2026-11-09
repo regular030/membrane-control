@@ -23,7 +23,8 @@ names; V7 must not be relabelled V6.
    controller** shortcut, choose the ESP32 port (currently COM5), and follow
    its upload and IO0/EN instructions. This uploads `esp32-physical`, the normal
    controller program. An app update alone cannot change the board program.
-3. Open the app, turn **Simulation mode off**, and connect that ESP32 port.
+3. Open the app in hardware mode and connect the ESP32. With Bluetooth
+   firmware, use the outgoing Bluetooth COM port to connect the app.
 4. On Dashboard, use **V1, V2, V3, V4, V5 and V7 ON/OFF**. These six controls stay visible above the
    measurement cards. Click an energized valve again to turn it off.
 5. **Stop valves** turns all six off. The existing connection watchdog also
@@ -33,6 +34,15 @@ No pressure sensor, flow sensor, scale, PWM converter, valve profile form or
 additional review checkbox is required for these normal-firmware valve toggles.
 The commands persist until changed or stopped; they are not the old 500 ms
 pulse test. The app displays commanded coil states, not measured valve position.
+
+If a valve closes on its own, note whether the Dashboard still shows its
+command as **ON**. If it does and telemetry remains current, check the relay
+indicator, load supply and valve wiring locally. If the app reports a dropout
+or changes the command to **OFF**, use **Connections and settings → Copy
+connection diagnostics** before resetting the board. With the loads isolated,
+check whether the relay stays on through several telemetry updates and releases
+on Stop. The first toggle in v0.1.25 stays behind the opening heartbeat in the
+serial queue, so the controller can accept it on a new Bluetooth session.
 
 The pump command remains zero in this valve-only manual state. Pump operation
 and automatic experiments retain their separate input/pump configuration.

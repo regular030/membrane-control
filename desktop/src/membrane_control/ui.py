@@ -374,8 +374,8 @@ class MainWindow(QMainWindow):
         self.live_sensor_detail = _label("", "muted", True)
         self.live_sensor_detail.setAccessibleName("Live diagnostic sensor inputs")
         self.live_sensor_detail.setToolTip(
-            "Raw ESP32 pin voltages and nominal estimates using a 5:1 divider. "
-            "These are separate from calibrated readings, charts, and pressure protection.")
+            "Raw ESP32 pin voltages. Dashboard estimates use the 5:1 divider or two measured setup references. "
+            "Pressure and flow below 100 mV need a meter check. Calibrated readings, charts, and pressure protection are separate.")
         self.live_sensor_detail.hide()
         outer.addWidget(self.live_sensor_detail)
         self.live_sensor_zero_controls = QWidget()
@@ -1675,23 +1675,33 @@ class MainWindow(QMainWindow):
                 )
             self.sensor_test_detail.setText(sensor_note)
             live_mv = snap.get("live_sensor_voltages", {}) if sensor_test_available and fresh else {}
+            sensor_setup = self._sensor_setup_dialog
+            if sensor_setup is not None:
+                if sensor_setup.isVisible():
+                    sensor_setup.refresh()
+                else:
+                    sensor_setup.sync_connection()
             for key, (_, unit, channel) in METRICS.items():
                 value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
                 raw = live_mv.get(channel)
                 if value == "Waiting" and raw is not None:
-                    estimate = _sensor_estimate(channel, raw)
+                    fit_active, estimate = sensor_setup.reference_estimate(channel, raw) if sensor_setup else (False, None)
+                    if not fit_active:
+                        estimate = _sensor_estimate(channel, raw)
                     if estimate is not None:
                         value = "≈" + _number(estimate, 1 if channel == "flow" else 2)
-                        unit = f"{unit} · estimated · {raw} mV at ESP32"
+                        source = "reference-based estimate" if fit_active else "estimated"
+                        unit = f"{unit} · {source} · {raw} mV at ESP32"
                     else:
                         low, high = ADC_RANGE_MV[channel]
-                        status = "outside estimate range" if low <= raw <= high else "outside ADC range"
+                        if fit_active:
+                            status = "outside reference range"
+                        else:
+                            status = "outside estimate range" if low <= raw <= high else "outside ADC range"
                         value = "—"
                         unit = f"No {unit} reading · {raw} mV at ESP32 · {status}"
                 self._metric_labels[key].setText(value)
                 self._metric_units[key].setText(unit)
-            if self._sensor_setup_dialog is not None and self._sensor_setup_dialog.isVisible():
-                self._sensor_setup_dialog.refresh()
             sensor_zero = snap.get("live_sensor_zero", {})
             self.live_sensor_detail.setVisible(bool(live_mv))
             self.live_sensor_zero_controls.setVisible(bool(live_mv))

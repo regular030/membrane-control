@@ -96,7 +96,7 @@ function Invoke-DryRunFlash {
         if ($bluetoothTest) {
             Write-Host 'In Windows Settings, open Bluetooth & devices, add a Bluetooth device, and pair MembraneControl-Bench.'
             Write-Host 'In More Bluetooth settings, open the COM Ports tab. Use the Outgoing COM port for MembraneControl-Bench. Add an Outgoing port for that device if Windows has not listed one.'
-            Write-Host 'In Membrane Control, turn Simulation mode off, refresh the controller port list, and connect to that Outgoing Bluetooth COM port. The app must report Connected (dry run).'
+            Write-Host 'Open Membrane Control in hardware mode, refresh the controller port list, and connect to that Outgoing Bluetooth COM port. The app must report Connected (dry run).'
         } elseif ($Firmware -eq 'esp32-relay-bench') {
             Write-Host 'Open Connections and settings, then Relay board test. Keep all relay contacts disconnected and follow the rest-pattern check before testing individual bits.'
             Write-Host 'This tool switches unloaded relays. It does not verify valve movement, commission the rig or enable an experiment.'
@@ -106,15 +106,15 @@ function Invoke-DryRunFlash {
         } elseif ($normalController) {
             if ($bluetoothNormal) {
                 Write-Host 'The ESP32 keeps the Bluetooth name MembraneControl-Bench. Keep the existing Windows pairing.'
-                Write-Host 'In Membrane Control, turn Simulation mode off, refresh the controller port list, and connect to the existing Outgoing Bluetooth COM port. The app must report Connected.'
+                Write-Host 'Open Membrane Control in hardware mode, refresh the controller port list, and connect to the existing Outgoing Bluetooth COM port. The app must report Connected.'
                 Write-Host 'If the board cannot connect with the existing bond, return to Flash ESP32 Bluetooth test to establish and verify the bond before uploading this program again.'
             } else {
-                Write-Host 'Open the app, turn Simulation mode off and connect this controller port.'
+                Write-Host 'Open the app in hardware mode and connect this controller port.'
             }
             Write-Host 'Use Dashboard V1-V5 and V7 ON/OFF. No sensor connection or extra profile form is required for manual valves.'
             Write-Host 'Finish the reviewed hardware profile, sensor calibration, pump interface and process-safe wiring before real operation. Uploading this target alone does not commission the rig.'
         } else {
-            Write-Host 'Open the app, turn Simulation mode off and select this controller port. It must report Connected (dry run).'
+            Write-Host 'Open the app in hardware mode and select this controller port. It must report Connected (dry run).'
             Write-Host 'This does not commission the relay wiring or enable physical equipment.'
         }
     } finally { $env:PLATFORMIO_CORE_DIR = $savedCore }

@@ -94,8 +94,17 @@ elapsed time. Use **Copy setup readings** before leaving the session to save
 the reference points and calculated scale and offset for the rig's profile.
 Factory certificates list the sensor voltage before the divider. Use them to
 compare expected and actual voltages, and use independent measurements when
-capturing the installed circuit's references. These setup references are temporary;
-the run charts and pressure limit use the commissioned firmware profile.
+capturing the installed circuit's references. The Dashboard uses the measured
+fit for live estimates between the two captured points in the current
+connection. The run charts and pressure limit use the commissioned firmware
+profile.
+
+With the documented divider, the pressure certificate's near-zero output is
+around 1 mV at IO34. The factory pressure and flow input range starts at 100 mV.
+Use a meter for the zero check, then capture two measured points within the
+usable range. If the process needs accurate readings below that range, use a
+verified input circuit that can measure the required low voltages before
+commissioning the run profile.
 
 ## Read the connection status
 

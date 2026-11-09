@@ -161,6 +161,18 @@ def test_stop_discards_queued_start_and_manual_commands():
     assert json.loads(worker.outgoing.get_nowait()[2])["cmd"] == "stop"
 
 
+def test_queued_heartbeat_reaches_bluetooth_controller_before_first_valve_command():
+    worker = queue_only_transport()
+    messages = [
+        {"v": 1, "id": 1, "cmd": "hello"},
+        {"v": 1, "id": 2, "cmd": "heartbeat"},
+        {"v": 1, "id": 3, "cmd": "manual_valves", "valves": [True, False, False, False, False, False, False]},
+    ]
+    for message in messages:
+        worker.send(message)
+    assert [json.loads(worker._next_write()[0]) for _ in messages] == messages
+
+
 def test_exact_line_limit_is_accepted_when_sending():
     worker = queue_only_transport()
     message = {"cmd": "hello", "pad": ""}

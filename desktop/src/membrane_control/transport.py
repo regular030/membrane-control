@@ -100,7 +100,9 @@ class SerialTransport:
             self._counter += 1
             if command == "stop":
                 self._discard_outgoing()
-            priority = 0 if command == "stop" else 2 if command == "heartbeat" else 1
+            # A Bluetooth actuator command may depend on an earlier heartbeat.
+            # Keep ordinary writes in order and reserve priority for Stop.
+            priority = 0 if command == "stop" else 1
             try:
                 self.outgoing.put_nowait((priority, self._counter, payload))
             except queue.Full:

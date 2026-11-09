@@ -34,8 +34,9 @@ class SensorSetupDialog(QDialog):
         layout = QVBoxLayout(self)
         introduction = QLabel(
             "Check the three ESP32 inputs live. Capture a zero baseline or compare readings "
-            "with a gauge, timed flow collection, or voltmeter. Setup points stay in this "
-            "connection. Run protection uses the commissioned pressure input."
+            "with a gauge, timed flow collection, or voltmeter. Two measured references "
+            "set the Dashboard estimate for this connection. Run protection uses the "
+            "commissioned pressure input."
         )
         introduction.setWordWrap(True)
         layout.addWidget(introduction)
@@ -102,15 +103,15 @@ class SensorSetupDialog(QDialog):
         self.reference_label.setText(f"Measured reference ({unit})")
         self.reference_value.setPlaceholderText(f"Enter a measured value in {unit}")
         self.reference_hint.setText({
-            "pressure": "Use the pressure reading from an independent gauge.",
-            "flow": "Collect liquid from the measured flow path. Multiply collected mL by 60 and divide by seconds.",
+            "pressure": "Use a steady reading from an independent gauge. Below 100 mV at the ESP32, check the signal with a voltmeter.",
+            "flow": "Use a steady timed collection from the measured path. Divide collected mL by seconds and multiply by 60. Below 100 mV at the ESP32, check with a voltmeter.",
             "pump_feedback": "Measure volts at the pump output before the divider.",
         }[key])
         self.reference_value.clear()
         self.action_status.clear()
         self.refresh()
 
-    def refresh(self):
+    def sync_connection(self):
         snapshot = self.controller.snapshot
         connected = snapshot["controller_connected"] and not self.controller.simulation and not snapshot["simulation"]
         driver = self.controller.driver if connected else None
@@ -120,6 +121,11 @@ class SensorSetupDialog(QDialog):
             self._zero.clear()
             self._references.clear()
             self._driver = driver
+        return connected
+
+    def refresh(self):
+        snapshot = self.controller.snapshot
+        connected = self.sync_connection()
         last = self.controller.last_telemetry
         fresh = connected and last is not None and self.controller.clock() - last <= 2
         self._live = snapshot.get("live_sensor_voltages", {}) if fresh else {}
@@ -149,14 +155,15 @@ class SensorSetupDialog(QDialog):
             value = self._live.get(key)
             if value is not None:
                 reading = f"{value} mV at the ESP32"
-                if value < ADC_RANGE_MV[key][0]:
+                fit_active, estimate = self.reference_estimate(key, value)
+                if estimate is not None:
+                    reading += f" · reference-based estimate {estimate:.2f} {unit}"
+                elif fit_active:
+                    reading += " · outside reference range"
+                elif value < ADC_RANGE_MV[key][0]:
                     reading += " · below ADC range"
                 elif value > max_mv:
                     reading += " · above nominal input range"
-                else:
-                    estimate = self._estimate(key, value)
-                    if estimate is not None:
-                        reading += f" · setup estimate {estimate:.2f} {unit}"
             elif fresh and snapshot["hardware_verified"] and snapshot.get(field) is not None:
                 reading = f"{snapshot[field]:.2f} {unit}"
             else:
@@ -182,13 +189,14 @@ class SensorSetupDialog(QDialog):
         self.clear_button.setEnabled(zero is not None or bool(references))
         self.copy_button.setEnabled(bool(self._live or self._zero or self._references))
 
-    def _estimate(self, key, current_mv):
+    def reference_estimate(self, key, current_mv):
         points = sorted(self._references.get(key, ()))
-        if len(points) == 2:
-            (low_mv, low_value), (high_mv, high_value) = points
-            if low_mv <= current_mv <= high_mv:
-                return low_value + (high_value - low_value) * (current_mv - low_mv) / (high_mv - low_mv)
-        return None
+        if len(points) != 2:
+            return False, None
+        (low_mv, low_value), (high_mv, high_value) = points
+        if not low_mv <= current_mv <= high_mv:
+            return True, None
+        return True, low_value + (high_value - low_value) * (current_mv - low_mv) / (high_mv - low_mv)
 
     def _capture_zero(self):
         self.refresh()
@@ -228,7 +236,7 @@ class SensorSetupDialog(QDialog):
         mv = self._live[key]
         min_mv, max_mv = ADC_RANGE_MV[key]
         if not min_mv <= mv <= max_mv:
-            self.action_status.setText("This input is outside its usable voltage range. Check it with a voltmeter.")
+            self.action_status.setText(f"This input is outside its usable voltage range ({min_mv} to {max_mv} mV at the ESP32). Check it with a voltmeter.")
             return
         points = self._references.get(key, ())
         if len(points) >= 2:
@@ -241,7 +249,8 @@ class SensorSetupDialog(QDialog):
                 return
         self._references[key] = [*points, (mv, reference)]
         self.reference_value.clear()
-        self.action_status.setText("Reference captured for the setup comparison.")
+        self.action_status.setText("Dashboard reference estimate is active within the measured range." if points else
+            "First reference captured. Enter a second measured reference to use the fit on Dashboard.")
         self.refresh()
 
     def _clear_selected(self):

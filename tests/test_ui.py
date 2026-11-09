@@ -243,7 +243,7 @@ def test_sensor_setup_compares_explicit_reference_points_without_changing_run_da
         dialog.reference_button.click()
     controller.snapshot["live_sensor_voltages"]["pressure"] = 400
     window._update_view(dict(controller.snapshot))
-    assert "setup estimate 40.00 psi" in dialog.live_labels["pressure"].text()
+    assert "reference-based estimate 40.00 psi" in dialog.live_labels["pressure"].text()
     assert "Change from zero +310 mV" in dialog.points_detail.text()
     assert controller.snapshot["pressure_psi"] is None
     assert controller.snapshot["hardware_verified"] is False
@@ -259,6 +259,52 @@ def test_sensor_setup_compares_explicit_reference_points_without_changing_run_da
     assert dialog.live_labels["pressure"].text() == "Waiting"
     assert not dialog.clear_button.isEnabled()
     assert not dialog.copy_button.isEnabled()
+
+
+@pytest.mark.parametrize(("channel", "metric", "points", "inside_mv", "outside_mv", "expected"), [
+    ("pressure", "pressure_psi", ((200, 15), (1200, 90)), 1100, 150, "≈82.50"),
+    ("flow", "flow_ml_min", ((150, 20), (450, 80)), 300, 550, "≈50.0"),
+])
+def test_dashboard_reference_estimate_is_local_to_connection_and_measured_range(
+        screen, channel, metric, points, inside_mv, outside_mv, expected):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    readings = {"pressure": 180, "flow": 200, "pump_feedback": 142}
+    controller.snapshot.update(controller_connected=True, sensor_test_available=True, live_sensor_voltages=readings)
+    controller.last_telemetry = now[0]
+    window.sensor_setup_button.click()
+    dialog = window._sensor_setup_dialog
+    dialog.channel.setCurrentIndex(dialog.channel.findData(channel))
+    assert "100 mV" in dialog.reference_hint.text()
+    for mv, reference in points:
+        readings[channel] = mv
+        dialog.reference_value.setText(str(reference))
+        dialog.reference_button.click()
+    assert "Dashboard reference estimate is active" in dialog.action_status.text()
+    readings[channel] = inside_mv
+    window._update_view(dict(controller.snapshot))
+    assert "reference-based estimate" in dialog.live_labels[channel].text()
+    dialog.close()
+
+    window._update_view(dict(controller.snapshot))
+    assert window._metric_labels[metric].text() == expected
+    assert "reference-based estimate" in window._metric_units[metric].text()
+    assert controller.snapshot[metric] is None
+    assert not window.start_button.isEnabled()
+
+    readings[channel] = outside_mv
+    window._update_view(dict(controller.snapshot))
+    assert window._metric_labels[metric].text() == "—"
+    assert "outside reference range" in window._metric_units[metric].text()
+
+    controller.disconnect_controller(request_stop=False)
+    window._update_view(dict(controller.snapshot))
+    assert window._metric_labels[metric].text() == "Waiting"
+    controller.snapshot.update(controller_connected=True, sensor_test_available=True, live_sensor_voltages=readings)
+    controller.last_telemetry = now[0]
+    window._update_view(dict(controller.snapshot))
+    assert window._metric_labels[metric].text().startswith("≈")
+    assert " · estimated · " in window._metric_units[metric].text()
 
 
 def test_sensor_setup_keeps_live_view_during_manual_valves_but_blocks_capture(screen):

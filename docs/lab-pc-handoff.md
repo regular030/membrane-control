@@ -26,7 +26,7 @@ and allows only the saved peer.
    from the v0.1.24 Setup, using a regular upload that preserves the pairing.
    Look for `Bluetooth: protected serial service started for one saved bond`
    and, on connection, `Bluetooth: saved device opened the protected serial connection`.
-   Turn off desktop **Simulation**. The app should show **Connected** and
+   Open the app in hardware mode. It should show **Connected** and
    the `hello_identified` event should show `transport: bluetooth_spp`. The
    firmware handshake version field can still say `0.1.20`.
 4. If the board reports `no enrolled bench bond`, follow the enrollment steps
