@@ -92,12 +92,19 @@ Bluetooth communication while the controller is powered and idle or simulated.
    flash settings and use a regular upload so the saved pairing is preserved.
 3. Turn off desktop **Simulation**. In **Connections and settings**, select
    the same **outgoing Bluetooth COM port** that worked in the bench test.
-   Windows may still list the saved name as `MembraneControl-Bench`. The
+   The normal Bluetooth firmware keeps the name `MembraneControl-Bench`. The
    app should show **Connected**. Verify one unloaded relay, then check that
    disconnecting the app releases the relay before using the rig.
 4. Use the six manual valve controls and **Sensor setup**. The Bluetooth
    build uses the same pump, run and sensor profile as the wired controller.
    A reconnect starts a new session with outputs in their configured safe state.
+
+If the outgoing Bluetooth COM port is missing, check **More Bluetooth settings
+→ COM Ports**. If Windows still lists the paired controller, use **Add →
+Outgoing** to restore its port. If the pairing is also missing, return to the
+unloaded Bluetooth test to pair and verify the outgoing port before flashing
+the normal Bluetooth firmware again. The wired COM port on the Bluetooth
+firmware carries boot diagnostics.
 
 If Windows opens the port but the app gets no reply, click **Copy connection
 diagnostics** in **Connections and settings**. The report includes the selected
