@@ -82,16 +82,14 @@ Bluetooth communication while the controller is powered and idle or simulated.
 
 ## Run the normal controller over Bluetooth
 
-1. Use the same lab PC and ESP32 that passed the **MembraneControl-Bench** test.
-   Keep the Windows pairing. If the board is new, pair and run the unloaded
-   Bluetooth test first. The normal Bluetooth firmware uses the one existing
-   bond saved on the ESP32.
-2. Isolate the valve and pump loads. Close the app connection, open **Flash
+1. Isolate the valve and pump loads. Close the app connection, open **Flash
    normal controller (Bluetooth)** from Setup, and select the **wired**
    USB-to-UART COM port for upload. Use the helper's IO0/EN steps. Keep the
    flash settings and use a regular upload so the saved pairing is preserved.
-3. Open the app in hardware mode. In **Connections and settings**, select
-   the same **outgoing Bluetooth COM port** that worked in the bench test.
+2. If Windows and the ESP32 already share a pairing, keep it. For a new or
+   removed pairing, use the USB pairing procedure below.
+3. Open the app in hardware mode. In **Connections and settings**, select the
+   **outgoing Bluetooth COM port** if it is not selected automatically.
    The normal Bluetooth firmware keeps the name `MembraneControl-Bench`. The
    app should show **Connected**. Verify one unloaded relay, then check that
    disconnecting the app releases the relay before using the rig.
@@ -99,12 +97,27 @@ Bluetooth communication while the controller is powered and idle or simulated.
    build uses the same pump, run and sensor profile as the wired controller.
    A reconnect starts a new session with outputs in their configured safe state.
 
+### Restore the pairing over USB
+
+After flashing normal Bluetooth firmware with USB pairing support, use the same
+image for future pairing changes.
+
+1. Stop the controller, disconnect it in Membrane Control, and plug in its USB
+   programming cable. Leave the board running normally.
+2. If Windows still has a stale pairing, remove it once. Open **Pair Bluetooth
+   controller** from the Membrane Control Start menu, choose the **wired**
+   USB-to-UART port, and type `PAIR`.
+3. Select **MembraneControl-Bench** under **Bluetooth & devices → Add device →
+   Bluetooth**. Compare the Windows code with the helper's code. Accept it in
+   Windows and enter the same six digits in the helper. The board saves the
+   pairing and returns to normal mode. The pairing window lasts two minutes
+   and disables controller commands while it is open.
+4. Keep the Windows pairing. Close Windows Settings and connect from Membrane
+   Control. Use the **outgoing** port even if Windows gives it a new number.
+
 If the outgoing Bluetooth COM port is missing, check **More Bluetooth settings
 → COM Ports**. If Windows still lists the paired controller, use **Add →
-Outgoing** to restore its port. If the pairing is also missing, return to the
-unloaded Bluetooth test to pair and verify the outgoing port before flashing
-the normal Bluetooth firmware again. The wired COM port on the Bluetooth
-firmware carries boot diagnostics.
+Outgoing** to restore its port. Use USB pairing if the pairing itself is gone.
 
 If Windows opens the port but the app gets no reply, click **Copy connection
 diagnostics** in **Connections and settings**. The report includes the selected
@@ -112,14 +125,8 @@ port, detected ports and recent ESP32 connection events. Also capture the
 wired USB-to-UART boot log at 115200 baud with the loads isolated. Keep the
 Windows pairing for the first retry after upgrading from 0.1.23.
 
-If the boot log reports no enrolled bench bond, flash the Bluetooth test
-again. While that test is running, remove the stale Windows entry for this
-controller and pair `MembraneControl-Bench` using **Add device**. The test
-firmware prints the number of saved bonds on the wired console. Confirm it
-reports one bond and that the outgoing Bluetooth COM port works. Then flash
-the normal Bluetooth firmware again using the same board and PC. If it reports
-multiple bonds, use **Flash normal controller** for wired operation until the
-board is enrolled to a single lab PC.
+For an older physical image without USB pairing support, use the Bluetooth
+test image to enroll the lab PC before returning to the normal image.
 
 ## Finish the physical hardware profile
 

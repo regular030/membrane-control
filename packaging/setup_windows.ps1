@@ -206,6 +206,7 @@ function Get-SetupShortcutSpecs {
         @{Name='Flash full controller (setup required)'; Script='flash_dry_run.ps1'; Firmware='esp32-physical'},
         @{Name='Flash normal controller'; Script='flash_dry_run.ps1'; Firmware='esp32-physical'},
         @{Name='Flash normal controller (Bluetooth)'; Script='flash_dry_run.ps1'; Firmware='esp32-bluetooth-physical'},
+        @{Name='Pair Bluetooth controller'; Script='pair_bluetooth.ps1'; Firmware=$null},
         @{Name='USB driver help'; Script='install_cp210x.ps1'; Firmware=$null})) {
         $scriptPath = if ($item.Script) { Join-Path $Destination ('packaging/' + $item.Script) } else { $null }
         $arguments = ''
@@ -213,7 +214,10 @@ function Get-SetupShortcutSpecs {
         if ($scriptPath) {
             $target = $powershell
             $rootParameter = if ($item.Script -eq 'install_cp210x.ps1') { '-Root' } else { '-InstallRoot' }
-            $arguments = '-NoProfile -ExecutionPolicy Bypass -File ' + (ConvertTo-ShortcutArgument $scriptPath) + ' ' + $rootParameter + ' ' + (ConvertTo-ShortcutArgument $Destination)
+            $arguments = '-NoProfile -ExecutionPolicy Bypass -File ' + (ConvertTo-ShortcutArgument $scriptPath)
+            if ($item.Script -ne 'pair_bluetooth.ps1') {
+                $arguments += ' ' + $rootParameter + ' ' + (ConvertTo-ShortcutArgument $Destination)
+            }
             if ($item.Firmware) { $arguments += ' -Firmware ' + $item.Firmware }
         }
         [PSCustomObject]@{Name=$item.Name;Target=$target;Arguments=$arguments;ScriptPath=$scriptPath}

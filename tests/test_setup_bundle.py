@@ -14,7 +14,7 @@ spec.loader.exec_module(builder)
 
 def fake_source(tmp_path):
     required = [
-        "packaging/setup_windows.ps1", "packaging/flash_dry_run.ps1",
+        "packaging/setup_windows.ps1", "packaging/flash_dry_run.ps1", "packaging/pair_bluetooth.ps1",
         "packaging/prepare_valve_test.ps1", "packaging/prepare_valve_test.py",
         "desktop/src/membrane_control/valve_profile.py",
         "packaging/install_cp210x.ps1", "packaging/driver-config.json",
@@ -64,6 +64,7 @@ def test_payload_hashes_actual_bytes_and_excludes_local_files(tmp_path):
         assert archive.read('packaging/valve_profile.py') == (tmp_path / 'desktop/src/membrane_control/valve_profile.py').read_bytes()
         assert 'packaging/prepare_valve_test.py' in manifest['files']
         assert 'packaging/prepare_valve_test.ps1' in manifest['files']
+        assert archive.read('packaging/pair_bluetooth.ps1') == (tmp_path / 'packaging/pair_bluetooth.ps1').read_bytes()
         assert archive.read(manifest["app"]) == executable.read_bytes()
         for name in ("docs/valve-test.md", "protocol/valve-test.md", "firmware/src/valve_test_main.cpp",
                      "firmware/include/ValveTestProfile.h", "firmware/examples/ValveTestProfile.example.h",

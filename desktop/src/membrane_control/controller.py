@@ -20,6 +20,9 @@ DEFAULT_SETTINGS = {"membrane_area_m2": 0.01, "density_g_ml": 1.0,
                     "record_interval_s": 1.0, "require_balance": False,
                     "max_pressure_psi": 20.0}
 REQUEST_TIMEOUT_S = 3.0
+LAB_CONTROLLER_FALLBACK_PORT = "COM8"
+LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF50204E"
+WINDOWS_SPP_ID_PREFIX = "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_"
 
 
 def _adc_pin_mv(value):
@@ -53,6 +56,7 @@ class AppController:
         self.recipe = copy.deepcopy(next(iter(self.presets.values())))
         self.driver = None
         self.balance = None
+        self.preferred_controller_port = LAB_CONTROLLER_FALLBACK_PORT
         self.balance_polling = False
         self.balance_port_open = False
         self.last_balance_request = None
@@ -228,10 +232,28 @@ class AppController:
         else:
             self._log("Hardware mode: select controller and balance ports")
 
-    @staticmethod
-    def list_ports():
+    def list_ports(self):
         from serial.tools import list_ports
-        return [(p.device, p.description) for p in list_ports.comports()]
+
+        self.preferred_controller_port = None
+        ports = list_ports.comports()
+        outgoing_ports = set()
+        fallback = None
+        for port in ports:
+            hardware_id = (port.hwid or "").upper()
+            if hardware_id.startswith(WINDOWS_SPP_ID_PREFIX):
+                # Windows uses a zero peer for the incoming port and embeds the
+                # remote device address in the outgoing port's instance ID.
+                peer = hardware_id.rsplit("&", 1)[-1].partition("_")[0]
+                if peer == LAB_CONTROLLER_BLUETOOTH_ADDRESS:
+                    outgoing_ports.add(port.device)
+            if port.device == LAB_CONTROLLER_FALLBACK_PORT and hardware_id in ("", "N/A"):
+                fallback = port.device
+        if len(outgoing_ports) == 1:
+            self.preferred_controller_port = next(iter(outgoing_ports))
+        elif not outgoing_ports:
+            self.preferred_controller_port = fallback
+        return [(p.device, p.description) for p in ports]
 
     def connect_controller(self, port):
         if self.simulation:

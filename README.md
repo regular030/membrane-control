@@ -23,8 +23,8 @@ For troubleshooting from the PC connected to the controller, open the [Bluetooth
    **Source code (zip)** contains the code, not the ready-to-run app.
 2. Double-click the EXE. If using Setup, wait for completion and open the new
    **Membrane Control** shortcut.
-3. The app tries **COM8** for the ESP32 and **COM6** for the scale at startup
-   when those ports are detected. Check their status in **Connections and settings**.
+3. The app tries the lab ESP32's outgoing Bluetooth port and **COM6** for the
+   scale at startup when detected. Check their status in **Connections and settings**.
    Review the sequence and choose the approved **Preset** before starting a run.
 4. Click **Stop run**, then **Export CSV** to save the results.
 5. Use **Run history** to find and export earlier runs.

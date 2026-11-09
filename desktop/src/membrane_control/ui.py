@@ -33,7 +33,6 @@ from .sensor_setup import SensorSetupDialog, observed_zero_baseline, sensor_disp
 from .valve_test import ValveTestDialog
 
 
-LAB_CONTROLLER_PORT = "COM8"
 LAB_BALANCE_PORT = "COM6"
 
 METRICS = {
@@ -1087,10 +1086,13 @@ class MainWindow(QMainWindow):
 
     def _refresh_ports(self):
         try:
+            previous_controller_default = self.controller.preferred_controller_port
             ports = self.controller.list_ports()
-            for combo, preferred in ((self.controller_port, LAB_CONTROLLER_PORT),
+            for combo, preferred in ((self.controller_port, self.controller.preferred_controller_port),
                                      (self.balance_port, LAB_BALANCE_PORT)):
                 previous = combo.currentData()
+                if combo is self.controller_port and previous == previous_controller_default:
+                    previous = preferred
                 combo.clear()
                 combo.addItem("Select a serial port" if ports else "No serial ports found", None)
                 for device, description in ports:
@@ -1109,7 +1111,8 @@ class MainWindow(QMainWindow):
     def connect_lab_defaults(self):
         if self._shutdown_started or self.controller.simulation:
             return
-        if self.controller_port.currentData() == LAB_CONTROLLER_PORT:
+        preferred = self.controller.preferred_controller_port
+        if preferred and self.controller_port.currentData() == preferred:
             self._connect_controller(show_dialog=False)
         if self.balance_port.currentData() == LAB_BALANCE_PORT:
             self._connect_balance(show_dialog=False)

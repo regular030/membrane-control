@@ -1,6 +1,7 @@
 #include "ProtectedSpp.h"
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -34,11 +35,12 @@ constexpr esp_bt_cod_t kSerialDeviceClass{0, 4, 1, 0x16};
 constexpr TickType_t kWriteTimeout = pdMS_TO_TICKS(1000);
 constexpr uint16_t kKeepScanMode = 0xffff;  // BTA_DM_IGNORE | BTA_DM_LE_IGNORE
 constexpr uint8_t kNonPairable = 0;        // BTA_DM_NON_PAIRABLE
+constexpr uint8_t kPairable = 1;           // BTA_DM_PAIRABLE
 constexpr uint8_t kConnectAll = 0;         // BTA_DM_CONN_ALL
 
 enum class Notice : uint8_t {
   InitializationFailed, StartFailed, ScanFailed, Started, OpenFailed,
-  WrongPeer, Busy, Accepted, PairingDenied, AuthenticationFailed, LinkInvalidated,
+  WrongPeer, Busy, Accepted, PairingDenied, AuthenticationFailed, LinkInvalidated, PairingReady,
 };
 constexpr const char* kNoticeMessages[] = {
   "Bluetooth: serial initialization failed",
@@ -49,9 +51,10 @@ constexpr const char* kNoticeMessages[] = {
   "Bluetooth: serial connection rejected for a different device",
   "Bluetooth: serial connection busy; reopen the outgoing port",
   "Bluetooth: saved device opened the protected serial connection",
-  "Bluetooth: new pairing denied; use the unloaded Bluetooth bench image to pair",
-  "Bluetooth: saved device authentication failed; check the bench bond",
+  "Bluetooth: new pairing denied; use USB pairing recovery",
+  "Bluetooth: saved device authentication failed; use USB pairing recovery",
   "Bluetooth: serial session stopped after an I/O failure",
+  "Bluetooth: pairing ready (120 seconds)",
 };
 
 struct Frame {
@@ -63,6 +66,13 @@ struct Frame {
 portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 BluetoothLink link;
 esp_bd_addr_t enrolledPeer{};
+Preferences pairingStore;
+bool pairingStoreReady = false;
+bool pairingOnly = false;  // Set before registering radio callbacks, unchanged until restart.
+enum class PairingStage { Waiting, CodeAvailable, CodeDisplayed, Confirmed, Authenticated, Failed };
+PairingStage pairingStage = PairingStage::Waiting;
+esp_bd_addr_t pairingPeer{};
+uint32_t pairingCode = 0;
 QueueHandle_t outgoing = nullptr;
 std::array<uint8_t, kMaxLineBytes + 1> incoming{};
 std::size_t head = 0;
@@ -148,21 +158,48 @@ void transmit(void*) {
 }
 
 void onGap(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* data) {
-  // Enrollment happens on the unloaded bench image. Physical firmware never
-  // grants a new bond through PIN or numeric confirmation prompts.
   if (event == ESP_BT_GAP_PIN_REQ_EVT) {
     report(Notice::PairingDenied);
     esp_bt_pin_code_t empty{};
     esp_bt_gap_pin_reply(data->pin_req.bda, false, 0, empty);
   } else if (event == ESP_BT_GAP_CFM_REQ_EVT) {
-    report(Notice::PairingDenied);
-    esp_bt_gap_ssp_confirm_reply(data->cfm_req.bda, false);
+    bool requestAccepted = false;
+    if (pairingOnly) {
+      portENTER_CRITICAL(&lock);
+      if (pairingStage == PairingStage::Waiting) {
+        std::memcpy(pairingPeer, data->cfm_req.bda, sizeof(pairingPeer));
+        pairingCode = data->cfm_req.num_val;
+        pairingStage = PairingStage::CodeAvailable;
+        requestAccepted = true;
+      }
+      portEXIT_CRITICAL(&lock);
+    }
+    if (!requestAccepted) {
+      report(Notice::PairingDenied);
+      esp_bt_gap_ssp_confirm_reply(data->cfm_req.bda, false);
+    }
   } else if (event == ESP_BT_GAP_KEY_REQ_EVT) {
     report(Notice::PairingDenied);
     esp_bt_gap_ssp_passkey_reply(data->key_req.bda, false, 0);
-  } else if (event == ESP_BT_GAP_AUTH_CMPL_EVT && data->auth_cmpl.stat != ESP_BT_STATUS_SUCCESS &&
-             std::memcmp(enrolledPeer, data->auth_cmpl.bda, sizeof(enrolledPeer)) == 0) {
-    report(Notice::AuthenticationFailed);
+  } else if (event == ESP_BT_GAP_AUTH_CMPL_EVT) {
+    if (pairingOnly) {
+      portENTER_CRITICAL(&lock);
+      if (pairingStage != PairingStage::Authenticated && pairingStage != PairingStage::Failed) {
+        const bool samePeer = std::memcmp(pairingPeer, data->auth_cmpl.bda, sizeof(pairingPeer)) == 0;
+        if (data->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
+          // Just Works can succeed without a confirmation callback. Such a key
+          // is never approved for control, even after a reset or power loss.
+          pairingStage = samePeer && pairingStage == PairingStage::Confirmed
+              ? PairingStage::Authenticated : PairingStage::Failed;
+        } else if (samePeer) {
+          pairingStage = PairingStage::Failed;
+        }
+      }
+      portEXIT_CRITICAL(&lock);
+    } else if (data->auth_cmpl.stat != ESP_BT_STATUS_SUCCESS &&
+               std::memcmp(enrolledPeer, data->auth_cmpl.bda, sizeof(enrolledPeer)) == 0) {
+      report(Notice::AuthenticationFailed);
+    }
   }
 }
 
@@ -180,12 +217,16 @@ void onSpp(esp_spp_cb_event_t event, esp_spp_cb_param_t* data) {
     if (data->start.status != ESP_SPP_SUCCESS) report(Notice::StartFailed);
     else if (esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE) != ESP_OK)
       report(Notice::ScanFailed);
-    else report(Notice::Started);
+    else report(pairingOnly ? Notice::PairingReady : Notice::Started);
     return;
   }
   if (event == ESP_SPP_SRV_OPEN_EVT) {
     if (data->srv_open.status != ESP_SPP_SUCCESS) { report(Notice::OpenFailed); return; }
     const auto handle = data->srv_open.handle;
+    if (pairingOnly) {
+      if (handle) esp_spp_disconnect(handle);
+      return;
+    }
     const bool enrolled = std::memcmp(enrolledPeer, data->srv_open.rem_bda, sizeof(enrolledPeer)) == 0;
     portENTER_CRITICAL(&lock);
     const bool accepted = !callingSdk && link.open(handle, enrolled);
@@ -229,9 +270,31 @@ void onSpp(esp_spp_cb_event_t event, esp_spp_cb_param_t* data) {
   }
   portEXIT_CRITICAL(&lock);
 }
+
+bool removeSavedBonds() {
+  const uint32_t started = millis();
+  for (int count = esp_bt_gap_get_bond_device_num(); count != 0; count = esp_bt_gap_get_bond_device_num()) {
+    esp_bd_addr_t peer{};
+    int capacity = 1;
+    if (count < 0 || esp_bt_gap_get_bond_device_list(&capacity, &peer) != ESP_OK ||
+        capacity != 1 || esp_bt_gap_remove_bond_device(peer) != ESP_OK) return false;
+    // Removal is asynchronous. Never open pairing before the old key is gone.
+    while (esp_bt_gap_get_bond_device_num() >= count) {
+      if (static_cast<uint32_t>(millis() - started) >= 5000) return false;
+      delay(20);
+    }
+  }
+  return true;
+}
 }  // namespace
 
-const char* begin() {
+const char* begin(bool enroll) {
+  pairingOnly = enroll;
+  pairingStoreReady = pairingStore.begin("bt_recovery", false);
+  if (!pairingStoreReady) return "Bluetooth physical control locked: could not open pairing storage";
+  const bool pending = pairingStore.getBool("pending", false);
+  if (enroll != pending) return "Bluetooth physical control locked: use USB pairing recovery";
+
   esp_bt_controller_config_t config = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
   if (esp_bt_controller_init(&config) != ESP_OK || esp_bt_controller_enable(ESP_BT_MODE_BTDM) != ESP_OK ||
       esp_bluedroid_init() != ESP_OK || esp_bluedroid_enable() != ESP_OK)
@@ -240,13 +303,23 @@ const char* begin() {
   // requires it to be authenticated before SPP has a chance to authenticate it.
   // Keep pairing disabled and require encrypted SPP from the saved peer.
   BTA_DmSetVisibility(kKeepScanMode, kKeepScanMode, kNonPairable, kConnectAll);
-  int bonds = esp_bt_gap_get_bond_device_num();
-  if (bonds == 0) return "Bluetooth physical control locked: no enrolled bench bond";
-  if (bonds > 1) return "Bluetooth physical control locked: multiple enrolled bench bonds";
-  esp_bd_addr_t saved[1]{};
-  if (bonds != 1 || esp_bt_gap_get_bond_device_list(&bonds, saved) != ESP_OK || bonds != 1)
-    return "Bluetooth physical control locked: could not read the enrolled bench bond";
-  std::memcpy(enrolledPeer, saved[0], sizeof(enrolledPeer));
+  if (enroll) {
+    if (!removeSavedBonds()) return "Bluetooth: could not remove previous bonds";
+  } else {
+    int bonds = esp_bt_gap_get_bond_device_num();
+    if (bonds == 0) return "Bluetooth physical control locked: no saved bond; use USB pairing recovery";
+    if (bonds > 1) return "Bluetooth physical control locked: multiple saved bonds; use USB pairing recovery";
+    if (bonds != 1 || esp_bt_gap_get_bond_device_list(&bonds, &enrolledPeer) != ESP_OK || bonds != 1)
+      return "Bluetooth physical control locked: could not read the saved bond";
+    // Devices enrolled by the previous bench firmware have no stored peer
+    // entry. Once recovered by USB, never accept a substituted bond.
+    if (pairingStore.isKey("peer")) {
+      esp_bd_addr_t approved{};
+      if (pairingStore.getBytes("peer", approved, sizeof(approved)) != sizeof(approved) ||
+          std::memcmp(approved, enrolledPeer, sizeof(approved)) != 0)
+        return "Bluetooth physical control locked: saved bond does not match the USB-approved device";
+    }
+  }
 
   outgoing = xQueueCreate(4, sizeof(Frame));
   if (!outgoing || xTaskCreate(transmit, "protected_spp_tx", 4096, nullptr, 1, nullptr) != pdPASS)
@@ -256,10 +329,66 @@ const char* begin() {
       esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &ioCapability, sizeof(ioCapability)) != ESP_OK ||
       esp_bt_dev_set_device_name(kDeviceName) != ESP_OK ||
       esp_bt_gap_set_cod(kSerialDeviceClass, ESP_BT_INIT_COD) != ESP_OK ||
-      esp_spp_register_callback(onSpp) != ESP_OK ||
-      esp_spp_init(ESP_SPP_MODE_CB) != ESP_OK)
+      esp_spp_register_callback(onSpp) != ESP_OK)
+    return "Bluetooth protected serial service could not start";
+  if (enroll) BTA_DmSetVisibility(kKeepScanMode, kKeepScanMode, kPairable, kConnectAll);
+  if (esp_spp_init(ESP_SPP_MODE_CB) != ESP_OK)
     return "Bluetooth protected serial service could not start";
   return nullptr;
+}
+
+bool requestPairing() {
+  // Mark physical control locked before rebooting or removing any saved key.
+  return pairingStoreReady && pairingStore.putBool("pending", true) == 1;
+}
+
+bool takePairingCode(uint32_t& code) {
+  portENTER_CRITICAL(&lock);
+  const bool available = pairingStage == PairingStage::CodeAvailable;
+  if (available) {
+    code = pairingCode;
+    pairingStage = PairingStage::CodeDisplayed;
+  }
+  portEXIT_CRITICAL(&lock);
+  return available;
+}
+
+bool confirmPairing(uint32_t code) {
+  esp_bd_addr_t peer{};
+  portENTER_CRITICAL(&lock);
+  const bool matches = pairingOnly && pairingStage == PairingStage::CodeDisplayed && code == pairingCode;
+  if (matches) {
+    std::memcpy(peer, pairingPeer, sizeof(peer));
+    pairingStage = PairingStage::Confirmed;
+  }
+  portEXIT_CRITICAL(&lock);
+  if (!matches) return false;
+  if (esp_bt_gap_ssp_confirm_reply(peer, true) == ESP_OK) return true;
+  portENTER_CRITICAL(&lock);
+  pairingStage = PairingStage::Failed;
+  portEXIT_CRITICAL(&lock);
+  return false;
+}
+
+PairingStatus pairingStatus() {
+  portENTER_CRITICAL(&lock);
+  const auto stage = pairingStage;
+  portEXIT_CRITICAL(&lock);
+  if (stage == PairingStage::Failed) return PairingStatus::Failed;
+  if (stage != PairingStage::Authenticated) return PairingStatus::Waiting;
+  return PairingStatus::Ready;
+}
+
+bool savePairing() {
+  if (pairingStatus() != PairingStatus::Ready) return false;
+  BTA_DmSetVisibility(kKeepScanMode, kKeepScanMode, kNonPairable, kConnectAll);
+  // The stack saves the key before sending the authentication-complete event.
+  esp_bd_addr_t saved{};
+  int count = esp_bt_gap_get_bond_device_num();
+  return count == 1 && esp_bt_gap_get_bond_device_list(&count, &saved) == ESP_OK && count == 1 &&
+      std::memcmp(pairingPeer, saved, sizeof(saved)) == 0 &&
+      pairingStore.putBytes("peer", saved, sizeof(saved)) == sizeof(saved) &&
+      pairingStore.putBool("pending", false) == 1;
 }
 
 BluetoothLinkToken current() {

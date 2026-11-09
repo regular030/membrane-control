@@ -61,7 +61,7 @@ function Invoke-DryRunFlash {
         Write-Host 'NORMAL CONTROLLER: V1,V2,V3,V4,V5,V7 = relay bits 0,1,2,3,5,6. No V6; bit4 unused.'
         if ($bluetoothNormal) {
             Write-Host 'BLUETOOTH NORMAL CONTROLLER CAN OPERATE REAL EQUIPMENT.' -ForegroundColor Yellow
-            Write-Host 'First use Flash ESP32 Bluetooth test on this board. Pair and test its outgoing COM port on the one Windows PC that will control the rig.'
+            Write-Host 'Keep a working pairing. For a new pairing, use Pair Bluetooth controller after the upload.'
             Write-Host 'This optional firmware builds on demand using the same installed BoardProfile.h as the wired controller. Upload through wired USB-UART and retain the existing Bluetooth bond. Do not erase the ESP32 flash or remove the Windows pairing.'
         }
         Write-Host 'Dashboard valve ON/OFF controls do not need pressure, flow, scale, a DAC or the separate valve-test profile.'
@@ -107,7 +107,7 @@ function Invoke-DryRunFlash {
             if ($bluetoothNormal) {
                 Write-Host 'The ESP32 keeps the Bluetooth name MembraneControl-Bench. Keep the existing Windows pairing.'
                 Write-Host 'Open Membrane Control in hardware mode, refresh the controller port list, and connect to the existing Outgoing Bluetooth COM port. The app must report Connected.'
-                Write-Host 'If the board cannot connect with the existing bond, return to Flash ESP32 Bluetooth test to establish and verify the bond before uploading this program again.'
+                Write-Host 'If the saved pairing is missing, use Pair Bluetooth controller with the board running. You can restore the pairing without another upload.'
             } else {
                 Write-Host 'Open the app in hardware mode and connect this controller port.'
             }

@@ -6,8 +6,9 @@ Developed for membrane research in Dr. Onita Basu's lab at Carleton University.
 Connect the rig
 
 1. Extract this ZIP, then double-click the file ending in windows-x64.exe.
-2. The app tries COM8 for the ESP32 and COM6 for the scale at startup when
-   detected. Open Connections and settings to check the device status.
+2. The app tries the lab ESP32's outgoing Bluetooth port and COM6 for the
+   scale at startup when detected. Open Connections and settings to check
+   the device status.
 3. With reviewed hardware and a lab-approved sequence, choose the preset on
    Dashboard and click Start run.
 4. Click Stop run, then Export CSV to save the results.
