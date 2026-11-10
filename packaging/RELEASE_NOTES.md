@@ -1,9 +1,9 @@
-Membrane Control 0.1.26 uses the pressure and flow calibration certificate points for live Dashboard estimates.
+Membrane Control 0.1.27 updates Bluetooth pairing and the live flow display.
 
 Developed for **Dr. Onita Basu's lab at Carleton University**.
 
-- With the rig stopped and zero pressure and flow verified, click **Zero pressure and flow** to capture a baseline for the current connection. The Dashboard shows live estimates wherever the certificate points and ADC input range support them.
-- The zero baseline shows changes in raw voltage. Near-zero pressure can fall below the usable ADC range, and the flow certificate starts at 20 mL/min. The Dashboard labels those ranges.
-- **Sensor setup** still accepts two independent references when available. The commissioned firmware profile drives run data and pressure protection.
+- To pair the controller again, use the new USB Bluetooth pairing shortcut with the updated firmware, then select the outgoing Windows Bluetooth COM port.
+- The Dashboard shows the lab's corrected default flow estimate. It labels values outside the checked range and shows raw millivolts where a usable estimate is unavailable. Existing reference fits, experiment records, and controller limits keep their current calibration.
+- The Windows Setup includes the desktop app, compiled ESP32 firmware, and flashing and pairing shortcuts.
 
-[Sensor setup instructions](https://github.com/regular030/membrane-control/blob/v0.1.26/docs/flow-sensor-troubleshooting.md#set-up-the-pressure-and-flow-readings)
+[Installation instructions](https://github.com/regular030/membrane-control/blob/v0.1.27/docs/installation.md)

@@ -17,6 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SETUP = ROOT / "packaging/setup_windows.ps1"
 FLASH = ROOT / "packaging/flash_dry_run.ps1"
+PAIR = ROOT / "packaging/pair_bluetooth.ps1"
 POWERSHELL = shutil.which("powershell.exe") or shutil.which("pwsh")
 pytestmark = pytest.mark.skipif(not POWERSHELL or sys.platform != "win32", reason="Windows PowerShell setup tests")
 
@@ -337,6 +338,43 @@ def test_bluetooth_flash_success_explains_how_to_find_the_outgoing_com(payload, 
         assert "pair MembraneControl-Bench" in result.stdout
         assert "Outgoing COM port for MembraneControl-Bench" in result.stdout
         assert "Connected (dry run)" in result.stdout
+
+
+def test_bluetooth_pairing_refusal_exits_without_reading_again():
+    result = run_ps(r"""
+    class RefusingPort {
+        [bool]$DtrEnable
+        [bool]$RtsEnable
+        [int]$ReadTimeout
+        [int]$WriteTimeout
+        [int]$Reads = 0
+        [bool]$Disposed = $false
+        [string[]]$Writes = @()
+        [void]Open() {}
+        [void]DiscardInBuffer() {}
+        [void]WriteLine([string]$Line) { $this.Writes += $Line }
+        [string]ReadLine() {
+            $this.Reads++
+            if ($this.Reads -gt 1) { throw 'Unexpected serial read after refusal' }
+            return 'Bluetooth: stop the controller before USB pairing'
+        }
+        [void]Dispose() { $this.Disposed = $true }
+    }
+    $global:FakePort = [RefusingPort]::new()
+    function New-Object { return $global:FakePort }
+    function Read-Host {
+        param($Prompt)
+        Write-Host $Prompt
+        if ($Prompt -like 'Type PAIR*') { return 'PAIR' }
+        return ''
+    }
+    """ + f"& {ps_quote(PAIR)} -Port COM4; " + r"""
+    if ($FakePort.Reads -ne 1 -or !$FakePort.Disposed -or ($FakePort.Writes -join ',') -cne ',PAIR') {
+        throw 'Unexpected pairing helper I/O'
+    }
+    """)
+    assert "Bluetooth: stop the controller before USB pairing" in result.stdout
+    assert result.stdout.index("Isolate the valve and pump loads") < result.stdout.index("Type PAIR")
 
 
 def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(payload):

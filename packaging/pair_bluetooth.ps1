@@ -14,8 +14,9 @@ try {
         $serial.RtsEnable = $false
         $serial.ReadTimeout = 500
         $serial.WriteTimeout = 1000
+        Write-Host 'Stop the rig and disconnect Membrane Control before pairing.'
+        Write-Host 'Isolate the valve and pump loads. Pairing restarts the ESP32. Leave the board running with BOOT released.'
         $serial.Open()
-        Write-Host 'Leave the board running with BOOT released. Stop the rig and disconnect Membrane Control before pairing.'
         if ((Read-Host 'Type PAIR to replace the controller pairing') -cne 'PAIR') { return }
         $serial.DiscardInBuffer()
         $serial.WriteLine('')
@@ -36,7 +37,8 @@ try {
             } elseif ($line -eq 'Bluetooth: pairing saved; restarting normal mode') {
                 Write-Host 'Pairing saved. Close Windows Settings and connect through the outgoing port in Membrane Control.'
                 return
-            } elseif ($line -match '^Bluetooth: pairing (failed|timed out|refused|requires)') {
+            } elseif ($line -eq 'Bluetooth: stop the controller before USB pairing' -or
+                      $line -match '^Bluetooth: pairing (failed|timed out|refused|requires)') {
                 throw $line
             } elseif ($line -match '^(Bluetooth|Pairing)') {
                 Write-Host $line

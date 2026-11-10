@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.26 includes the complete controller source and compiled ESP32 images,
+Version 0.1.27 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.26-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.27-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -102,8 +102,9 @@ Bluetooth communication while the controller is powered and idle or simulated.
 After flashing normal Bluetooth firmware with USB pairing support, use the same
 image for future pairing changes.
 
-1. Stop the controller, disconnect it in Membrane Control, and plug in its USB
-   programming cable. Leave the board running normally.
+1. Stop the controller and disconnect it in Membrane Control. Isolate the valve
+   and pump loads before pairing, which restarts the ESP32. Plug in its USB
+   programming cable and leave the board running with BOOT released.
 2. If Windows still has a stale pairing, remove it once. Open **Pair Bluetooth
    controller** from the Membrane Control Start menu, choose the **wired**
    USB-to-UART port, and type `PAIR`.
@@ -114,6 +115,8 @@ image for future pairing changes.
    and disables controller commands while it is open.
 4. Keep the Windows pairing. Close Windows Settings and connect from Membrane
    Control. Use the **outgoing** port even if Windows gives it a new number.
+   Keep the loads isolated until the controller has restarted and you have
+   verified the stopped state.
 
 If the outgoing Bluetooth COM port is missing, check **More Bluetooth settings
 → COM Ports**. If Windows still lists the paired controller, use **Add →
