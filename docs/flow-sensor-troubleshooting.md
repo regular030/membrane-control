@@ -60,9 +60,13 @@ The Dashboard estimates pressure and flow from the factory certificate points
 using the documented 5:1 divider. For pressure it interpolates between 0 psig
 at 0.005 V, 50 psig at 2.502 V and 100 psig at 5.004 V. For flow it interpolates
 between 20 mL/min at 1.01 V, 50 mL/min at 2.48 V and 100 mL/min at 5.00 V.
-These are the voltages at the sensor output, before the divider. The app shows
-estimates where both the certificate points and the ESP32 input range support
-them. Optional pump feedback shows estimated voltage before its divider.
+These are the voltages at the sensor output, before the divider. The Dashboard
+and Sensor setup double the default flow estimate to match the lab's observed
+40 and 100 mL/min at the certificate's 20 and 50 mL/min points. The app labels
+flow estimates outside the checked range and extends the estimate within the
+usable ESP32 input range. When a fresh voltage cannot give an estimate, the
+Flow card shows that voltage in mV. Optional pump feedback shows estimated
+voltage before its divider.
 [Omega exact model](https://www.dwyeromega.com/en-gb/general-purpose-stainless-steel-pressure-transducers/PX309/p/PX309-100G5V)
 · [McMillan operation manual](https://www.mcmflow.com/wp-content/uploads/2015/02/101-M002.pdf)
 

@@ -357,6 +357,7 @@ class MainWindow(QMainWindow):
         self.live_sensor_detail.setAccessibleName("Live diagnostic sensor inputs")
         self.live_sensor_detail.setToolTip(
             "Pressure and flow estimates use the sensor certificates and an assumed 5:1 divider, or two measured references. "
+            "The default flow estimate includes the lab's 2× correction. "
             "A zero baseline shows raw voltage change. Below 100 mV, check with a voltmeter.")
         self.live_sensor_detail.hide()
         outer.addWidget(self.live_sensor_detail)
@@ -1686,6 +1687,9 @@ class MainWindow(QMainWindow):
                     if estimate is not None:
                         value = "≈" + _number(estimate, 1 if channel == "flow" else 2)
                         unit = f"{unit} · {source} · {raw} mV at ESP32"
+                    elif channel == "flow":
+                        value = str(raw)
+                        unit = f"mV at ESP32 · No {unit} reading · {source}"
                     else:
                         value = "—"
                         unit = f"No {unit} reading · {raw} mV at ESP32 · {source}"
