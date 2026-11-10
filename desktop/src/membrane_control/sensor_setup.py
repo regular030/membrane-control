@@ -48,8 +48,17 @@ def sensor_display_estimate(channel, mv, reference=(False, None), zero_mv=None):
     if channel == "pump_feedback":
         return (mv / 200, "nominal estimate") if mv <= 2000 else (None, "outside nominal range")
     points = CERTIFICATE_POINTS[channel]
-    if mv < points[0][0]:
-        return None, "below certificate range (20 mL/min)"
+    if channel == "flow":
+        first, middle, last = points
+        segment = (first, middle) if mv <= middle[0] else (middle, last)
+        # On this rig the sensor showed 40 and 100 when the certificate gave 20 and 50.
+        estimate = 2 * _interpolate(mv, *segment)
+        source = "lab-corrected estimate"
+        if not first[0] <= mv <= last[0]:
+            source += " · outside certificate range"
+        elif not 40 <= estimate <= 100:
+            source += " · outside checked flow range"
+        return estimate, source
     for lower, upper in pairwise(points):
         if mv <= upper[0]:
             return _interpolate(mv, lower, upper), "certificate estimate"
@@ -78,6 +87,7 @@ class SensorSetupDialog(QDialog):
         layout = QVBoxLayout(self)
         introduction = QLabel(
             "Pressure and flow estimates use the sensor certificates and an assumed 5:1 divider. "
+            "The default flow estimate includes the lab's 2× correction. "
             "Capture a zero to compare raw voltages. Two independent measured references are optional. "
             "Run protection uses the commissioned pressure input."
         )

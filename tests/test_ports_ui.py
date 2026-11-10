@@ -1,5 +1,6 @@
 """Port-list discovery updates never connect to a device or invent a scale port."""
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -20,14 +21,16 @@ def ports_screen(qt_app, tmp_path, monkeypatch):
     ports = [('COM4', 'ESP32 CP2102')]
     enumerations = []
 
-    def list_ports():
+    def comports():
         enumerations.append(True)
-        return list(ports)
+        return [SimpleNamespace(device=device, description=description,
+                                hwid=hardware_id[0] if hardware_id else 'n/a')
+                for device, description, *hardware_id in ports]
 
+    monkeypatch.setattr('serial.tools.list_ports.comports', comports)
     monkeypatch.setattr('membrane_control.controller.SerialTransport',
                         lambda *_args, **_kwargs: pytest.fail('Refreshing ports must not open a device'))
     controller = AppController(tmp_path)
-    controller.list_ports = list_ports
     window = MainWindow(controller)
     window.timer.stop()
     yield window, controller, ports, enumerations
@@ -119,3 +122,41 @@ def test_startup_connects_only_detected_lab_defaults(ports_screen, monkeypatch):
     window._refresh_ports()
     window.connect_lab_defaults()
     assert calls == [('ESP32', 'COM8')]
+
+
+def test_startup_follows_outgoing_membrane_controller_after_windows_renumbers_ports(
+        ports_screen, monkeypatch):
+    window, controller, ports, _ = ports_screen
+    calls = []
+    monkeypatch.setattr(controller, 'connect_controller', calls.append)
+    controller.set_simulation(False)
+    outgoing = (r'BTHENUM\{00001101-0000-1000-8000-00805f9b34fb}_LOCALMFG&0002'
+                r'\7&33c6b4b6&0&8C94DF50204E_C00000000')
+    incoming = (r'BTHENUM\{00001101-0000-1000-8000-00805f9b34fb}_LOCALMFG&0000'
+                r'\7&33c6b4b6&0&000000000000_0000000A')
+    ports.append(('COM8', 'Standard Serial over Bluetooth link', outgoing))
+    window._refresh_ports()
+    assert window.controller_port.currentData() == 'COM8'
+
+    ports[-1:] = [('COM7', 'Standard Serial over Bluetooth link', outgoing),
+                  ('COM8', 'Standard Serial over Bluetooth link', incoming)]
+    window._refresh_ports()
+    assert window.controller_port.currentData() == 'COM7'
+    window.connect_lab_defaults()
+    assert calls == ['COM7']
+
+
+@pytest.mark.parametrize('peer', ['000000000000', 'AABBCCDDEEFF'])
+def test_startup_does_not_open_unmatched_bluetooth_com8(ports_screen, monkeypatch, peer):
+    window, controller, ports, _ = ports_screen
+    calls = []
+    monkeypatch.setattr(controller, 'connect_controller', calls.append)
+    controller.set_simulation(False)
+    ports.append(('COM8', 'Standard Serial over Bluetooth link',
+                  r'BTHENUM\{00001101-0000-1000-8000-00805F9B34FB}_LOCALMFG&0002'
+                  rf'\7&33c6b4b6&0&{peer}_C00000000'))
+    window._refresh_ports()
+    assert window.controller_port.currentData() is None
+    window.connect_lab_defaults()
+    assert calls == []
+    assert 'COM8' in items(window.controller_port)

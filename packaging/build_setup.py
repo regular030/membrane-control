@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def payload_sources(root: Path, executable: Path, firmware_archive: Path | None = None) -> dict[str, Path]:
     sources = {"app/MembraneControl.exe": executable}
     for relative in (
-        "packaging/setup_windows.ps1", "packaging/flash_dry_run.ps1",
+        "packaging/setup_windows.ps1", "packaging/flash_dry_run.ps1", "packaging/pair_bluetooth.ps1",
         "packaging/prepare_valve_test.ps1", "packaging/prepare_valve_test.py",
         "packaging/install_cp210x.ps1", "packaging/driver-config.json",
         "packaging/python-runtime.json", "docs/setup-new-pc.md",

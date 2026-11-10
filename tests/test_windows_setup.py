@@ -313,7 +313,7 @@ def test_any_upload_can_be_cancelled_without_executing_the_fake_tool(payload, se
         assert "Dry-run firmware uses generated" not in result.stdout
         if selected == "esp32-bluetooth-physical":
             assert "CAN OPERATE REAL EQUIPMENT" in result.stdout
-            assert "First use Flash ESP32 Bluetooth test" in result.stdout
+            assert "For a new pairing, use Pair Bluetooth controller after the upload" in result.stdout
             assert "same installed BoardProfile.h" in result.stdout
             assert "Do not erase the ESP32 flash" in result.stdout
 
@@ -345,7 +345,7 @@ def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(p
     shortcuts = {item["Name"]: item for item in json.loads(result.stdout)}
     assert set(shortcuts) == {"Membrane Control", "Flash ESP32 dry run", "Flash ESP32 Bluetooth test", "Flash relay board test",
         "Flash valve test (setup required)", "Flash full controller (setup required)", "Flash normal controller",
-        "Flash normal controller (Bluetooth)", "USB driver help"}
+        "Flash normal controller (Bluetooth)", "Pair Bluetooth controller", "USB driver help"}
     assert shortcuts["Membrane Control"]["Target"] == str(destination / "MembraneControl.exe")
     assert shortcuts["Membrane Control"]["Arguments"] == ""
     for name, target in [("Flash ESP32 dry run", "esp32-dry-run"), ("Flash relay board test", "esp32-relay-bench"),
@@ -359,6 +359,8 @@ def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(p
         assert f'-InstallRoot "{destination}"' in spec["Arguments"]
         assert spec["Arguments"].endswith("-Firmware " + target)
     assert shortcuts['Flash normal controller']['Arguments'].endswith('-Firmware esp32-physical')
+    assert shortcuts["Pair Bluetooth controller"]["Arguments"].endswith(
+        f'-File "{destination / "packaging/pair_bluetooth.ps1"}"')
     assert "-Firmware" not in shortcuts["USB driver help"]["Arguments"]
     assert f'-Root "{destination}"' in shortcuts["USB driver help"]["Arguments"]
     assert not destination.exists()  # Metadata inspection creates no actual shortcuts.

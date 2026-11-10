@@ -22,6 +22,8 @@ static_assert(BASU_DRY_RUN == 1, "Bluetooth is only available for simulated oper
 #error Physical and simulated Bluetooth transports are mutually exclusive
 #endif
 static_assert(BASU_DRY_RUN == 0, "Protected Bluetooth requires physical mode");
+#include <cstring>
+#include <esp_attr.h>
 #include "ProtectedSpp.h"
 #endif
 
@@ -94,6 +96,12 @@ void reportBenchBondCount() {
 #ifdef BASU_BLUETOOTH_PHYSICAL
 basu::BluetoothLinkToken physicalBluetoothToken;
 basu::BluetoothCommandLease physicalBluetoothLease;
+constexpr uint32_t kPairingBootMarker = 0x42545052;
+constexpr uint32_t kPairingTimeoutMs = 120000;
+RTC_NOINIT_ATTR uint32_t pairingBootMarker;
+RTC_NOINIT_ATTR uint32_t pairingBootCheck;
+bool pairingOnlyBoot = false;
+uint32_t pairingStartedMs = 0;
 
 bool physicalBluetoothCurrent() {
   return physicalBluetoothToken.handle && physicalBluetoothToken == basu::protectedSpp::current();
@@ -113,6 +121,83 @@ void syncBluetoothSession() {
   lineLength = 0;
   discardingOversize = false;
   stopBluetoothSession();
+}
+
+void restartAfterPairingMessage(const char* message) {
+  Serial.println(message);
+  Serial.flush();
+  ESP.restart();
+}
+
+void handleUsbPairingLine(const char* command, std::size_t length) {
+  if (length == 4 && std::memcmp(command, "PAIR", 4) == 0 && !pairingOnlyBoot) {
+    if (controller.state() != basu::State::Idle && controller.state() != basu::State::Fault) {
+      Serial.println("Bluetooth: stop the controller before USB pairing");
+      return;
+    }
+    hardware.safeStop();
+    if (!basu::protectedSpp::requestPairing()) {
+      Serial.println("Bluetooth: could not store the USB pairing request");
+      return;
+    }
+    pairingBootMarker = kPairingBootMarker;
+    pairingBootCheck = ~kPairingBootMarker;
+    restartAfterPairingMessage("Bluetooth: pairing command accepted; restarting in pairing mode");
+  }
+  if (!pairingOnlyBoot || length != 14 || std::memcmp(command, "CONFIRM ", 8) != 0) return;
+  uint32_t code = 0;
+  for (std::size_t index = 8; index < length; ++index) {
+    if (command[index] < '0' || command[index] > '9') return;
+    code = code * 10 + (command[index] - '0');
+  }
+  Serial.println(basu::protectedSpp::confirmPairing(code)
+      ? "Bluetooth: pairing confirmation accepted" : "Bluetooth: pairing confirmation rejected");
+}
+
+void readUsbPairingCommands() {
+  // Only a complete, bounded line from the wired console can enroll a PC.
+  // Discard oversized lines through the newline, including any command suffix.
+  static char command[16];
+  static std::size_t length = 0;
+  static bool discarding = false;
+  for (unsigned count = 0; count < 64 && Serial.available(); ++count) {
+    const char byte = static_cast<char>(Serial.read());
+    if (byte == '\n') {
+      if (!discarding) {
+        if (length && command[length - 1] == '\r') --length;
+        handleUsbPairingLine(command, length);
+      }
+      length = 0;
+      discarding = false;
+    } else if (!discarding) {
+      if (length < sizeof(command)) command[length++] = byte;
+      else discarding = true;
+    }
+  }
+}
+
+void serviceUsbPairing() {
+  if (static_cast<uint32_t>(millis() - pairingStartedMs) >= kPairingTimeoutMs)
+    restartAfterPairingMessage("Bluetooth: pairing timed out; physical control locked");
+  uint32_t code;
+  if (basu::protectedSpp::takePairingCode(code))
+    Serial.printf("Bluetooth pairing code: %06lu\n", static_cast<unsigned long>(code));
+  using basu::protectedSpp::PairingStatus;
+  switch (basu::protectedSpp::pairingStatus()) {
+    case PairingStatus::Waiting:
+      break;
+    case PairingStatus::Ready:
+      if (basu::protectedSpp::savePairing()) {
+        // Leave Windows time to finish service discovery before restarting.
+        delay(2000);
+        restartAfterPairingMessage("Bluetooth: pairing saved; restarting normal mode");
+      }
+      restartAfterPairingMessage("Bluetooth: pairing failed; physical control locked");
+      break;
+    case PairingStatus::Failed:
+      restartAfterPairingMessage("Bluetooth: pairing failed; physical control locked");
+      break;
+  }
 }
 #endif
 
@@ -400,9 +485,19 @@ void writeTelemetry(uint32_t now) {
 
 void setup() {
   Serial.begin(115200);
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  pairingOnlyBoot = esp_reset_reason() == ESP_RST_SW &&
+      pairingBootMarker == kPairingBootMarker && pairingBootCheck == ~kPairingBootMarker;
+  pairingBootMarker = pairingBootCheck = 0;
+#endif
   const bool initialized = hardware.begin();
   controller.setHardwareReady(initialized && !kSimulation);
-  hardware.beginManualValves(basu::confirmedRigManualValves());
+#ifdef BASU_BLUETOOTH_PHYSICAL
+  // A working full profile has already applied its configured safe outputs.
+  // The manual relay fallback is only needed during pairing on a factory rig.
+  if (!pairingOnlyBoot || !initialized)
+#endif
+    hardware.beginManualValves(basu::confirmedRigManualValves());
   controller.setValveControlReady(hardware.valveControlReady());
   // Pump/sensor setup remains separate from the confirmed six-valve capability.
   if (!initialized && board.verifiedBoardConfig) controller.latchFault(hardware.error());
@@ -424,13 +519,25 @@ void setup() {
   else reportBenchBondCount();
 #endif
 #ifdef BASU_BLUETOOTH_PHYSICAL
-  if (const char* error = basu::protectedSpp::begin()) Serial.println(error);
+  if (pairingOnlyBoot) hardware.safeStop();
+  if (const char* error = basu::protectedSpp::begin(pairingOnlyBoot)) {
+    Serial.println(error);
+    if (pairingOnlyBoot) restartAfterPairingMessage("Bluetooth: pairing failed; physical control locked");
+  }
+  pairingStartedMs = millis();
 #endif
 }
 
 void loop() {
 #ifdef BASU_BLUETOOTH_PHYSICAL
+  if (pairingOnlyBoot) {
+    serviceUsbPairing();
+    readUsbPairingCommands();
+    delay(10);
+    return;
+  }
   syncBluetoothSession();
+  readUsbPairingCommands();
 #endif
   uint32_t now = millis();
   updateMeasurements(now);
