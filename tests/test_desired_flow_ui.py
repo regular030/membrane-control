@@ -185,6 +185,53 @@ def test_manual_pump_shows_readiness_blocker(screen):
     assert not window.manual_apply.isEnabled()
 
 
+def test_pump_feedback_distinguishes_command_drive_voltage_and_rotation(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, simulation=False,
+                    hardware_verified=True, state="manual", pump_percent=25,
+                    pump_feedback_v=2.42, pump_run_contact_commanded=True, pump_rpm=147.5)
+    window._update_view(snapshot)
+    assert window.manual_pump_sent.text() == "Commanded 25.0%"
+    assert "Run contact commanded closed" in window.manual_pump_feedback.text()
+    assert "Drive command feedback 2.42 V" in window.manual_pump_feedback.text()
+    assert "147.5 RPM · rotation detected" in window.manual_pump_feedback.text()
+
+    window._update_view(dict(snapshot, stop_pending=True))
+    assert "Waiting for the controller to confirm Stop" in window.manual_pump_status.text()
+    assert "147.5 RPM · rotation detected" in window.manual_pump_feedback.text()
+
+    snapshot.update(state="idle", pump_percent=0, pump_run_contact_commanded=False, pump_rpm=0, pump_feedback_v=None)
+    window._update_view(snapshot)
+    assert window.manual_pump_sent.text() == "Commanded 0.0%"
+    assert "Run contact commanded open" in window.manual_pump_feedback.text()
+    assert "Drive command feedback unavailable" in window.manual_pump_feedback.text()
+    assert "No tach pulses detected" in window.manual_pump_feedback.text()
+
+
+def test_pump_feedback_handles_legacy_simulated_and_stale_data(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, simulation=False, hardware_verified=True, pump_feedback_v=2.42)
+    window._update_view(snapshot)
+    assert "Run contact command unavailable" in window.manual_pump_feedback.text()
+    assert "Motor tachometer unavailable" in window.manual_pump_feedback.text()
+    assert "Drive command feedback 2.42 V" in window.manual_pump_feedback.text()
+
+    window._update_view(dict(snapshot, pump_tach_status="waiting"))
+    assert "Waiting for a tachometer sample" in window.manual_pump_feedback.text()
+
+    window._update_view(dict(snapshot, simulation=True, pump_rpm=147.5, pump_run_contact_commanded=True))
+    assert window.manual_pump_feedback.text() == "Simulated pump command and feedback."
+
+    now[0] += 3
+    window._update_view(snapshot)
+    assert window.manual_pump_sent.text() == "Command unavailable"
+    assert window.manual_pump_feedback.text() == "Waiting for fresh pump feedback."
+
+
 def test_chart_displays_applied_target_as_distinct_dashed_comparison(screen):
     window, controller, _ = screen
     controller.set_simulation(False)

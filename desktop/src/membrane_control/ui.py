@@ -463,10 +463,17 @@ class MainWindow(QMainWindow):
         self.manual_stop = _button("Stop pump", self._stop_run, "stopButton")
         self.manual_stop.setToolTip("Stop the pump and return the valves to their configured safe states.")
         pump_row.addWidget(self.manual_stop)
-        self.manual_pump_sent = _label("Sent: 0.0 %", "muted")
+        self.manual_pump_sent = _label("Command unavailable", "muted")
         pump_row.addWidget(self.manual_pump_sent)
         pump_row.addStretch()
         manual_layout.addLayout(pump_row)
+        self.manual_pump_feedback = _label("", "muted", True)
+        self.manual_pump_feedback.setAccessibleName("Pump feedback readings")
+        self.manual_pump_feedback.setToolTip(
+            "The run contact shows the controller's command. Drive feedback measures the pump's "
+            "running-command output in volts. A connected tachometer measures rotation. "
+            "A disconnected tachometer can also give no pulses.")
+        manual_layout.addWidget(self.manual_pump_feedback)
         target_row = QHBoxLayout()
         target_row.addWidget(_label("Desired flow (mL/min)"))
         self.desired_flow_spin = QDoubleSpinBox()
@@ -1075,6 +1082,37 @@ class MainWindow(QMainWindow):
     def _update_pump_start_enabled(self):
         self.manual_apply.setEnabled(self.manual_pump.isEnabled() and self.manual_pump.value() > 0)
 
+    def _update_pump_feedback(self, snapshot, *, fresh, simulation):
+        if not fresh:
+            self.manual_pump_sent.setText("Command unavailable")
+            self.manual_pump_feedback.setText("Waiting for fresh pump feedback.")
+            return
+        speed = _number(snapshot.get("pump_percent"), 1)
+        self.manual_pump_sent.setText(f"Commanded {speed}%")
+        if simulation:
+            self.manual_pump_feedback.setText("Simulated pump command and feedback.")
+            return
+
+        contact = snapshot.get("pump_run_contact_commanded")
+        if contact is None:
+            contact_text = "Run contact command unavailable"
+        else:
+            contact_text = f"Run contact commanded {'closed' if contact else 'open'}"
+        feedback = snapshot.get("pump_feedback_v") if snapshot.get("hardware_verified") else None
+        drive_text = ("Drive command feedback unavailable" if feedback is None
+                      else f"Drive command feedback {_number(feedback)} V")
+        rpm = snapshot.get("pump_rpm")
+        if snapshot.get("pump_tach_status") == "waiting":
+            tach_text = "Waiting for a tachometer sample"
+        elif rpm is None:
+            tach_text = "Motor tachometer unavailable"
+        elif rpm == 0:
+            tach_text = "No tach pulses detected"
+        else:
+            rpm_text = "under 0.1" if rpm < 0.05 else _number(rpm, 1)
+            tach_text = f"Motor tachometer {rpm_text} RPM · rotation detected"
+        self.manual_pump_feedback.setText(f"{contact_text} · {drive_text}\n{tach_text}")
+
     def _manual_command(self, *_):
         pump_percent = self.manual_pump.value()
         if self._updating or not self.manual_apply.isEnabled() or pump_percent <= 0:
@@ -1682,7 +1720,7 @@ class MainWindow(QMainWindow):
             manual_request = self.controller.manual_requested
             pump_start_pending = bool(snap.get("manual_pending") and manual_request and manual_request[1] > 0)
             self.manual_stop.setEnabled((pump_state == "manual" or pump_start_pending) and not snap.get("stop_pending"))
-            self.manual_pump_sent.setText("Sent: " + _number(snap.get("pump_percent", 0), 1) + " %")
+            self._update_pump_feedback(snap, fresh=connected and fresh, simulation=simulation)
             if (state.upper() in {"RUNNING", "PAUSED", "STOPPING", "FAULT"} or snap.get("start_pending")
                     or snap.get("stop_pending") or (self._previous_state != state and state.upper() == "IDLE")):
                 self.manual_pump.setValue(float(pump_percent))

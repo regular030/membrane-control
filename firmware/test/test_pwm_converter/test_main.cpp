@@ -6,7 +6,7 @@
 
 using namespace basu;
 
-void setUp() { fake::resetGpio(); fake::resetLedc(); Wire.reset(); }
+void setUp() { fake::resetGpio(); fake::resetLedc(); fake::resetPcnt(); Wire.reset(); }
 void tearDown() {}
 
 BoardConfig pwmFixture() {
@@ -400,15 +400,19 @@ void test_onboard_startup_latches_stopped_before_enabling_outputs() {
 void test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run() {
   Hardware hardware(onboardContactFixture(), false);
   TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.pumpContactCommandAvailable());
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   fake::gpioEvents.clear();
   Outputs first = pump(50);
   first.valves[0] = true;
   TEST_ASSERT_TRUE(hardware.apply(first, 1000));
   TEST_ASSERT_TRUE(hardware.apply(first, 1099, true));
   TEST_ASSERT_TRUE(hardware.apply(first, 1100, false));
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   TEST_ASSERT_EQUAL(1, latchedWords().size());
   TEST_ASSERT_EQUAL_HEX16(0x0001, latchedWords()[0].word);
   TEST_ASSERT_TRUE(hardware.apply(first, 1100, true));
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
   TEST_ASSERT_EQUAL(2, latchedWords().size());
   TEST_ASSERT_EQUAL_HEX16(0x8001, latchedWords()[1].word);
 
@@ -417,6 +421,7 @@ void test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run() 
   Outputs next = pump(25);
   next.valves[1] = true;
   TEST_ASSERT_TRUE(hardware.apply(next, 1101, true));
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   const auto change = latchedWords();
   TEST_ASSERT_EQUAL(2, change.size());
   TEST_ASSERT_EQUAL_HEX16(0x0001, change[0].word);  // STOP preserves existing valves.
@@ -424,11 +429,13 @@ void test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run() 
   TEST_ASSERT_TRUE(change[0].sequence < change[1].sequence);
   TEST_ASSERT_TRUE(change[1].sequence < fake::ledcEvents.front().sequence);
   TEST_ASSERT_TRUE(hardware.apply(next, 1201, true));
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
   TEST_ASSERT_EQUAL_HEX16(0x8002, latchedWords().back().word);
 
   fake::gpioEvents.clear();
   fake::ledcEvents.clear();
   hardware.safeStop();
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   const auto stop = latchedWords();
   TEST_ASSERT_EQUAL(2, stop.size());
   TEST_ASSERT_EQUAL_HEX16(0x0002, stop[0].word);
@@ -534,6 +541,86 @@ void test_absent_v6_frees_bit4_and_rejects_commands_to_the_absent_valve() {
   TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
 }
 
+void test_tach_is_optional_and_requires_a_free_pin_and_positive_pulses_per_revolution() {
+  auto config = pwmFixture();
+  Hardware withoutTach(config, false);
+  TEST_ASSERT_TRUE(withoutTach.begin());
+  TEST_ASSERT_NULL(withoutTach.pumpTachStatus(0));
+  TEST_ASSERT_EQUAL(-1, fake::pcntPin);
+  for (int pin : {-2, 0, 1, 2, 3, 4, 5, 6, 12, 13, 14, 15, 25, 26, 34, 39, 40}) {
+    config.pumpTachPin = pin;
+    TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  }
+  config.pumpTachPin = 27;
+  TEST_ASSERT_NULL(validateBoardConfig(config));
+  config.pumpTachPulsesPerRevolution = 0;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+}
+
+void test_tach_counts_across_counter_and_clock_wraps_and_reports_zero_pulses() {
+  auto config = pwmFixture();
+  config.pumpTachPin = 27;
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_EQUAL(27, fake::pcntPin);
+  const uint32_t start = UINT32_MAX - 250U;
+  fake::pcntCount = 32760;
+  hardware.sample(start);
+  double rpm = 0;
+  TEST_ASSERT_FALSE(hardware.readPumpRpm(start, rpm));
+  TEST_ASSERT_EQUAL_STRING("waiting", hardware.pumpTachStatus(start));
+
+  fake::pcntCount = 243;  // 250 pulses across the high-limit reset.
+  hardware.sample(start + 499U);
+  TEST_ASSERT_FALSE(hardware.readPumpRpm(start + 499U, rpm));
+  hardware.sample(start + 500U);
+  TEST_ASSERT_TRUE(hardware.readPumpRpm(start + 500U, rpm));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 300, rpm);
+  TEST_ASSERT_EQUAL_STRING("reading_received", hardware.pumpTachStatus(start + 500U));
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());  // RPM does not depend on the relay command.
+
+  hardware.sample(start + 1000U);
+  TEST_ASSERT_TRUE(hardware.readPumpRpm(start + 1000U, rpm));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 0, rpm);
+  TEST_ASSERT_EQUAL_STRING("no_pulses", hardware.pumpTachStatus(start + 1000U));
+}
+
+void test_tach_errors_and_missed_windows_omit_rpm_without_blocking_control() {
+  auto config = pwmFixture();
+  config.pumpTachPin = 27;
+  fake::pcntConfigFails = true;
+  Hardware unavailable(config, false);
+  TEST_ASSERT_TRUE(unavailable.begin());
+  TEST_ASSERT_EQUAL_STRING("unavailable", unavailable.pumpTachStatus(0));
+  TEST_ASSERT_TRUE(unavailable.ready());
+
+  fake::pcntConfigFails = false;
+  config.pumpTachPulsesPerRevolution = 50;
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  hardware.sample(0);
+  fake::pcntCount = 250;
+  hardware.sample(500);
+  double rpm = 0;
+  TEST_ASSERT_TRUE(hardware.readPumpRpm(500, rpm));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 600, rpm);
+
+  TEST_ASSERT_FALSE(hardware.readPumpRpm(1501, rpm));
+  hardware.sample(1501);
+  TEST_ASSERT_EQUAL_STRING("unavailable", hardware.pumpTachStatus(1501));
+  fake::pcntReadFails = true;
+  hardware.sample(2001);
+  TEST_ASSERT_FALSE(hardware.readPumpRpm(2001, rpm));
+  TEST_ASSERT_TRUE(hardware.ready());
+  fake::pcntReadFails = false;
+  hardware.sample(2501);
+  TEST_ASSERT_EQUAL_STRING("waiting", hardware.pumpTachStatus(2501));
+  fake::pcntCount += 250;
+  hardware.sample(3001);
+  TEST_ASSERT_TRUE(hardware.readPumpRpm(3001, rpm));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 600, rpm);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_default_and_unreviewed_pwm_never_touch_any_gpio_i2c_or_ledc);
@@ -561,5 +648,8 @@ int main() {
   RUN_TEST(test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile);
   RUN_TEST(test_manual_fallback_rejects_pump_overlap_or_active_low_relay);
   RUN_TEST(test_absent_v6_frees_bit4_and_rejects_commands_to_the_absent_valve);
+  RUN_TEST(test_tach_is_optional_and_requires_a_free_pin_and_positive_pulses_per_revolution);
+  RUN_TEST(test_tach_counts_across_counter_and_clock_wraps_and_reports_zero_pulses);
+  RUN_TEST(test_tach_errors_and_missed_windows_omit_rpm_without_blocking_control);
   return UNITY_END();
 }

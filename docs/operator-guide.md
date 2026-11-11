@@ -117,6 +117,12 @@ the controller's stop command, which sets the pump to zero and restores the
 configured safe valve positions. Stop the current manual mode before starting
 a sequence or switching between valve-only and pump operation.
 
+Pump settings reports the last commanded percentage, the controller's RUN
+contact command and the drive's returned command voltage separately. A
+commissioned tach input supplies measured RPM. After Stop, a working tach
+should report no pulses as the motor comes to rest. See the
+[pump feedback wiring](../hardware/pump-interface.md#measure-motor-rotation).
+
 ## Use a commissioned rig
 
 The person setting up the hardware must first verify the wiring, firmware,
