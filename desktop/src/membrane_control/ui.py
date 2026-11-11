@@ -792,6 +792,7 @@ class MainWindow(QMainWindow):
         self.zoom_label.setToolTip("Ctrl + -: zoom out  |  Ctrl + + or =: zoom in  |  Ctrl + 0: reset\n60% to 150% in 10% steps. Display size only; experiment settings do not change.")
         self.statusBar().addPermanentWidget(self.zoom_label)
         self._zoom = NativeZoom(self, self._plots.values())
+        self._fit_dashboard_control_heights()
         self.zoom_shortcuts = []
         for keys, change in ((["Ctrl+-"], -10), (["Ctrl++", "Ctrl+=", "Ctrl+Shift++", "Ctrl+Shift+="], 10), (["Ctrl+0"], 0)):
             shortcut = QShortcut(self)
@@ -808,9 +809,17 @@ class MainWindow(QMainWindow):
         if self._zoom is None:
             return
         self._zoom.set_percent(percent)
+        self._fit_dashboard_control_heights()
         self.flow_legend.setLabelTextSize(f"{8 * self._zoom.factor:g}pt")
         self.zoom_label.setText(f"Zoom {self.zoom_percent}%")
         self.statusBar().showMessage(f"Interface zoom: {self.zoom_percent}%. Ctrl + 0 resets to 100%. Experiment settings are unchanged.", 5000)
+
+    def _fit_dashboard_control_heights(self):
+        # The compact dashboard can squeeze controls inside the splitter below
+        # their native size hints. Recheck after fonts and styles are scaled.
+        for control in (*self.valve_buttons, self.manual_pump, self.manual_apply,
+                        self.desired_flow_spin, self.apply_target_button):
+            control.setMinimumHeight(control.sizeHint().height())
 
     def _set_zoom_style(self, widget, source):
         if self._zoom is None:

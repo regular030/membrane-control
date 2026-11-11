@@ -164,13 +164,16 @@ def test_compact_dashboard_preserves_full_target_and_valve_control_height(screen
     window.resize(1080, 760)
     window.show()
     qt_app.processEvents()
+    scroll = window.dashboard_scroll
+    controls = (*window.valve_buttons, window.manual_pump, window.manual_apply,
+                window.desired_flow_spin, window.apply_target_button)
     for percent in (100, 60, 150, 100):
         window.set_zoom_percent(percent)
         qt_app.processEvents()
-    scroll = window.dashboard_scroll
-    scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
-    qt_app.processEvents()
+        scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+        qt_app.processEvents()
+        for control in controls:
+            assert control.height() >= control.sizeHint().height(), (
+                f"{control.accessibleName() or control.text()} at {percent}% zoom"
+            )
     assert scroll.verticalScrollBar().maximum() > 0
-    for control in [*window.valve_buttons, window.manual_pump, window.manual_apply,
-                    window.desired_flow_spin, window.apply_target_button]:
-        assert control.height() >= control.sizeHint().height()
