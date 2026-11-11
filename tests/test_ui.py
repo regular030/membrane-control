@@ -65,9 +65,12 @@ def test_manual_outputs_keep_stop_available_and_lock_mode(screen):
     window._update_view(dict(controller.snapshot))
     assert controller.snapshot["state"] == "manual"
     assert window.stop_button.isEnabled()
+    assert window.manual_stop.isEnabled()
     assert not window.start_button.isEnabled()
     assert not window.steps_table.isEnabled()
     assert window.valve_buttons[0].isEnabled()
+    assert window.manual_pump.isEnabled()
+    window.manual_pump.setValue(25)
     assert window.manual_apply.isEnabled()
 
 
