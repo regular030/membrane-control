@@ -109,10 +109,13 @@ commands immediately. This valve-only mode needs no sensors or profile form,
 keeps pump command zero, and leaves unused bits 4 and 7-15 off. **Stop valves**
 turns all six off. These are coil commands, not measured valve positions.
 
-Separately configured pump controls use **New pump setting** and **Apply pump**;
-typing a value alone does not send it. The **Sent** value shows the last command.
-Stop the current manual mode before starting a sequence or switching between
-valve-only and pump operation.
+With a commissioned controller, a current pressure reading and the approved
+sequence applied, enter a positive percentage in **New pump setting** and
+click **Start pump**. Use **Apply speed** to change that setting during manual
+pump operation. **Sent** shows the commanded percentage. **Stop pump** sends
+the controller's stop command, which sets the pump to zero and restores the
+configured safe valve positions. Stop the current manual mode before starting
+a sequence or switching between valve-only and pump operation.
 
 ## Use a commissioned rig
 

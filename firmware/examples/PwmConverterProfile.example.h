@@ -41,8 +41,8 @@ inline BoardConfig compiledBoardConfig() {
   config.flow.source = AnalogSource::NativeAdc1;
   config.flow.pin = 36;  // SVP, through its own conditioned analog input.
   config.flow.calibrationVerified = false;
-  // Certificate: 20 mL/min at 1.01 V, 50 at 2.48 V, 100 at 5.00 V.
-  // Nominal scale anchored at the 100 mL/min full-scale point.
+  // Certificate: 20 mL/min at 1.00 V, 50 at 2.50 V, 100 at 5.00 V.
+  // The 5:1 divider puts these points at 0.20, 0.50 and 1.00 V on GPIO36.
   config.flow.unitsPerVolt = 100.0;
   config.flow.minPinVolts = 0.150;  // 13 mL/min is below the production ADC range.
   config.flow.maxPinVolts = 1.000;
