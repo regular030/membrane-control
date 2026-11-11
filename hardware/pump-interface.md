@@ -118,10 +118,12 @@ The drive must be in Voltage Input and Continuous Pump Mode with START/STOP
 required ON and Auto Start OFF. This test does not use the rig's pressure
 input or recipe. Restore the normal Bluetooth image before using the rig.
 
-Stage 50% and verify a steady 5 V at DB25 1/3 with RUN open. Confirm the
-reading in the app and select **Run pump at 50%**. Only the dedicated RUN
-relay is commanded closed, for up to 10 seconds. Observe the pump display
-and measure 14/5. Stop, expiry, or loss of USB opens RUN before commanding
+Verify a steady 5 V at DB25 1/3 at the 50% command with RUN open using the
+voltage test. Confirm the verified voltage in the app's setup checklist
+and select **Run pump at 50%**. The app stages the voltage and waits for it
+to settle before requesting RUN. Only the dedicated RUN relay is commanded
+closed, for up to 10 seconds. Observe the pump display and measure 14/5.
+Stop, expiry, or loss of USB opens RUN before commanding
 zero. This bench build reads the pump feedback divider on IO34 / GPIO34,
 as wired for the current test. SVN / GPIO39 is used for flow on this setup.
 The app's DB25 voltage estimate assumes a 5:1 divider.

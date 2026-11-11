@@ -145,41 +145,40 @@ def test_reconnect_requires_new_feedback_and_confirmation(screen):
     assert not window.test.isEnabled()
 
 
-def test_open_bucket_requires_all_checks_new_stage_and_explicit_run(bucket_screen):
+def test_open_bucket_requires_all_checks_and_runs_once_after_staging(bucket_screen):
     window, port, now = bucket_screen
     for box in window._confirmations[:-1]:
         box.setChecked(True)
     reply(window, port, b"PUMP_BENCH 0 0 460 0 0\n")
     assert not window.test.isEnabled()
-    assert not window.run.isEnabled()
-    assert not window.voltage_confirmed.isEnabled()
     assert port.writes == [b"PING\n"]
 
     stage_bucket(window, port, now)
     assert port.writes.count(b"TEST50\n") == 1
-    assert not window.voltage_confirmed.isEnabled()
+    assert not window.test.isEnabled()
+    assert "Preparing 50%" in window.outcome.text()
     assert "GPIO34 / IO34 460 mV" in window.feedback.text()
     assert "2.30 V" in window.feedback.text()
+    now[0] = 1.0
+    reply(window, port, b"PUMP_BENCH 50 29000 460 0 0\n")
+    assert b"RUN50\n" not in port.writes
     now[0] = 1.65
     reply(window, port, b"PUMP_BENCH 50 28350 460 0 0\n")
-    assert window.voltage_confirmed.isEnabled()
-    assert not window.run.isEnabled()
-    window.voltage_confirmed.click()
-    assert window.run.isEnabled()
-    assert b"RUN50\n" not in port.writes
-    window.run.click()
-    window.run.click()
+    assert port.writes[-2:] == [b"PING\n", b"RUN50\n"]
+    window.test.click()
     assert port.writes.count(b"RUN50\n") == 1
     reply(window, port, b"PUMP_BENCH 50 28000 460 1 9900\n")
     assert "closed" in window.motor.text()
     assert "9.9 seconds" in window.motor.text()
+    assert "RUN acknowledged" in window.outcome.text()
     assert window.stop.isEnabled()
 
     reply(window, port, b"PUMP_BENCH 0 0 460 0 0\n")
     assert "open" in window.motor.text()
     assert window.test.isEnabled()
-    assert not window.voltage_confirmed.isChecked()
-    assert not window.run.isEnabled()
+    assert "Run ended" in window.outcome.text()
+    assert "RUN acknowledged" in window.outcome.text()
+    assert port.writes.count(b"RUN50\n") == 1
 
 
 def test_open_bucket_ignores_voltage_only_status_and_rejects_late_run(bucket_screen):
@@ -189,12 +188,12 @@ def test_open_bucket_ignores_voltage_only_status_and_rejects_late_run(bucket_scr
     reply(window, port, b"PUMP_TEST 0 0 460\n")
     assert not window.test.isEnabled()
     stage_bucket(window, port, now)
-    now[0] = 21.0
+    now[0] = 1.0
     reply(window, port, b"PUMP_BENCH 50 9000 460 0 0\n")
-    assert not window.voltage_confirmed.isEnabled()
-    window.voltage_confirmed.setChecked(True)
-    window._run_test()
     assert b"RUN50\n" not in port.writes
+    assert port.writes[-1] == b"STOP\n"
+    reply(window, port, b"PUMP_BENCH 0 0 460 0 0\n")
+    assert "Preparation timed out" in window.outcome.text()
 
 
 def test_open_bucket_rejects_unrequested_run_and_clears_confirmations_on_reconnect(bucket_screen):
@@ -211,19 +210,34 @@ def test_open_bucket_rejects_unrequested_run_and_clears_confirmations_on_reconne
     window.reconnect.click()
     window.timer.stop()
     assert not any(box.isChecked() for box in window._confirmations)
-    assert not window.voltage_confirmed.isChecked()
-    assert not window.run.isEnabled()
+    assert not window.test.isEnabled()
+    assert "RUN was not acknowledged" in window.outcome.text()
 
 
-def test_open_bucket_withdrawn_check_stops_run(bucket_screen):
+@pytest.mark.parametrize("running", [False, True])
+def test_open_bucket_withdrawn_check_stops_preparation_or_run(bucket_screen, running):
+    window, port, now = bucket_screen
+    stage_bucket(window, port, now)
+    if running:
+        now[0] = 1.0
+        reply(window, port, b"PUMP_BENCH 50 29000 460 0 0\n")
+        now[0] = 1.65
+        reply(window, port, b"PUMP_BENCH 50 28350 460 0 0\n")
+        reply(window, port, b"PUMP_BENCH 50 28000 460 1 9900\n")
+    window._confirmations[0].setChecked(False)
+    assert port.writes[-1] == b"STOP\n"
+    reply(window, port, b"PUMP_BENCH 0 0 460 0 0\n")
+    assert not window.test.isEnabled()
+    assert "Setup confirmation withdrawn" in window.outcome.text()
+    assert port.writes.count(b"RUN50\n") == int(running)
+
+
+def test_open_bucket_stale_preparation_cannot_recover_automatically(bucket_screen):
     window, port, now = bucket_screen
     stage_bucket(window, port, now)
     now[0] = 1.65
     reply(window, port, b"PUMP_BENCH 50 28350 460 0 0\n")
-    window.voltage_confirmed.click()
-    window.run.click()
-    reply(window, port, b"PUMP_BENCH 50 28000 460 1 9900\n")
-    window._confirmations[0].setChecked(False)
+    assert port.closed
     assert port.writes[-1] == b"STOP\n"
-    assert not window.voltage_confirmed.isChecked()
-    assert not window.run.isEnabled()
+    assert b"RUN50\n" not in port.writes
+    assert "RUN was not acknowledged" in window.outcome.text()

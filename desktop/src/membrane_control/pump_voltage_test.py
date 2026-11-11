@@ -43,7 +43,11 @@ class PumpVoltageTestWindow(QWidget):
         self._pending_since = None
         self._stage_started = None
         self._stage_remaining_ms = 0
+        self._stage_ping_sent = False
+        self._stage_ping_received = False
         self._run_requested = False
+        self._run_acknowledged = False
+        self._stop_reason = None
         title = "Open-bucket pump test" if open_bucket else "Pump voltage test"
         self._waiting = f"Waiting for the {title.lower()} firmware. If you just flashed it, release BOOT and press EN once."
         self.setWindowTitle(f"Membrane Control — {title}")
@@ -53,12 +57,13 @@ class PumpVoltageTestWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(f"<b>{title} · {port_name}</b>"))
         if open_bucket:
-            layout.addWidget(QLabel("Confirm the physical setup before staging a voltage."))
+            layout.addWidget(QLabel("Confirm the setup before starting the test."))
             self._confirmations = [QCheckBox(text) for text in (
                 "The pump head is primed and the inlet is supplied with water.",
                 "The unrestricted discharge goes to an open bucket, isolated from rig valves.",
                 "Drive is in Voltage Input and Continuous Mode with START/STOP required ON and Auto Start OFF.",
                 "The RUN contact is open and the drive’s power switch is within reach.",
+                "The 50% command was verified at about 5 V across DB25 1/3.",
             )]
         else:
             instructions = QLabel(
@@ -85,8 +90,11 @@ class PumpVoltageTestWindow(QWidget):
         if open_bucket:
             self.motor = QLabel("RUN contact command unavailable")
             layout.addWidget(self.motor)
+            self.outcome = QLabel("No run requested.")
+            self.outcome.setWordWrap(True)
+            layout.addWidget(self.outcome)
             instructions = QLabel(
-                "Stage 50% with the motor stopped, then measure DB25 1/3. The run lasts up to 10 seconds. "
+                "The test stages 50%, waits for the converter to settle, and commands RUN for up to 10 seconds. "
                 "Watch the pump display and the returned voltage on DB25 14/5."
             )
         else:
@@ -97,18 +105,10 @@ class PumpVoltageTestWindow(QWidget):
             )
         instructions.setWordWrap(True)
         layout.addWidget(instructions)
-        if open_bucket:
-            self.voltage_confirmed = QCheckBox("I measured about 5 V across DB25 1/3 and it settled.")
-            self.voltage_confirmed.toggled.connect(self._update_buttons)
-            layout.addWidget(self.voltage_confirmed)
         buttons = QHBoxLayout()
-        self.test = QPushButton("Stage 50% for up to 30 seconds" if open_bucket else "Set 50% for up to 30 seconds")
+        self.test = QPushButton("Run pump at 50%" if open_bucket else "Set 50% for up to 30 seconds")
         self.test.clicked.connect(self._start_test)
         buttons.addWidget(self.test)
-        if open_bucket:
-            self.run = QPushButton("Run pump at 50%")
-            self.run.clicked.connect(self._run_test)
-            buttons.addWidget(self.run)
         self.stop = QPushButton("Stop pump and return to 0%" if open_bucket else "Return to 0%")
         self.stop.clicked.connect(self._stop_test)
         buttons.addWidget(self.stop)
@@ -128,6 +128,8 @@ class PumpVoltageTestWindow(QWidget):
         self._buffer = b""
         self._status = self._last_reply = self._pending = self._pending_since = None
         self._reset_stage()
+        self._run_acknowledged = False
+        self._stop_reason = None
         for box in self._confirmations:
             box.setChecked(False)
         self.connection.setText(self._waiting)
@@ -145,39 +147,43 @@ class PumpVoltageTestWindow(QWidget):
 
     def _send(self, command, pending):
         if self._port is None:
-            return
+            return False
+        self._pending = pending
+        self._pending_since = self._clock()
         try:
             self._write(command)
         except OSError as error:
             self._disconnect(f"USB command failed. {error}")
             return False
-        self._pending = pending
-        self._pending_since = self._clock()
         self._update_buttons()
         return True
 
     def _start_test(self):
         if self._can_start():
             self._reset_stage()
+            if self._open_bucket:
+                self._run_acknowledged = False
+                self._stop_reason = None
+                self.outcome.setText("Preparing 50% · waiting for firmware confirmation.")
             self._send(b"TEST50\n", STAGED)
 
-    def _run_test(self):
-        if self._stage_ready() and self.voltage_confirmed.isChecked():
-            self._run_requested = self._send(b"RUN50\n", RUNNING)
-
     def _stop_test(self):
+        self._cancel_test("Stopped by operator")
+
+    def _cancel_test(self, reason):
+        self._stop_reason = reason
         self._reset_stage()
         self._send(b"STOP\n", STOPPED)
 
     def _reset_stage(self):
         self._stage_started = None
+        self._stage_ping_sent = False
+        self._stage_ping_received = False
         self._run_requested = False
-        if self._open_bucket:
-            self.voltage_confirmed.setChecked(False)
 
     def _interlock_changed(self, checked):
         if not checked and self._test_active() and self._pending != STOPPED:
-            self._stop_test()
+            self._cancel_test("Setup confirmation withdrawn")
         self._update_buttons()
 
     def _test_active(self):
@@ -193,25 +199,28 @@ class PumpVoltageTestWindow(QWidget):
     def _can_start(self):
         return self._fresh() and self._status == STOPPED and self._pending is None and self._confirmed()
 
-    def _stage_ready(self):
-        if (not self._fresh() or not self._confirmed() or self._status != STAGED
-                or self._stage_started is None or self._pending is not None):
-            return False
+    def _advance_run(self):
+        if (self._status != STAGED or self._stage_started is None or self._run_requested
+                or self._pending is not None or not self._confirmed() or not self._fresh()):
+            return
         now = self._clock()
         remaining_ms = self._stage_remaining_ms - (now - self._last_reply) * 1000
-        return now - self._stage_started >= 1.5 and remaining_ms >= 10000
+        if remaining_ms < 10000:
+            self._cancel_test("Preparation timed out")
+        elif now - self._stage_started >= 1.5 and self._stage_ping_received:
+            self.outcome.setText("RUN requested · waiting for firmware acknowledgment.")
+            self._run_requested = self._send(b"RUN50\n", RUNNING)
 
     def _update_buttons(self):
         self.test.setEnabled(self._can_start())
         self.stop.setEnabled(self._port is not None and self._test_active())
         self.reconnect.setVisible(self._port is None)
-        if self._open_bucket:
-            stage_ready = self._stage_ready()
-            self.voltage_confirmed.setEnabled(stage_ready)
-            self.run.setEnabled(stage_ready and self.voltage_confirmed.isChecked())
 
     def _poll(self):
         if self._port is None:
+            return
+        if self._open_bucket and self._test_active() and not self._fresh():
+            self._disconnect("Pump-test status timed out. Reconnect USB to retry.")
             return
         try:
             self._buffer += self._port.read(4096)
@@ -230,6 +239,9 @@ class PumpVoltageTestWindow(QWidget):
                 self._disconnect("Pump-test status timed out. Reconnect USB to retry.")
                 return
             self._write(b"PING\n")
+            if self._open_bucket and self._stage_started is not None:
+                self._stage_ping_sent = True
+                self._advance_run()
             self._update_buttons()
         except OSError as error:
             self._disconnect(f"The USB connection failed. {error}")
@@ -247,6 +259,7 @@ class PumpVoltageTestWindow(QWidget):
                 or run_remaining_ms > min(10000, remaining_ms) or bool(running) != bool(run_remaining_ms)):
             return
         self._last_reply = self._clock()
+        previous = self._status
         self._status = (percent, bool(running))
         self._stage_remaining_ms = remaining_ms
         if self._pending == self._status:
@@ -254,13 +267,25 @@ class PumpVoltageTestWindow(QWidget):
             self._pending_since = None
             if self._open_bucket and self._status == STAGED:
                 self._stage_started = self._last_reply
+                self.outcome.setText("Preparing 50% · waiting for the converter to settle.")
+            if self._open_bucket and self._status == RUNNING and self._run_requested:
+                self._run_acknowledged = True
+                self.outcome.setText("RUN acknowledged · controller commanded the contact closed.")
+        if self._status == STAGED and self._stage_ping_sent:
+            self._stage_ping_received = True
         if self._status == STOPPED:
+            if self._open_bucket and previous in (STAGED, RUNNING):
+                if self._pending == RUNNING:
+                    self._pending = self._pending_since = None
+                reason = self._stop_reason or ("Run ended" if self._run_acknowledged else "Test ended")
+                result = "RUN acknowledged" if self._run_acknowledged else "RUN was not acknowledged"
+                self.outcome.setText(f"{reason} · {result} · controller commands the contact open.")
             self._reset_stage()
         unauthorized = not self._confirmed() or (self._open_bucket and (
             self._stage_started is None or (running and not self._run_requested)
         ))
         if percent == 50 and unauthorized and self._pending != STOPPED:
-            self._stop_test()
+            self._cancel_test("Unexpected pump-test status")
             if self._port is None:
                 return
         self.connection.setText("USB pump-test firmware connected.")
@@ -276,6 +301,9 @@ class PumpVoltageTestWindow(QWidget):
         self._update_buttons()
 
     def _disconnect(self, message):
+        if self._open_bucket and self._test_active():
+            result = "RUN was acknowledged before the connection ended" if self._run_acknowledged else "RUN was not acknowledged"
+            self.outcome.setText(f"Test interrupted · {result}.")
         self.shutdown()
         self.connection.setText(message)
         self.command.setText("Converter command unavailable")
