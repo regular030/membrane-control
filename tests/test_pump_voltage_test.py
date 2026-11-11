@@ -48,6 +48,7 @@ def test_requires_open_run_and_fresh_zero_then_displays_command_and_feedback(scr
     window._poll()
     assert port.writes == [b"PING\n"]
     assert not window.test.isEnabled()
+    assert not window.stop.isEnabled()
     port.reply = b"78\r\n"
     window._poll()
     assert not window.test.isEnabled()
@@ -96,3 +97,25 @@ def test_stale_reading_shuts_down_port(screen):
     assert not window.stop.isEnabled()
     assert port.writes[-1] == b"STOP\n"
     assert port.closed
+
+
+def test_reconnect_requires_new_feedback_and_confirmation(screen):
+    window, port, now = screen
+    window.interlock.setChecked(True)
+    port.reply = b"PUMP_TEST 0 0 78\n"
+    window._poll()
+    now[0] = 1.5
+    window._poll()
+
+    reopened = FakePort()
+    window._open_port = lambda _: reopened
+    window.reconnect.click()
+    window.timer.stop()
+    assert not window.interlock.isChecked()
+    assert not window.test.isEnabled()
+    assert not reopened.writes
+
+    reopened.reply = b"PUMP_TEST 0 0 78\n"
+    window._poll()
+    assert reopened.writes == [b"PING\n"]
+    assert not window.test.isEnabled()

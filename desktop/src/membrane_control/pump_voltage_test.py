@@ -8,12 +8,13 @@ from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QVBox
 
 STATUS = re.compile(rb"PUMP_TEST (0|50) ([0-9]{1,5}) ([0-9]{1,4})")
 REPLY_TIMEOUT_S = 1.25
+WAITING_TEXT = "Waiting for the pump-test firmware. If you just flashed it, release BOOT and press EN once."
 
 
 def _open_port(name):
     import serial
 
-    port = serial.Serial(baudrate=115200, timeout=0, write_timeout=0)
+    port = serial.Serial(baudrate=115200, timeout=0, write_timeout=0.2)
     port.port = name
     port.dtr = False
     port.rts = False
@@ -24,6 +25,8 @@ def _open_port(name):
 class PumpVoltageTestWindow(QWidget):
     def __init__(self, port_name, *, open_port=_open_port, clock=time.monotonic):
         super().__init__()
+        self._port_name = port_name
+        self._open_port = open_port
         self._clock = clock
         self._port = None
         self._buffer = b""
@@ -47,7 +50,7 @@ class PumpVoltageTestWindow(QWidget):
         self.interlock.toggled.connect(self._interlock_changed)
         layout.addWidget(self.interlock)
 
-        self.connection = QLabel("Waiting for the pump-test firmware. If you just flashed it, release BOOT and press EN once.")
+        self.connection = QLabel(WAITING_TEXT)
         self.connection.setWordWrap(True)
         self.command = QLabel("Converter command unavailable")
         self.feedback = QLabel("Drive feedback unavailable")
@@ -70,15 +73,27 @@ class PumpVoltageTestWindow(QWidget):
         self.stop.clicked.connect(self._stop_test)
         buttons.addWidget(self.test)
         buttons.addWidget(self.stop)
+        self.reconnect = QPushButton("Reconnect USB")
+        self.reconnect.clicked.connect(self._connect)
+        buttons.addWidget(self.reconnect)
         layout.addLayout(buttons)
 
         self.timer = QTimer(self)
         self.timer.setInterval(250)
         self.timer.timeout.connect(self._poll)
+        self._connect()
+
+    def _connect(self):
+        if self._port is not None:
+            return
+        self._buffer = b""
+        self._status = self._last_reply = self._pending = self._pending_since = None
+        self.interlock.setChecked(False)
+        self.connection.setText(WAITING_TEXT)
         try:
-            self._port = open_port(port_name)
+            self._port = self._open_port(self._port_name)
         except (OSError, ValueError) as error:
-            self.connection.setText(f"Could not open {port_name}. {error}")
+            self.connection.setText(f"Could not open {self._port_name}. {error}")
         else:
             self.timer.start()
         self._update_buttons()
@@ -118,7 +133,8 @@ class PumpVoltageTestWindow(QWidget):
 
     def _update_buttons(self):
         self.test.setEnabled(self._can_start())
-        self.stop.setEnabled(self._port is not None)
+        self.stop.setEnabled(self._port is not None and (self._status == 50 or self._pending == 50))
+        self.reconnect.setVisible(self._port is None)
 
     def _poll(self):
         if self._port is None:
@@ -134,10 +150,10 @@ class PumpVoltageTestWindow(QWidget):
                     return
             now = self._clock()
             if self._pending_since is not None and now - self._pending_since > REPLY_TIMEOUT_S:
-                self._disconnect("The firmware did not confirm the command. Reopen the test to retry.")
+                self._disconnect("The firmware did not confirm the command. Reconnect USB to retry.")
                 return
             if self._last_reply is not None and now - self._last_reply > REPLY_TIMEOUT_S:
-                self._disconnect("Pump-test status timed out. Reopen the test to reconnect.")
+                self._disconnect("Pump-test status timed out. Reconnect USB to retry.")
                 return
             self._write(b"PING\n")
         except OSError as error:
@@ -145,7 +161,7 @@ class PumpVoltageTestWindow(QWidget):
 
     def _receive(self, line):
         if line == b"PUMP_TEST_FAULT":
-            self._disconnect("Pump-test firmware reported a fault. Reopen the test after checking the controller.")
+            self._disconnect("Pump-test firmware reported a fault. Check the controller, then reconnect USB.")
             return
         match = STATUS.fullmatch(line)
         if match is None:
