@@ -37,16 +37,18 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--demo", action="store_true", help="Use simulated devices")
     mode.add_argument("--pump-voltage-test", metavar="PORT", help="Open the USB pump voltage test")
+    mode.add_argument("--pump-open-bucket-test", metavar="PORT", help="Open the isolated pump test")
     parser.add_argument("--data-dir", type=Path, help="Operator data directory")
     parser.add_argument("--screenshot", type=Path, help="Save a UI screenshot after startup")
     parser.add_argument("--quit-after", type=float, help="Exit after a number of seconds (testing)")
     args = parser.parse_args()
-    if args.pump_voltage_test:
+    test_port = args.pump_voltage_test or args.pump_open_bucket_test
+    if test_port:
         from PySide6.QtWidgets import QApplication
         from .pump_voltage_test import PumpVoltageTestWindow
         app = QApplication(sys.argv[:1])
         app.setStyle("Fusion")
-        window = PumpVoltageTestWindow(args.pump_voltage_test)
+        window = PumpVoltageTestWindow(test_port, open_bucket=args.pump_open_bucket_test is not None)
         window.show()
         _schedule_test_hooks(app, window, args)
         return _run_event_loop(app, window)
