@@ -65,9 +65,12 @@ def test_manual_outputs_keep_stop_available_and_lock_mode(screen):
     window._update_view(dict(controller.snapshot))
     assert controller.snapshot["state"] == "manual"
     assert window.stop_button.isEnabled()
+    assert window.manual_stop.isEnabled()
     assert not window.start_button.isEnabled()
     assert not window.steps_table.isEnabled()
     assert window.valve_buttons[0].isEnabled()
+    assert window.manual_pump.isEnabled()
+    window.manual_pump.setValue(25)
     assert window.manual_apply.isEnabled()
 
 
@@ -155,29 +158,33 @@ def test_live_sensor_estimates_stay_separate_and_hide_on_disconnect(screen):
     assert controller.snapshot["flow_ml_min"] is None
     assert window._metric_labels["pressure_psi"].text() == "≈17.94"
     assert window._metric_units["pressure_psi"].text() == "psi · certificate estimate · 180 mV at ESP32"
-    assert window._metric_labels["flow_ml_min"].text() == "≈27.8"
-    assert "lab-corrected estimate" in window._metric_units["flow_ml_min"].text()
-    assert "outside certificate range" in window._metric_units["flow_ml_min"].text()
+    assert window._metric_labels["flow_ml_min"].text() == "≈14.2"
+    assert "calibration estimate" in window._metric_units["flow_ml_min"].text()
+    assert "below calibrated flow range" in window._metric_units["flow_ml_min"].text()
     assert window._metric_labels["pump_feedback_v"].text() == "—"
     assert window._metric_units["pump_feedback_v"].text() == "No V reading · 142 mV at ESP32 · outside ADC range"
     window._update_view(dict(controller.snapshot,
                              live_sensor_voltages={"pressure": 78, "flow": 1010, "pump_feedback": 500}))
     assert window._metric_units["pressure_psi"].text() == "No psi reading · 78 mV at ESP32 · outside ADC range"
-    assert window._metric_labels["flow_ml_min"].text() == "≈202.0"
-    assert "lab-corrected estimate" in window._metric_units["flow_ml_min"].text()
-    assert "outside certificate range" in window._metric_units["flow_ml_min"].text()
+    assert window._metric_labels["flow_ml_min"].text() == "≈101.0"
+    assert "calibration estimate" in window._metric_units["flow_ml_min"].text()
+    assert "above flow sensor full scale" in window._metric_units["flow_ml_min"].text()
     assert window._metric_labels["pump_feedback_v"].text() == "≈2.50"
     assert window._metric_units["pump_feedback_v"].text() == "V · nominal estimate · 500 mV at ESP32"
     window._update_view(dict(controller.snapshot,
-                             live_sensor_voltages={"pressure": 1001, "flow": 496, "pump_feedback": 500}))
+                             live_sensor_voltages={"pressure": 1001, "flow": 500, "pump_feedback": 500}))
     assert window._metric_labels["pressure_psi"].text() == "≈100.00"
-    assert window._metric_labels["flow_ml_min"].text() == "≈100.0"
-    assert window._metric_units["flow_ml_min"].text() == "mL/min · lab-corrected estimate · 496 mV at ESP32"
+    assert window._metric_labels["flow_ml_min"].text() == "≈50.0"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min · calibration estimate · 500 mV at ESP32"
     window._update_view(dict(controller.snapshot,
-                             live_sensor_voltages={"pressure": 1002, "flow": 202, "pump_feedback": 500}))
+                             live_sensor_voltages={"pressure": 1002, "flow": 200, "pump_feedback": 500}))
     assert "above certificate range" in window._metric_units["pressure_psi"].text()
-    assert window._metric_labels["flow_ml_min"].text() == "≈40.0"
-    assert window._metric_units["flow_ml_min"].text() == "mL/min · lab-corrected estimate · 202 mV at ESP32"
+    assert window._metric_labels["flow_ml_min"].text() == "≈20.0"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min · calibration estimate · 200 mV at ESP32"
+    window._update_view(dict(controller.snapshot,
+                             live_sensor_voltages={"pressure": 180, "flow": 1000, "pump_feedback": 500}))
+    assert window._metric_labels["flow_ml_min"].text() == "≈100.0"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min · calibration estimate · 1000 mV at ESP32"
     window._update_view(dict(controller.snapshot,
                              live_sensor_voltages={"pressure": 180, "flow": 78, "pump_feedback": 500}))
     assert window._metric_labels["flow_ml_min"].text() == "78"
@@ -243,8 +250,9 @@ def test_sensor_setup_is_discoverable_and_shows_live_inputs_without_other_sensor
     window._update_view(dict(controller.snapshot))
     assert "200 mV" in dialog.live_labels["pressure"].text()
     assert "142 mV" in dialog.live_labels["flow"].text()
-    assert "lab-corrected estimate" in dialog.live_labels["flow"].text()
-    assert "outside certificate range" in dialog.live_labels["flow"].text()
+    assert "calibration estimate" in dialog.live_labels["flow"].text()
+    assert "14.20 mL/min" in dialog.live_labels["flow"].text()
+    assert "below calibrated flow range" in dialog.live_labels["flow"].text()
     assert "outside ADC range" in dialog.live_labels["pump_feedback"].text()
     assert dialog.zero_button.isEnabled()
     dialog.close()
@@ -337,8 +345,7 @@ def test_dashboard_reference_estimate_is_local_to_connection_and_measured_range(
     controller.last_telemetry = now[0]
     window._update_view(dict(controller.snapshot))
     assert window._metric_labels[metric].text().startswith("≈")
-    source = ("lab-corrected estimate · outside checked flow range"
-              if channel == "flow" else "certificate estimate")
+    source = "calibration estimate" if channel == "flow" else "certificate estimate"
     assert f" · {source} · " in window._metric_units[metric].text()
 
 
@@ -670,6 +677,7 @@ def test_manual_controls_use_applied_review_not_an_unsaved_checkbox(screen):
     assert window.start_button.isEnabled()
     assert not window.manual_apply.isEnabled()
     assert "Apply the reviewed sequence first" in window.manual_apply.toolTip()
+    window.manual_pump.setValue(20)
     window._apply_recipe()
     window._update_view(dict(controller.snapshot))
     assert window.manual_apply.isEnabled()

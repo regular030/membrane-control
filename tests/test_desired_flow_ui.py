@@ -116,6 +116,75 @@ def test_desired_flow_controls_lock_during_operations(screen, state, flag):
     assert window.apply_target_button.isEnabled()
 
 
+def test_manual_pump_start_speed_change_and_stop(screen):
+    window, controller, _ = screen
+    assert window.manual_apply.text() == "Start pump"
+    assert not window.manual_apply.isEnabled()
+    assert not window.manual_stop.isEnabled()
+
+    window.manual_pump.setValue(25)
+    window.manual_apply.click()
+    assert controller.driver.engine.pump_percent == 25
+    assert controller.snapshot["manual_pending"]
+    assert window.manual_stop.isEnabled()
+    window.manual_stop.click()
+    assert controller.driver.engine.pump_percent == 0
+    assert controller.snapshot["stop_pending"]
+    assert not window.manual_stop.isEnabled()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert controller.snapshot["state"] == "idle"
+
+    window.manual_pump.setValue(25)
+    window.manual_apply.click()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert window.manual_apply.text() == "Apply speed"
+    window.manual_pump.setValue(35)
+    window.manual_apply.click()
+    controller.tick()
+    assert controller.driver.engine.pump_percent == 35
+    # Once running, Stop remains available when the requirements to start fail.
+    window._update_view(dict(controller.snapshot, simulation=False, pressure_psi=None))
+    assert not window.manual_apply.isEnabled()
+    assert window.manual_stop.isEnabled()
+    window.manual_stop.click()
+    assert controller.driver.engine.pump_percent == 0
+
+
+def test_manual_pump_shows_readiness_blocker(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, simulation=False, state="manual_valves")
+    window._update_view(snapshot)
+    window.manual_pump.setValue(25)
+    assert not window.manual_apply.isEnabled()
+    assert "factory firmware supports manual valves only" in window.manual_pump_status.text()
+
+    snapshot.update(hardware_verified=True, state="idle")
+    window._update_view(snapshot)
+    assert "Apply the reviewed sequence" in window.manual_pump_status.text()
+    controller.recipe.hardware_approved = True
+    window._update_view(snapshot)
+    assert "valid calibrated pressure" in window.manual_pump_status.text()
+    snapshot.update(pressure_psi=0, state="manual_valves")
+    window._update_view(snapshot)
+    assert "Stop manual valves" in window.manual_pump_status.text()
+    snapshot["state"] = "idle"
+    controller.settings["require_balance"] = True
+    window._update_view(snapshot)
+    assert "required scale reading" in window.manual_pump_status.text()
+    snapshot["balance_connected"] = True
+    window._update_view(snapshot)
+    window.manual_pump.setValue(25)
+    assert window.manual_apply.isEnabled()
+    now[0] += 3
+    window._update_view(snapshot)
+    assert "fresh controller reading" in window.manual_pump_status.text()
+    assert not window.manual_apply.isEnabled()
+
+
 def test_chart_displays_applied_target_as_distinct_dashed_comparison(screen):
     window, controller, _ = screen
     controller.set_simulation(False)
@@ -165,7 +234,7 @@ def test_compact_dashboard_preserves_full_target_and_valve_control_height(screen
     window.show()
     qt_app.processEvents()
     scroll = window.dashboard_scroll
-    controls = (*window.valve_buttons, window.manual_pump, window.manual_apply,
+    controls = (*window.valve_buttons, window.manual_pump, window.manual_apply, window.manual_stop,
                 window.desired_flow_spin, window.apply_target_button)
     for percent in (100, 60, 150, 100):
         window.set_zoom_percent(percent)
