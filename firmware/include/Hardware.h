@@ -5,6 +5,7 @@
 #include <driver/ledc.h>
 #include "BoardConfig.h"
 #include "ManualValveConfig.h"
+#include "PumpTach.h"
 
 namespace basu {
 
@@ -45,7 +46,8 @@ inline const char* classifySensorStatus(const BoardConfig& board, const AnalogCo
 // the independent confirmed manual mapping initializes only the 595 relay pins.
 class Hardware {
  public:
-  Hardware(BoardConfig config, bool simulation) : config_(config), simulation_(simulation) {}
+  Hardware(BoardConfig config, bool simulation)
+      : config_(config), simulation_(simulation), pumpTach_(config.pumpTachPin, config.pumpTachPulsesPerRevolution) {}
 
   bool begin() {
     if (simulation_) return true;
@@ -99,8 +101,10 @@ class Hardware {
     }
     ready_ = true;
     if (config_.relayKind == RelayKind::ShiftRegister595) setOe(true);
+    pumpContactCommandAvailable_ = true;
     applied_ = safeOutputs();
     safeStopIssued_ = true;
+    pumpTach_.begin();
     return true;
   }
 
@@ -224,7 +228,9 @@ class Hardware {
   }
 
   void sample(uint32_t now, bool valveOnly = false) {
-    if (simulation_ || !ready_) return;
+    if (simulation_) return;
+    pumpTach_.sample(now);
+    if (!ready_) return;
     if (!valveOnly && config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
         static_cast<uint32_t>(now - lastHealthMs_) >= 1000) {
       lastHealthMs_ = now;
@@ -277,6 +283,10 @@ class Hardware {
   const char* valveError() const { return valveError_ ? valveError_ : "valve_control_not_ready"; }
   const char* error() const { return error_; }
   const Measurements& measurements() const { return measurements_; }
+  bool pumpContactCommandAvailable() const { return pumpContactCommandAvailable_; }
+  bool pumpRunContactCommanded() const { return pumpRunContactCommanded_; }
+  const char* pumpTachStatus(uint32_t now) const { return simulation_ ? nullptr : pumpTach_.status(now); }
+  bool readPumpRpm(uint32_t now, double& rpm) const { return pumpTach_.readRpm(now, rpm); }
   const char* sensorStatus(std::size_t index, uint32_t now) const {
     const auto configured = inputs();
     const std::array<const Reading*, 3> measured{{&measurements_.pressure, &measurements_.flow, &measurements_.pumpFeedback}};
@@ -333,6 +343,7 @@ class Hardware {
     digitalWrite(config_.shiftOePin, config_.shiftOeActiveLow ? !enabled : enabled);
   }
   void setPumpContact(bool run) {
+    pumpRunContactCommanded_ = run;
     if (config_.pumpContactBit == -1) {
       digitalWrite(config_.pumpContactPin, run == config_.pumpContactActiveHigh);
       return;
@@ -484,6 +495,7 @@ class Hardware {
 
   BoardConfig config_;
   bool simulation_;
+  PumpTach pumpTach_;
   ManualValveConfig manualConfig_;
   bool manualValvesReady_ = false;
   bool manualRelayInitialized_ = false;
@@ -497,6 +509,8 @@ class Hardware {
   bool i2cInitialized_ = false;
   bool pwmInitialized_ = false;
   bool pumpRunPending_ = false;
+  bool pumpContactCommandAvailable_ = false;
+  bool pumpRunContactCommanded_ = false;
   uint32_t pumpCommandChangedMs_ = 0;
   bool ready_ = false;
   bool sensorTestPinsInitialized_ = false;

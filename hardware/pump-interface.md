@@ -76,8 +76,21 @@ Keep pins 14/5 disconnected until that complete reference arrangement is
 verified or an isolated feedback input is fitted. After verification, divider
 3 **S** goes to **GPIO39 / SVN** and its **-** to ESP32 GND. Leave **+** open on
 the verified passive revision. A measured 10 V at the input should give about
-2 V at S. The output on 14/5 represents running command speed. Motor-running
-status and actual flow require their own signals.
+2 V at S. The output on 14/5 represents running command speed.
+
+### Measure motor rotation
+
+For measured speed in Pump settings, connect the pump's **DB25 pin 19** tach
+output and **pin 18** return to a reviewed input circuit with a 3.3 V logic
+output for the ESP32. The pump side is an open-collector output referenced
+to earth. Verify input conditioning and isolation before selecting an ESP32
+pin in the local profile. The Masterflex tach is **100 pulses per revolution**,
+so a 1,000 Hz input corresponds to **600 RPM**.
+
+Verify the tach reading against the drive at two known speeds. After Stop,
+check that the reading returns to **No tach pulses**. A disconnected signal
+also gives no pulses. DB25 **6/7** is a separate motor-running status output.
+See the [drive manual, pp. 3-23 to 3-25](https://files.yamato-net.co.jp/support/coleparmer/english/pump/75211-70e.pdf#page=37).
 
 ## Spare onboard relay for start/stop
 
@@ -123,6 +136,8 @@ backend. Values below are proposed assignments, not a ready-to-flash profile:
 | `pwmSettleMs` | `0` until measured | Invalid placeholder; review an actual 10-5000 ms settling interval before permitting RUN |
 | `pumpContactBit` | **15**, confirmed by the lab | Leave `pumpContactPin = -1` for the onboard relay |
 | `pumpContactPin` | GPIO26 only for the external driver alternative | Leave unassigned for the onboard contact path |
+| `pumpTachPin` | `-1` with the current analog-only wiring | Assign a free GPIO after testing the conditioned tach signal |
+| `pumpTachPulsesPerRevolution` | `100` | Pulses per motor revolution specified for the 75211-70 |
 
 The PWM branch initializes at zero duty. Its software STOP path commands the
 pump contact to STOP before zeroing PWM and changing valve outputs; communication

@@ -56,17 +56,16 @@ pump feedback. Compare it with a meter across the corresponding divider's
 5 V signal. An unwired pin can float, and a zero can be a valid signal, so the
 voltage alone cannot identify a cable or confirm a good sensor.
 
-The Dashboard estimates pressure and flow from the factory certificate points
-using the documented 5:1 divider. For pressure it interpolates between 0 psig
-at 0.005 V, 50 psig at 2.502 V and 100 psig at 5.004 V. For flow it interpolates
-between 20 mL/min at 1.01 V, 50 mL/min at 2.48 V and 100 mL/min at 5.00 V.
-These are the voltages at the sensor output, before the divider. The Dashboard
-and Sensor setup double the default flow estimate to match the lab's observed
-40 and 100 mL/min at the certificate's 20 and 50 mL/min points. The app labels
-flow estimates outside the checked range and extends the estimate within the
-usable ESP32 input range. When a fresh voltage cannot give an estimate, the
-Flow card shows that voltage in mV. Optional pump feedback shows estimated
-voltage before its divider.
+The Dashboard estimates pressure from the sensor certificate using the 5:1
+divider. The pressure points are 0 psig at 0.005 V, 50 psig at 2.502 V and
+100 psig at 5.004 V before the divider. For flow, the Dashboard and Sensor
+setup use the lab's calibration of 20 mL/min at 1 V, 50 mL/min at 2.5 V and
+100 mL/min at 5 V before the divider. Those points correspond to 200, 500 and
+1000 mV at the ESP32, or 100 mL/min per volt at the pin. The app labels
+estimates below 20 mL/min or above the 100 mL/min full-scale point while the
+voltage remains in the usable ESP32 range. When a fresh voltage cannot give
+an estimate, the Flow card shows that voltage in mV. Optional pump feedback
+shows estimated voltage before its divider.
 [Omega exact model](https://www.dwyeromega.com/en-gb/general-purpose-stainless-steel-pressure-transducers/PX309/p/PX309-100G5V)
 · [McMillan operation manual](https://www.mcmflow.com/wp-content/uploads/2015/02/101-M002.pdf)
 
@@ -93,7 +92,8 @@ across its divider's **S** and **−** terminals.
 Stop the pump and verify zero pressure and no flow, then click **Zero pressure
 and flow** on the Dashboard. The app records the raw readings at that confirmed
 condition and displays the change in millivolts for the current connection.
-Live pressure and flow estimates use the certificate points automatically.
+Live estimates use the pressure certificate and the lab's flow calibration
+automatically.
 
 If you have access to independent measurements, **Sensor setup** also accepts
 two steady reference points per sensor. The Dashboard uses that fit within its
@@ -104,8 +104,8 @@ commissioned firmware profile.
 With the documented divider, the pressure certificate's near-zero output is
 around 1 mV at IO34. The factory pressure and flow input range starts at 100 mV,
 so a zero capture records the condition you verified. An ESP32 reading below
-that range cannot establish the true voltage offset. The flow certificate has
-its first measured point at 20 mL/min. The Dashboard shows the corresponding
+that range cannot establish the true voltage offset. The lab's flow calibration
+has its first measured point at 20 mL/min. The Dashboard shows the corresponding
 range message below these limits. Commissioning near zero requires a verified
 input circuit that can measure the required low voltages.
 

@@ -460,6 +460,13 @@ void writeTelemetry(uint32_t now) {
   JsonArray valves = document["valves"].to<JsonArray>();
   for (bool state : controller.outputs().valves) valves.add(state);
   document["pump_percent"] = controller.outputs().pumpPercent;
+  if (hardware.pumpContactCommandAvailable())
+    document["pump_run_contact_commanded"] = hardware.pumpRunContactCommanded();
+  if (const char* status = hardware.pumpTachStatus(now)) {
+    document["pump_tach_status"] = status;
+    double rpm;
+    if (hardware.readPumpRpm(now, rpm)) document["pump_rpm"] = rpm;
+  }
   auto addReading = [&](const char* name, const basu::Reading& reading) {
     if (reading.fresh(now, controller.sensorMaxAgeMs())) document[name] = reading.value;
     else document[name] = nullptr;

@@ -23,6 +23,7 @@ REQUEST_TIMEOUT_S = 3.0
 LAB_CONTROLLER_FALLBACK_PORT = "COM8"
 LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF50204E"
 WINDOWS_SPP_ID_PREFIX = "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_"
+EMPTY_PUMP_MOTION = {"pump_rpm": None, "pump_tach_status": None, "pump_run_contact_commanded": None}
 
 
 def _adc_pin_mv(value):
@@ -31,6 +32,27 @@ def _adc_pin_mv(value):
                                    for key in SENSOR_KEYS):
         return {key: value[key] for key in SENSOR_KEYS}
     return {}
+
+
+def _pump_motion_fields(packet):
+    """Read optional, commissioned motion diagnostics without dropping pressure telemetry."""
+    if packet["simulation"] or not packet["hardware_verified"]:
+        return EMPTY_PUMP_MOTION
+    contact = packet.get("pump_run_contact_commanded")
+    status = packet.get("pump_tach_status")
+    rpm = None
+    if status in ("reading_received", "no_pulses"):
+        try:
+            rpm = number(packet.get("pump_rpm"), "Pump tachometer", 0, 10000)
+        except ValueError:
+            status = "unavailable"
+        else:
+            if (status == "no_pulses") != (rpm == 0):
+                status, rpm = "unavailable", None
+    elif status not in ("waiting", "unavailable"):
+        status = None
+    return {"pump_rpm": rpm, "pump_tach_status": status,
+            "pump_run_contact_commanded": contact if type(contact) is bool else None}
 
 
 class AppController:
@@ -93,6 +115,7 @@ class AppController:
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
             "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
+            **EMPTY_PUMP_MOTION,
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
             "elapsed_s": 0.0, "run_id": None, "log": [], "recipe_name": self.recipe.name,
@@ -321,6 +344,7 @@ class AppController:
 
     def _reset_diagnostics(self):
         self._reported_valve_control_ready = None
+        self.snapshot.update(EMPTY_PUMP_MOTION)
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
             valve_control_status="Valve-only controls unavailable", sensor_test_available=False,
@@ -648,6 +672,8 @@ class AppController:
         self.snapshot.update(manual_pending=False,
             state="manual_valves" if command == "manual_valves" else "manual", valves=valves,
             pump_percent=pump, step_index=-1, cycle=0, remaining_s=0)
+        if command == "manual":
+            self.snapshot["pump_run_contact_commanded"] = None
 
     def _accept_manual_valves_receipt(self, receipt_id, valves, now):
         if (not self.manual_pending or self.stop_pending or self.local_fault is not None
@@ -865,6 +891,7 @@ class AppController:
         self.connect_started = None
         self.last_controller_uptime = uptime
         self.snapshot.update(values)
+        self.snapshot.update(_pump_motion_fields(packet))
         self.snapshot["sensor_status"] = checked_sensor_status(packet.get("sensor_status"))
         self.snapshot["live_sensor_voltages"] = (_adc_pin_mv(packet.get("adc_pin_mv"))
             if self.snapshot["sensor_test_available"] and not packet["simulation"] and not packet["hardware_verified"] else {})
@@ -990,6 +1017,7 @@ class AppController:
                 if self.snapshot["controller_status"] != "Telemetry stale":
                     self._esp32_event("telemetry_stale")
                 self.snapshot["live_sensor_voltages"] = {}
+                self.snapshot.update(EMPTY_PUMP_MOTION)
                 if self._active() or self.run_id is not None:
                     self._abort("Controller telemetry is stale")
                     if self.driver is not None:

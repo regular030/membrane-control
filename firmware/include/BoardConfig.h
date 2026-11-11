@@ -60,6 +60,8 @@ struct BoardConfig {
   double pressureLimitPsi = NAN;
   uint32_t sensorMaxAgeMs = 1000;
   int pumpContactBit = -1;  // Reviewed spare 595 bit; leave -1 for a separate GPIO contact.
+  int pumpTachPin = -1;  // Set only for a reviewed, conditioned tach signal.
+  uint16_t pumpTachPulsesPerRevolution = 100;  // Masterflex 75211-70 tach specification.
 };
 
 inline bool outputCapablePin(int pin) {
@@ -191,6 +193,15 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
   }
   if (usesAds && (config.ads1115Address < 0x48 || config.ads1115Address > 0x4b))
     return "ADS1115 address must be 0x48-0x4b";
+  const int tachPin = config.pumpTachPin;
+  if (tachPin != -1) {
+    // The PCNT driver enables the GPIO pull-up. Exclude input-only pins,
+    // boot-strapping pins and the candidate shift-register clear pin.
+    if (!outputCapablePin(tachPin) || tachPin == 0 || tachPin == 2 || tachPin == 4 ||
+        tachPin == 5 || tachPin == 12 || tachPin == 15 || used[tachPin])
+      return "pump tach pin invalid, reserved or conflicting";
+    if (config.pumpTachPulsesPerRevolution == 0) return "pump tach pulses per revolution must be positive";
+  }
   return nullptr;
 }
 

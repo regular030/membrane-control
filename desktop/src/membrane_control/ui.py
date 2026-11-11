@@ -356,8 +356,8 @@ class MainWindow(QMainWindow):
         self.live_sensor_detail = _label("", "muted", True)
         self.live_sensor_detail.setAccessibleName("Live diagnostic sensor inputs")
         self.live_sensor_detail.setToolTip(
-            "Pressure and flow estimates use the sensor certificates and an assumed 5:1 divider, or two measured references. "
-            "The default flow estimate includes the lab's 2× correction. "
+            "Pressure estimates use the sensor certificate and flow estimates use the lab's voltage-to-flow calibration. "
+            "Both assume a 5:1 divider unless you enter two measured references. "
             "A zero baseline shows raw voltage change. Below 100 mV, check with a voltmeter.")
         self.live_sensor_detail.hide()
         outer.addWidget(self.live_sensor_detail)
@@ -447,7 +447,8 @@ class MainWindow(QMainWindow):
         low_layout.setContentsMargins(0, 0, 0, 0)
         manual = QGroupBox("Pump settings")
         manual_layout = QVBoxLayout(manual)
-        manual_layout.addWidget(_label("These show the commands sent. The app cannot confirm that a valve actually moved.", "muted", True))
+        self.manual_pump_status = _label("", "muted", True)
+        manual_layout.addWidget(self.manual_pump_status)
         pump_row = QHBoxLayout()
         pump_row.addWidget(_label("New pump setting"))
         self.manual_pump = QDoubleSpinBox()
@@ -456,12 +457,23 @@ class MainWindow(QMainWindow):
         self.manual_pump.setSuffix(" %")
         self.manual_pump.setAccessibleName("Manual pump command percent")
         pump_row.addWidget(self.manual_pump)
-        self.manual_apply = _button("Apply pump", self._manual_command)
+        self.manual_apply = _button("Start pump", self._manual_command)
         pump_row.addWidget(self.manual_apply)
-        self.manual_pump_sent = _label("Sent: 0.0 %", "muted")
+        self.manual_pump.valueChanged.connect(self._update_pump_start_enabled)
+        self.manual_stop = _button("Stop pump", self._stop_run, "stopButton")
+        self.manual_stop.setToolTip("Stop the pump and return the valves to their configured safe states.")
+        pump_row.addWidget(self.manual_stop)
+        self.manual_pump_sent = _label("Command unavailable", "muted")
         pump_row.addWidget(self.manual_pump_sent)
         pump_row.addStretch()
         manual_layout.addLayout(pump_row)
+        self.manual_pump_feedback = _label("", "muted", True)
+        self.manual_pump_feedback.setAccessibleName("Pump feedback readings")
+        self.manual_pump_feedback.setToolTip(
+            "The run contact shows the controller's command. Drive feedback measures the pump's "
+            "running-command output in volts. A connected tachometer measures rotation. "
+            "A disconnected tachometer can also give no pulses.")
+        manual_layout.addWidget(self.manual_pump_feedback)
         target_row = QHBoxLayout()
         target_row.addWidget(_label("Desired flow (mL/min)"))
         self.desired_flow_spin = QDoubleSpinBox()
@@ -792,6 +804,7 @@ class MainWindow(QMainWindow):
         self.zoom_label.setToolTip("Ctrl + -: zoom out  |  Ctrl + + or =: zoom in  |  Ctrl + 0: reset\n60% to 150% in 10% steps. Display size only; experiment settings do not change.")
         self.statusBar().addPermanentWidget(self.zoom_label)
         self._zoom = NativeZoom(self, self._plots.values())
+        self._fit_dashboard_control_heights()
         self.zoom_shortcuts = []
         for keys, change in ((["Ctrl+-"], -10), (["Ctrl++", "Ctrl+=", "Ctrl+Shift++", "Ctrl+Shift+="], 10), (["Ctrl+0"], 0)):
             shortcut = QShortcut(self)
@@ -808,9 +821,17 @@ class MainWindow(QMainWindow):
         if self._zoom is None:
             return
         self._zoom.set_percent(percent)
+        self._fit_dashboard_control_heights()
         self.flow_legend.setLabelTextSize(f"{8 * self._zoom.factor:g}pt")
         self.zoom_label.setText(f"Zoom {self.zoom_percent}%")
         self.statusBar().showMessage(f"Interface zoom: {self.zoom_percent}%. Ctrl + 0 resets to 100%. Experiment settings are unchanged.", 5000)
+
+    def _fit_dashboard_control_heights(self):
+        # The compact dashboard can squeeze controls inside the splitter below
+        # their native size hints. Recheck after fonts and styles are scaled.
+        for control in (*self.valve_buttons, self.manual_pump, self.manual_apply, self.manual_stop,
+                        self.desired_flow_spin, self.apply_target_button):
+            control.setMinimumHeight(control.sizeHint().height())
 
     def _set_zoom_style(self, widget, source):
         if self._zoom is None:
@@ -1048,6 +1069,7 @@ class MainWindow(QMainWindow):
 
     def _stop_run(self):
         self._action(self.controller.stop_run, "Stop requested")
+        self._update_view(dict(self.controller.snapshot))
         self._refresh_history()
 
     def _clear_fault(self):
@@ -1057,10 +1079,46 @@ class MainWindow(QMainWindow):
             self._timer_stop_requested = False
         self._action(clear, "Fault clear requested. Outputs remain stopped.")
 
-    def _manual_command(self, *_):
-        if self._updating:
+    def _update_pump_start_enabled(self):
+        self.manual_apply.setEnabled(self.manual_pump.isEnabled() and self.manual_pump.value() > 0)
+
+    def _update_pump_feedback(self, snapshot, *, fresh, simulation):
+        if not fresh:
+            self.manual_pump_sent.setText("Command unavailable")
+            self.manual_pump_feedback.setText("Waiting for fresh pump feedback.")
             return
-        self._action(lambda: self.controller.set_manual(self._manual_wire_values(), self.manual_pump.value()), "Manual output command sent")
+        speed = _number(snapshot.get("pump_percent"), 1)
+        self.manual_pump_sent.setText(f"Commanded {speed}%")
+        if simulation:
+            self.manual_pump_feedback.setText("Simulated pump command and feedback.")
+            return
+
+        contact = snapshot.get("pump_run_contact_commanded")
+        if contact is None:
+            contact_text = "Run contact command unavailable"
+        else:
+            contact_text = f"Run contact commanded {'closed' if contact else 'open'}"
+        feedback = snapshot.get("pump_feedback_v") if snapshot.get("hardware_verified") else None
+        drive_text = ("Drive command feedback unavailable" if feedback is None
+                      else f"Drive command feedback {_number(feedback)} V")
+        rpm = snapshot.get("pump_rpm")
+        if snapshot.get("pump_tach_status") == "waiting":
+            tach_text = "Waiting for a tachometer sample"
+        elif rpm is None:
+            tach_text = "Motor tachometer unavailable"
+        elif rpm == 0:
+            tach_text = "No tach pulses detected"
+        else:
+            rpm_text = "under 0.1" if rpm < 0.05 else _number(rpm, 1)
+            tach_text = f"Motor tachometer {rpm_text} RPM · rotation detected"
+        self.manual_pump_feedback.setText(f"{contact_text} · {drive_text}\n{tach_text}")
+
+    def _manual_command(self, *_):
+        pump_percent = self.manual_pump.value()
+        if self._updating or not self.manual_apply.isEnabled() or pump_percent <= 0:
+            return
+        self._action(lambda: self.controller.set_manual(self._manual_wire_values(), pump_percent), "Pump command sent")
+        self._update_view(dict(self.controller.snapshot))
 
     def _manual_wire_values(self):
         states = [False] * 7
@@ -1640,15 +1698,33 @@ class MainWindow(QMainWindow):
                 self.valve_control_note.setText(str(snap.get('valve_control_status') or 'Upload normal controller firmware 0.1.16 for the installed valve mapping.'))
             else:
                 self.valve_control_note.setText('V1–V4 → bits 0–3; V5 → bit 5; V7 → bit 6. No V6. Click ON/OFF; Stop turns all six OFF.')
-            self.manual_pump.setEnabled(manual and state.lower() != 'manual_valves')
-            self.manual_apply.setEnabled(manual and state.lower() != 'manual_valves')
-            self.manual_apply.setToolTip("Apply the reviewed sequence first in Sequence editor." if not simulation and verified and not applied_approved
-                                         else 'Stop manual valves before changing pump control.' if state.lower() == 'manual_valves'
-                                         else "Send the new pump setting. Valve settings stay as shown.")
-            self.manual_pump_sent.setText("Sent: " + _number(snap.get("pump_percent", 0), 1) + " %")
+            pump_state = state.lower()
+            pump_blocker = next((reason for blocked, reason in (
+                (snap.get("stop_pending"), "Waiting for the controller to confirm Stop."),
+                (not connected, "Connect the controller to use the pump."),
+                (fault, "Clear the controller fault before starting the pump."),
+                (not fresh, "Wait for a fresh controller reading."),
+                (not simulation and not verified, "The controller needs a verified pump and pressure profile. The factory firmware supports manual valves only."),
+                (pump_state == "manual_valves", "Stop manual valves before changing pump control."),
+                (snap.get("manual_pending"), "Waiting for the controller to confirm the manual command."),
+                (active or pump_state not in {"idle", "manual"}, "Stop the current operation before using the manual pump."),
+                (not simulation and not applied_approved, "Apply the reviewed sequence first in Sequence editor."),
+                (not simulation and snap.get("pressure_psi") is None, "Wait for a valid calibrated pressure reading."),
+                (manual_needs_scale and not balanced, "Wait for the required scale reading."),
+            ) if blocked), "")
+            self.manual_pump.setEnabled(not pump_blocker)
+            self.manual_pump_status.setText(pump_blocker or self.manual_stop.toolTip())
+            self.manual_apply.setToolTip(pump_blocker or "Enter a speed above 0% to send it with the current valve settings.")
+            pump_percent = snap.get("pump_percent") or 0
+            self.manual_apply.setText("Apply speed" if pump_state == "manual" and pump_percent > 0 else "Start pump")
+            manual_request = self.controller.manual_requested
+            pump_start_pending = bool(snap.get("manual_pending") and manual_request and manual_request[1] > 0)
+            self.manual_stop.setEnabled((pump_state == "manual" or pump_start_pending) and not snap.get("stop_pending"))
+            self._update_pump_feedback(snap, fresh=connected and fresh, simulation=simulation)
             if (state.upper() in {"RUNNING", "PAUSED", "STOPPING", "FAULT"} or snap.get("start_pending")
                     or snap.get("stop_pending") or (self._previous_state != state and state.upper() == "IDLE")):
-                self.manual_pump.setValue(float(snap.get("pump_percent") or 0))
+                self.manual_pump.setValue(float(pump_percent))
+            self._update_pump_start_enabled()
             self.controller_badge.setText(f"Controller: {'simulated' if desktop_simulation else ('connected' if connected else 'disconnected')}")
             self.balance_badge.setText(f"Balance: {'simulated' if desktop_simulation else ('connected' if balanced else 'disconnected')}")
             self.controller_detail.setText(str(snap.get("controller_status") or "No responding controller"))
