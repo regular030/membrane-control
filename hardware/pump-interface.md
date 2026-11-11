@@ -92,6 +92,22 @@ check that the reading returns to **No tach pulses**. A disconnected signal
 also gives no pulses. DB25 **6/7** is a separate motor-running status output.
 See the [drive manual, pp. 3-23 to 3-25](https://files.yamato-net.co.jp/support/coleparmer/english/pump/75211-70e.pdf#page=37).
 
+### Measure the connected drive's voltage input
+
+For the known 16-relay rig, the `esp32-pump-voltage-test` firmware holds all
+relay outputs off and accepts a 50% GPIO25 PWM test over USB. Back up the
+installed firmware before flashing this temporary image. On the drive, select
+Voltage Input and Continuous Pump Mode, set START/STOP required ON and Auto
+Start OFF, and confirm the DB25 15/17 contact stays open.
+
+Open the app with `--pump-voltage-test COM5`, using the board's USB port.
+Confirm the drive interlock, then select **Set 50% for up to 30 seconds**.
+Measure DC voltage on DB25 1 relative to 3. Compare the pump display and the
+app's GPIO39 reading with a meter on 14 relative to 5. The default drive
+feedback can read zero while stopped. **Return to 0%** ends the test, and
+the firmware also returns to zero on timeout or loss of the USB heartbeat.
+Restore the normal Bluetooth image before operating the rig.
+
 ## Spare onboard relay for start/stop
 
 The lab confirmed **74HC595 raw bit 15** for pump start/stop, LOW for STOP
