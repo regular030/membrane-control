@@ -83,6 +83,7 @@ def main():
         logging.critical("Application error", exc_info=(kind, value, traceback))
         window.shutdown_relay_bench()
         window.shutdown_valve_test()
+        window.shutdown_pump_test()
         try:
             controller.stop_run()
         except Exception:

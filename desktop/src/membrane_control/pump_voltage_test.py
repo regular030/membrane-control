@@ -3,7 +3,7 @@ import re
 import time
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 
 STATUS = re.compile(rb"PUMP_TEST (0|50) ([0-9]{1,5}) ([0-9]{1,4})")
@@ -25,9 +25,9 @@ def _open_port(name):
     return port
 
 
-class PumpVoltageTestWindow(QWidget):
-    def __init__(self, port_name, *, open_bucket=False, open_port=_open_port, clock=time.monotonic):
-        super().__init__()
+class PumpVoltageTestWindow(QDialog):
+    def __init__(self, port_name, parent=None, *, open_bucket=False, open_port=_open_port, clock=time.monotonic):
+        super().__init__(parent)
         self._port_name = port_name
         self._open_port = open_port
         self._open_bucket = open_bucket
@@ -325,6 +325,6 @@ class PumpVoltageTestWindow(QWidget):
             self._port = None
         self._update_buttons()
 
-    def closeEvent(self, event):
+    def done(self, result):
         self.shutdown()
-        super().closeEvent(event)
+        super().done(result)

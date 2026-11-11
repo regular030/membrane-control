@@ -1,12 +1,15 @@
 """The USB voltage test only commands the converter after explicit confirmation."""
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QInputDialog
 
+from membrane_control.controller import AppController
 from membrane_control.pump_voltage_test import PumpVoltageTestWindow
+from membrane_control.ui import MainWindow
 
 
 class FakePort:
@@ -241,3 +244,44 @@ def test_open_bucket_stale_preparation_cannot_recover_automatically(bucket_scree
     assert port.writes[-1] == b"STOP\n"
     assert b"RUN50\n" not in port.writes
     assert "RUN was not acknowledged" in window.outcome.text()
+
+
+def test_connections_opens_test_only_on_selected_wired_port(qt_app, tmp_path, monkeypatch):
+    controller = AppController(tmp_path, simulation=False)
+    controller.list_ports = lambda: [("COM4", "USB Serial"), ("COM5", "CP210x"),
+                                     ("COM6", "Scale"), ("COM9", "Bluetooth Link")]
+    window = MainWindow(controller)
+    window.timer.stop()
+    controller.balance = SimpleNamespace(port="COM6")
+    events = []
+
+    def choose(_parent, _title, _prompt, ports, selected, editable):
+        assert ports == ["COM4  USB Serial", "COM5  CP210x"]
+        assert selected == 1 and not editable
+        return ports[selected], True
+
+    def open_dialog(port, parent, *, open_bucket):
+        assert port == "COM5" and parent is window and open_bucket
+        events.append("open")
+        return SimpleNamespace(exec=lambda: events.append("exec"), shutdown=lambda: events.append("shutdown"),
+                               deleteLater=lambda: events.append("delete"))
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(controller, "disconnect_controller", lambda: events.append("disconnect"))
+            patch.setattr(QInputDialog, "getItem", choose)
+            patch.setattr("membrane_control.ui.PumpVoltageTestWindow", open_dialog)
+            window._open_pump_test()
+            assert window._pump_test_dialog is None
+            assert controller.balance.port == "COM6"
+        assert events == ["disconnect", "open", "exec", "shutdown", "delete"]
+    finally:
+        controller.balance = None
+        window.close()
+
+
+def test_modal_reject_stops_and_releases_port(bucket_screen):
+    window, port, now = bucket_screen
+    stage_bucket(window, port, now)
+    window.reject()
+    assert port.closed and port.writes[-1] == b"STOP\n"

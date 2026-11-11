@@ -27,6 +27,7 @@ import pyqtgraph as pg
 from .models import MAX_STEPS, Recipe
 from .connection_diagnostics import connection_diagnostics
 from .device_status import device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
+from .pump_voltage_test import PumpVoltageTestWindow
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
 from .sensor_setup import SensorSetupDialog, observed_zero_baseline, sensor_display_estimate
@@ -163,6 +164,7 @@ class MainWindow(QMainWindow):
         self.controller = controller
         self._relay_bench_dialog = None
         self._valve_test_dialog = None
+        self._pump_test_dialog = None
         self._balance_diagnostics_dialog = None
         self._sensor_setup_dialog = None
         self._shutdown_started = False
@@ -639,6 +641,9 @@ class MainWindow(QMainWindow):
         self.valve_test_button = _button("2. Legacy valve pulse test", self._open_valve_test)
         self.valve_test_button.setToolTip("Older separate pulse-test firmware. For this six-valve rig, use the normal Dashboard toggles instead.")
         cform.addRow(self.valve_test_button)
+        self.pump_test_button = _button("Open-bucket pump test", self._open_pump_test)
+        self.pump_test_button.setToolTip("Use the dedicated open-bucket firmware over the ESP32’s wired USB connection.")
+        cform.addRow(self.pump_test_button)
         cform.addRow(_label("Installed: V1–V5 and V7; bits 0,1,2,3,5,6. No V6. Normal Dashboard toggles work without sensors; the separate tests below are optional.", "muted", True))
         devices.addWidget(controller_box)
         balance_box = QGroupBox("Balance")
@@ -1398,6 +1403,61 @@ class MainWindow(QMainWindow):
                 except RuntimeError:
                     pass
 
+    def _open_pump_test(self):
+        if self._shutdown_started or self.controller.simulation or self.controller._active():
+            return
+        if any(dialog is not None for dialog in (self._relay_bench_dialog, self._valve_test_dialog,
+                                                self._pump_test_dialog, self._balance_diagnostics_dialog)):
+            return
+        excluded = set()
+        if self.controller.balance is not None:
+            excluded.add(self.controller.balance.port)
+        try:
+            ports = {f"{port}  {description}": port for port, description in self.controller.list_ports()
+                     if port not in excluded and "bluetooth" not in description.casefold()}
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not list USB serial ports: {exc}", 10000)
+            return
+        if not ports:
+            self.statusBar().showMessage("Connect the ESP32’s wired USB adapter, then try again.", 10000)
+            return
+        labels = list(ports)
+        selected = next((i for i, port in enumerate(ports.values()) if port == "COM5"), 0)
+        label, accepted = QInputDialog.getItem(self, "Open-bucket pump test",
+            "Select the wired ESP32 USB port after flashing the open-bucket test firmware.", labels, selected, False)
+        if not accepted or self._shutdown_started or self.controller._active():
+            return
+        try:
+            self.controller.disconnect_controller()
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not release the controller port: {exc}", 10000)
+            return
+        dialog = PumpVoltageTestWindow(ports[label], self, open_bucket=True)
+        self._pump_test_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            try:
+                dialog.shutdown()
+            finally:
+                self._pump_test_dialog = None
+                dialog.deleteLater()
+        if not self._shutdown_started:
+            self._update_view(dict(self.controller.snapshot))
+
+    def shutdown_pump_test(self):
+        dialog, self._pump_test_dialog = self._pump_test_dialog, None
+        if dialog is not None:
+            try:
+                dialog.shutdown()
+            except Exception:
+                logging.exception("Could not shut down pump test dialog")
+            finally:
+                try:
+                    dialog.reject()
+                except RuntimeError:
+                    pass
+
     def _load_settings(self):
         settings = self.controller.settings
         self.area_spin.setValue(float(settings.get("membrane_area_m2", 0.1)))
@@ -1594,7 +1654,7 @@ class MainWindow(QMainWindow):
             # The equipment window has its own timer. Avoid expensive hidden
             # graph/layout refreshes competing with its serial heartbeat.
             if not any(dialog is not None for dialog in (self._relay_bench_dialog,
-                    self._valve_test_dialog, self._balance_diagnostics_dialog)):
+                    self._valve_test_dialog, self._pump_test_dialog, self._balance_diagnostics_dialog)):
                 self._update_view(dict(self.controller.snapshot))
         except Exception as exc:
             now = time.monotonic()
@@ -1811,6 +1871,7 @@ class MainWindow(QMainWindow):
             self.controller_connect.setEnabled(not operating and not desktop_simulation)
             self.relay_bench_button.setEnabled(not operating and not desktop_simulation)
             self.valve_test_button.setEnabled(not operating and not desktop_simulation)
+            self.pump_test_button.setEnabled(not operating and not desktop_simulation)
             self.sensorless_valve_button.setEnabled(not operating and not desktop_simulation)
             self.balance_connect.setEnabled(not operating and not desktop_simulation)
             controller_port_opening = self.controller.driver is not None
@@ -1894,6 +1955,7 @@ class MainWindow(QMainWindow):
                     logging.exception("Could not stop a destroyed UI timer")
         except RuntimeError:
             logging.exception("Could not enumerate timers during Qt teardown")
+        self.shutdown_pump_test()
         try:
             self.shutdown_relay_bench()
         finally:

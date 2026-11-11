@@ -1,8 +1,8 @@
 # Full ESP32 firmware in the release
 
-Version 0.1.27 includes the complete controller source and compiled ESP32 images,
+Version 0.1.28 includes the complete controller source and compiled ESP32 images,
 alongside the Windows application. Download
-`MembraneControl-Firmware-0.1.27-esp32.zip` under the GitHub release's **Assets**.
+`MembraneControl-Firmware-0.1.28-esp32.zip` under the GitHub release's **Assets**.
 The portable application ZIP also contains it. Setup installs it in
 `firmware-release/` and installs the editable source in `firmware/`.
 
@@ -14,7 +14,9 @@ The portable application ZIP also contains it. Setup installs it in
 | `esp32-relay-bench` | Real unloaded relay pulses through the board's candidate shift-register interface. Separate test window; no sensors, pump or experiments. |
 | `esp32-valve-test` | Sensor-free, one-at-a-time solenoid pulses using a separate reviewed valve profile. No pump or sensor protection; the supplied factory profile stays locked. |
 | `esp32-physical` | Normal controller. The six installed valves V1-V5/V7 use bits 0, 1, 2, 3, 5, 6 and work manually without sensors or profile forms. The factory image shows live sensor voltages during manual valve operation and while idle. Full pump/experiment operation still needs its configured interfaces and inputs. |
-| `esp32-bluetooth-physical` | Normal controller over Bluetooth. Setup builds this from source with the same hardware profile as the wired controller. |
+| `esp32-bluetooth-physical` | Normal Bluetooth controller with the same profile as the wired build. Use this to return to the regular Bluetooth Dashboard after the USB pump tests. |
+| `esp32-pump-voltage-test` | USB 50% command voltage test. It holds all relay outputs off and reads raw GPIO39 feedback. Keep the motor stopped. |
+| `esp32-pump-open-bucket-test` | USB 50% motor test for a primed pump with an unrestricted discharge to an open bucket, isolated from the rig valves. It can run the pump for up to ten seconds and reads raw GPIO34 feedback. |
 
 All targets are for the ESP32-WROOM/classic ESP32 profile used by this project.
 The full controller source is `firmware/src/main.cpp`; its I/O implementation is
@@ -53,6 +55,28 @@ The helper builds from installed source before upload, so a reviewed custom
 profile can be rebuilt later. The separate firmware ZIP includes precompiled
 images, offsets and checksums for tools that can flash raw ESP32 binaries; follow
 its README and manifest rather than treating `firmware.bin` as a complete image.
+
+## Run the USB pump tests
+
+Upload the selected test image over the controller's wired USB-to-UART port.
+Follow the [pump test wiring and operation](../hardware/pump-interface.md) for
+the physical setup and measurements. To open the matching screen from the
+portable Windows app, run one of the following commands in PowerShell. Replace
+`COM5` with your controller's wired port if it differs.
+
+```powershell
+.\MembraneControl-0.1.28-windows-x64.exe --pump-voltage-test COM5
+.\MembraneControl-0.1.28-windows-x64.exe --pump-open-bucket-test COM5
+```
+
+After the test, stop the pump, close the test window and isolate the loads.
+Use **Flash normal controller (Bluetooth)** to return to the Bluetooth Dashboard,
+or **Flash normal controller** for wired use. The Bluetooth firmware ZIP target
+also includes an application-only `firmware.bin`. If the bootloader and partitions
+on the board already match, verify this file against its manifest and write it at
+the application offset in that manifest to preserve the saved pairing. Writing
+the merged `factory.bin` can overwrite pairing storage. Keep the Windows device
+paired and use the outgoing Bluetooth COM port once the normal image is running.
 
 ## Test the connection over Bluetooth
 
@@ -144,8 +168,7 @@ GPIO26 is only for the external contact-driver alternative. See
 The firmware sources also include a standalone
 [`pwm-converter-bench` example](../firmware/examples/pwm-converter-bench/README.md)
 for converter-only measurements before sensors are ready. It requires the pump
-and all relay contact loads disconnected and is built separately from source;
-the four main factory image choices above are unchanged.
+and all relay contact loads disconnected and is built separately from source.
 
 The older separate [Valve test](valve-test.md) remains optional. Its legacy
 seven-slot `BASU_VALVE_PROFILE_HEADER` and short-pulse workflow do not approve a

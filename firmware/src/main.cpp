@@ -257,7 +257,7 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
   if (sensorTest && !error) addAdcPinMillivolts(document, *sensorTest);
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.20";
+    document["firmware_version"] = "0.1.28";
     document["reset_reason"] = resetReasonName(esp_reset_reason());
     document["sensor_test_available"] = hardware.sensorTestAvailable(kFactoryProfile);
     document["valve_control_ready"] = hardware.valveControlReady();

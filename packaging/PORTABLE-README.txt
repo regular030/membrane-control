@@ -17,6 +17,12 @@ Connect the rig
 The Start here button in the app opens Help. Read START-HERE.md for the short
 guide, installation.md for download/USB help, and operator-guide.md for use.
 
+The open-bucket pump test uses its own firmware. Use the Windows Setup
+shortcut Flash open-bucket pump test with the wired ESP32 USB port. Then
+open Connections and settings, choose Open-bucket pump test, and select the
+same wired USB port. The lab controller's wired USB port is usually COM5.
+After testing, close the test window and restore the normal rig firmware.
+
 Resize the whole interface: Ctrl + - makes it smaller, Ctrl + + (or Ctrl + =)
 makes it larger, and Ctrl + 0 restores 100%. The bottom right shows the percentage.
 

@@ -71,6 +71,13 @@ The example's approval flags are false and its mapping is incomplete on
 purpose. The profile must include the measured converter settling interval;
 do not turn an unknown interval or an unchecked interface into approval.
 
+The lab observed about 5 V at DB25 1/3 and 165 mL/min on the drive during
+the isolated 50% open-bucket test. That observation covers the 50% point.
+For the CWF rig the lab specified V1 and V3 open during pumping, an 80 psi
+cutoff, and all installed valves off at Stop. The current sensor wiring
+uses IO34 for pump feedback and SVN for flow. Confirm the pressure input
+and verify its valid reading at rest before enabling a CWF run.
+
 The PWM-specific fields are `pumpPwmPin`, `pumpPwmChannel`,
 `pumpPwmFrequencyHz`, `pumpPwmResolutionBits`, `pwmSettleMs` and
 `pwmConverterInterfaceVerified`. Proposed pin/channel/frequency/resolution are
