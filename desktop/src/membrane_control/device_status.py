@@ -93,10 +93,10 @@ def checked_controller_diagnostics(packet: dict) -> dict:
             if type(entry) is not dict or type(entry.get("calibration_verified")) is not bool:
                 continue
             source = entry.get("source")
-            if type(source) is not str or source not in ("disabled", "native_adc1", "ads1115"):
+            if type(source) is not str or source not in ("disabled", "native_adc1", "native_adc2", "ads1115"):
                 continue
             checked = {"source": source, "calibration_verified": entry["calibration_verified"]}
-            field, maximum = ("pin", 39) if source == "native_adc1" else ("channel", 3)
+            field, maximum = ("channel", 3) if source == "ads1115" else ("pin", 39)
             if source != "disabled":
                 value = entry.get(field)
                 if type(value) is not int or not -1 <= value <= maximum:

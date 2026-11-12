@@ -3,7 +3,11 @@
 
 using namespace basu;
 
-void setUp() { fake::resetGpio(); fake::resetLedc(); Wire.reset(); }
+void setUp() {
+  fake::resetGpio(); fake::resetLedc(); Wire.reset();
+  fake::adc2ReadFails = false;
+  fake::adc2SetupFails = false;
+}
 void tearDown() {}
 
 BoardConfig sensorFixture() {
@@ -95,6 +99,47 @@ void test_native_out_of_reviewed_range_is_not_a_valid_numeric_reading() {
   TEST_ASSERT_EQUAL_STRING("out_of_range", hardware.sensorStatus(1, 100));
   TEST_ASSERT_FALSE(hardware.measurements().flow.valid);
   TEST_ASSERT_EQUAL_STRING("reading_received", hardware.sensorStatus(0, 100));
+}
+
+void test_adc2_pressure_separates_conversion_failure_from_a_low_sample() {
+  auto config = sensorFixture();
+  config.pressure.source = AnalogSource::NativeAdc2;
+  config.pressure.pin = 26;
+  TEST_ASSERT_EQUAL_STRING("ADC2 pin invalid or conflicting", validateBoardConfig(config));
+  config.pressure.pin = 27;
+  config.pressure.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
+  config.pressure.minPinVolts = 0.100;
+  config.pressure.maxPinVolts = 1.000;
+  config.pressure.unitsPerVolt = 100;
+
+  fake::adc2SetupFails = true;
+  Hardware setupFailure(config, false);
+  TEST_ASSERT_FALSE(setupFailure.begin());
+  TEST_ASSERT_EQUAL_STRING("adc2_initialization_failed", setupFailure.error());
+  fake::adc2SetupFails = false;
+
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_EQUAL(ADC_2_5db, fake::adcAttenuation[27]);
+  fake::adcMillivolts[27] = 78;
+  hardware.sample(100);
+  TEST_ASSERT_TRUE(hardware.measurements().pressureBelowAdcRange);
+  TEST_ASSERT_EQUAL_UINT32(78, hardware.pressureAdcMillivolts(100).value());
+  TEST_ASSERT_EQUAL_STRING("out_of_range", hardware.sensorStatus(0, 100));
+
+  fake::adc2ReadFails = true;
+  hardware.sample(200);
+  TEST_ASSERT_FALSE(hardware.measurements().pressureBelowAdcRange);
+  TEST_ASSERT_FALSE(hardware.measurements().pressure.valid);
+  TEST_ASSERT_FALSE(hardware.pressureAdcMillivolts(200).has_value());
+  TEST_ASSERT_EQUAL_STRING("hardware_unavailable", hardware.sensorStatus(0, 200));
+  TEST_ASSERT_EQUAL_STRING("reading_received", hardware.sensorStatus(1, 200));
+
+  fake::adc2ReadFails = false;
+  fake::adcMillivolts[27] = 810;
+  hardware.sample(300);
+  TEST_ASSERT_TRUE(hardware.measurements().pressure.valid);
+  TEST_ASSERT_EQUAL_DOUBLE(81, hardware.measurements().pressure.value);
 }
 
 void test_native_low_attenuation_has_a_supported_per_pin_range() {
@@ -217,6 +262,7 @@ void test_freshness_survives_unsigned_millis_rollover() {
 void test_source_names_are_fixed_diagnostic_codes() {
   TEST_ASSERT_EQUAL_STRING("disabled", analogSourceName(AnalogSource::Disabled));
   TEST_ASSERT_EQUAL_STRING("native_adc1", analogSourceName(AnalogSource::NativeAdc1));
+  TEST_ASSERT_EQUAL_STRING("native_adc2", analogSourceName(AnalogSource::NativeAdc2));
   TEST_ASSERT_EQUAL_STRING("ads1115", analogSourceName(AnalogSource::Ads1115));
 }
 
@@ -318,6 +364,7 @@ int main() {
   RUN_TEST(test_uncalibrated_channel_is_explained_without_initializing_other_inputs);
   RUN_TEST(test_configured_waiting_fresh_and_stale_native_readings_are_reported);
   RUN_TEST(test_native_out_of_reviewed_range_is_not_a_valid_numeric_reading);
+  RUN_TEST(test_adc2_pressure_separates_conversion_failure_from_a_low_sample);
   RUN_TEST(test_native_low_attenuation_has_a_supported_per_pin_range);
   RUN_TEST(test_native_low_attenuation_validation_does_not_change_ads);
   RUN_TEST(test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivity);

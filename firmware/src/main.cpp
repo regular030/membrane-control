@@ -282,7 +282,7 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
       JsonObject input = sensorInputs[names[index]].to<JsonObject>();
       input["source"] = basu::analogSourceName(configured[index]->source);
       input["calibration_verified"] = configured[index]->calibrationVerified;
-      if (configured[index]->source == basu::AnalogSource::NativeAdc1) input["pin"] = configured[index]->pin;
+      if (basu::usesNativeAdc(configured[index]->source)) input["pin"] = configured[index]->pin;
       else if (configured[index]->source == basu::AnalogSource::Ads1115) input["channel"] = configured[index]->adsChannel;
     }
     document["protocol_version"] = 1;

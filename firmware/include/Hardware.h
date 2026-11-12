@@ -2,7 +2,9 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <driver/adc.h>
 #include <driver/ledc.h>
+#include <esp_adc_cal.h>
 #include "BoardConfig.h"
 #include "ManualValveConfig.h"
 #include "PumpTach.h"
@@ -21,6 +23,7 @@ struct SensorTestMillivolts {
 inline const char* analogSourceName(AnalogSource source) {
   switch (source) {
     case AnalogSource::NativeAdc1: return "native_adc1";
+    case AnalogSource::NativeAdc2: return "native_adc2";
     case AnalogSource::Ads1115: return "ads1115";
     default: return "disabled";
   }
@@ -77,10 +80,13 @@ class Hardware {
     if (config_.pumpCommandSource == PumpCommandSource::PwmConverter && !beginPumpPwm())
       return fail("pwm_initialization_failed");
     for (const AnalogConfig* input : inputs()) {
+      if (!usesNativeAdc(input->source)) continue;
+      pinMode(input->pin, INPUT);
+      const bool lowRange = input->nativeAdcAttenuation == NativeAdcAttenuation::Db2_5;
       if (input->source == AnalogSource::NativeAdc1) {
-        pinMode(input->pin, INPUT);
-        const auto attenuation = input->nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 ? ADC_2_5db : ADC_11db;
-        analogSetPinAttenuation(input->pin, attenuation);
+        analogSetPinAttenuation(input->pin, lowRange ? ADC_2_5db : ADC_11db);
+      } else if (adc2_config_channel_atten(adc2Channel(input->pin), lowRange ? ADC_ATTEN_DB_2_5 : ADC_ATTEN_DB_12) != ESP_OK) {
+        return fail("adc2_initialization_failed");
       }
     }
     if (boardUsesI2c(config_)) {
@@ -243,16 +249,17 @@ class Hardware {
       auto configurations = inputs();
       auto destinations = readings();
       for (std::size_t i = 0; i < configurations.size(); ++i) {
-        if (configurations[i]->source == AnalogSource::NativeAdc1) {
-          const uint32_t pinMillivolts = analogReadMilliVolts(configurations[i]->pin);
-          const double pinVolts = pinMillivolts / 1000.0;
-          *destinations[i] = calibratedReading(*configurations[i], pinVolts, now);
-          if (configurations[i] == &config_.pressure) {
-            pressureAdcMillivolts_ = pinMillivolts;
-            measurements_.pressureBelowAdcRange = pinVolts > 0 && pinVolts < config_.pressure.minPinVolts;
-          }
-          sensorReadState_[i] = destinations[i]->valid ? SensorReadState::Reading : SensorReadState::OutOfRange;
+        const auto& input = *configurations[i];
+        if (!usesNativeAdc(input.source)) continue;
+        const auto millivolts = readNativeMillivolts(input);
+        const double pinVolts = millivolts ? *millivolts / 1000.0 : NAN;
+        *destinations[i] = calibratedReading(input, pinVolts, now);
+        if (&input == &config_.pressure) {
+          pressureAdcMillivolts_ = millivolts;
+          measurements_.pressureBelowAdcRange = pinVolts > 0 && pinVolts < input.minPinVolts;
         }
+        sensorReadState_[i] = !millivolts ? SensorReadState::Unavailable :
+            (destinations[i]->valid ? SensorReadState::Reading : SensorReadState::OutOfRange);
       }
     }
     sampleAds(now);
@@ -309,6 +316,23 @@ class Hardware {
   }
 
  private:
+  static adc2_channel_t adc2Channel(int pin) {
+    return pin == 27 ? ADC2_CHANNEL_7 : ADC2_CHANNEL_9;
+  }
+
+  static std::optional<uint32_t> readNativeMillivolts(const AnalogConfig& input) {
+    if (input.source == AnalogSource::NativeAdc1) return analogReadMilliVolts(input.pin);
+
+    // Arduino's analogReadMilliVolts can turn an ADC2 driver failure into a
+    // calibrated zero-code voltage. Keep failure distinct from low pressure.
+    int raw = 0;
+    if (adc2_get_raw(adc2Channel(input.pin), ADC_WIDTH_BIT_12, &raw) != ESP_OK) return std::nullopt;
+    const auto attenuation = input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 ? ADC_ATTEN_DB_2_5 : ADC_ATTEN_DB_12;
+    esp_adc_cal_characteristics_t calibration{};
+    esp_adc_cal_characterize(ADC_UNIT_2, attenuation, ADC_WIDTH_BIT_12, 1100, &calibration);
+    return esp_adc_cal_raw_to_voltage(raw, &calibration);
+  }
+
   static constexpr int kManualDataPin = 14;
   static constexpr int kManualClockPin = 13;
   static constexpr int kManualLatchPin = 12;

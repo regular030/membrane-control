@@ -105,6 +105,19 @@ def test_new_hello_metadata_is_sanitized_and_exposed_without_unlocking(app):
         controller.start_run()
 
 
+def test_adc2_pressure_input_is_preserved_in_connection_diagnostics(app):
+    controller, clock = app
+    input_info = {"source": "native_adc2", "pin": 27, "calibration_verified": True}
+    hello(controller, clock, hardware_verified=True, sensor_inputs={"pressure": input_info})
+    telemetry(controller, clock, hardware_verified=True, pressure_psi=22.4,
+              sensor_status={"pressure": "reading_received"})
+
+    assert controller.device["sensor_inputs"]["pressure"] == input_info
+    assert controller.snapshot["sensor_inputs"]["pressure"] == input_info
+    assert controller.snapshot["pressure_psi"] == 22.4
+    assert rows(controller.snapshot)["pressure"]["status"] == "Reading received"
+
+
 def test_old_firmware_without_diagnostics_keeps_existing_connection_behavior(app):
     controller, clock = app
     hello(controller, clock)
@@ -239,6 +252,7 @@ def test_unverified_or_invalid_manual_pump_profile_cannot_bypass_recipe(app, ver
 @pytest.mark.parametrize("bad", [None, True, [], "unknown", {"pressure": []},
     {"pressure": {"source": ["native_adc1"], "calibration_verified": False}},
     {"pressure": {"source": "native_adc1", "pin": True, "calibration_verified": False}},
+    {"pressure": {"source": "native_adc2", "channel": 7, "calibration_verified": True}},
     {"flow": {"source": "ads1115", "channel": 4, "calibration_verified": False}},
     {"pressure": {"source": "native_adc1", "pin": 34, "calibration_verified": "yes"}}])
 def test_malformed_optional_hello_metadata_does_not_fault_or_reject_identity(app, bad):

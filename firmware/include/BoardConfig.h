@@ -5,7 +5,7 @@
 namespace basu {
 
 enum class RelayKind { DirectGpio, ShiftRegister595 };
-enum class AnalogSource { Disabled, NativeAdc1, Ads1115 };
+enum class AnalogSource { Disabled, NativeAdc1, Ads1115, NativeAdc2 };
 enum class NativeAdcAttenuation { Db11, Db2_5 };
 enum class PumpCommandSource { Gp8403, PwmConverter };
 
@@ -74,9 +74,13 @@ inline bool outputCapablePin(int pin) {
          pin != 20 && pin != 24 && !(pin >= 28 && pin <= 31);
 }
 
+inline bool usesNativeAdc(AnalogSource source) {
+  return source == AnalogSource::NativeAdc1 || source == AnalogSource::NativeAdc2;
+}
+
 inline bool calibrationValid(const AnalogConfig& input) {
-  // On classic ESP32 the recommended 2.5 dB ADC1 range is 0.100–1.250 V.
-  const bool nativeRangeValid = input.source != AnalogSource::NativeAdc1 ||
+  // On classic ESP32 the recommended 2.5 dB ADC range is 0.100–1.250 V.
+  const bool nativeRangeValid = !usesNativeAdc(input.source) ||
       input.nativeAdcAttenuation == NativeAdcAttenuation::Db11 ||
       (input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 &&
        input.minPinVolts >= 0.100 && input.maxPinVolts <= 1.250);
@@ -145,7 +149,7 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
   if (config.pressure.source == AnalogSource::Disabled) return "physical operation requires pressure input";
   if (config.pressureStartupMs &&
       (config.pressureStartupMs > kMaxPressureStartupMs || !config.pumpLimits.requiredValves ||
-       config.pumpCommandSource != PumpCommandSource::PwmConverter || config.pressure.source != AnalogSource::NativeAdc1 ||
+       config.pumpCommandSource != PumpCommandSource::PwmConverter || !usesNativeAdc(config.pressure.source) ||
        config.pressure.nativeAdcAttenuation != NativeAdcAttenuation::Db2_5 || config.pressure.unitsPerVolt <= 0 ||
        config.pressure.minPinVolts * config.pressure.unitsPerVolt + config.pressure.offset >= config.pressureLimitPsi))
     return "pressure startup requires a bounded PWM profile with a low-range native pressure input";
@@ -204,6 +208,9 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
     if (!calibrationValid(*input)) return "sensor calibration or protected pin voltage range invalid";
     if (input->source == AnalogSource::NativeAdc1) {
       if (input->pin < 32 || input->pin > 39 || used[input->pin]) return "ADC1 pin invalid or conflicting";
+      used[input->pin] = true;
+    } else if (input->source == AnalogSource::NativeAdc2) {
+      if ((input->pin != 26 && input->pin != 27) || used[input->pin]) return "ADC2 pin invalid or conflicting";
       used[input->pin] = true;
     } else if (input->source == AnalogSource::Ads1115) {
       usesAds = true;
