@@ -22,6 +22,7 @@ struct AnalogConfig {
   double maxValue = 1000000;
   bool rejectRails = true;
   NativeAdcAttenuation nativeAdcAttenuation = NativeAdcAttenuation::Db11;
+  bool nativeAdc2Pulldown = false;  // Calibration must include the enabled pull-down's loading.
 };
 
 struct BoardConfig {
@@ -204,6 +205,8 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
   bool usesAds = false;
   std::array<bool, 4> adsChannels{};
   for (const AnalogConfig* input : {&config.pressure, &config.flow, &config.pumpFeedback}) {
+    if (input->nativeAdc2Pulldown && input->source != AnalogSource::NativeAdc2)
+      return "internal pull-down requires a native ADC2 input";
     if (input->source == AnalogSource::Disabled) continue;
     if (!calibrationValid(*input)) return "sensor calibration or protected pin voltage range invalid";
     if (input->source == AnalogSource::NativeAdc1) {

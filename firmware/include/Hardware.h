@@ -4,6 +4,7 @@
 #include <Wire.h>
 #include <driver/adc.h>
 #include <driver/ledc.h>
+#include <driver/rtc_io.h>
 #include <esp_adc_cal.h>
 #include "BoardConfig.h"
 #include "ManualValveConfig.h"
@@ -87,6 +88,8 @@ class Hardware {
         analogSetPinAttenuation(input->pin, lowRange ? ADC_2_5db : ADC_11db);
       } else if (adc2_config_channel_atten(adc2Channel(input->pin), lowRange ? ADC_ATTEN_DB_2_5 : ADC_ATTEN_DB_12) != ESP_OK) {
         return fail("adc2_initialization_failed");
+      } else if (input->nativeAdc2Pulldown && rtc_gpio_pulldown_en(static_cast<gpio_num_t>(input->pin)) != ESP_OK) {
+        return fail("adc2_pulldown_initialization_failed");
       }
     }
     if (boardUsesI2c(config_)) {

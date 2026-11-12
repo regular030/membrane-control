@@ -7,6 +7,8 @@ void setUp() {
   fake::resetGpio(); fake::resetLedc(); Wire.reset();
   fake::adc2ReadFails = false;
   fake::adc2SetupFails = false;
+  fake::adc2PulldownFails = false;
+  fake::adc2PulldownEnabled.fill(false);
 }
 void tearDown() {}
 
@@ -140,6 +142,30 @@ void test_adc2_pressure_separates_conversion_failure_from_a_low_sample() {
   hardware.sample(300);
   TEST_ASSERT_TRUE(hardware.measurements().pressure.valid);
   TEST_ASSERT_EQUAL_DOUBLE(81, hardware.measurements().pressure.value);
+}
+
+void test_adc2_pulldown_is_opt_in_and_applied_after_adc_setup() {
+  auto config = sensorFixture();
+  config.pressure.nativeAdc2Pulldown = true;
+  TEST_ASSERT_EQUAL_STRING("internal pull-down requires a native ADC2 input", validateBoardConfig(config));
+
+  config.pressure.source = AnalogSource::NativeAdc2;
+  config.pressure.pin = 27;
+  Hardware enabled(config, false);
+  TEST_ASSERT_TRUE(enabled.begin());
+  TEST_ASSERT_TRUE(fake::adc2PulldownEnabled[27]);
+  TEST_ASSERT_FALSE(fake::adc2PulldownEnabled[config.flow.pin]);
+
+  fake::adc2PulldownFails = true;
+  Hardware failed(config, false);
+  TEST_ASSERT_FALSE(failed.begin());
+  TEST_ASSERT_EQUAL_STRING("adc2_pulldown_initialization_failed", failed.error());
+
+  config.pressure.nativeAdc2Pulldown = false;
+  fake::adc2PulldownEnabled.fill(false);
+  Hardware disabled(config, false);
+  TEST_ASSERT_TRUE(disabled.begin());
+  TEST_ASSERT_FALSE(fake::adc2PulldownEnabled[27]);
 }
 
 void test_native_low_attenuation_has_a_supported_per_pin_range() {
@@ -365,6 +391,7 @@ int main() {
   RUN_TEST(test_configured_waiting_fresh_and_stale_native_readings_are_reported);
   RUN_TEST(test_native_out_of_reviewed_range_is_not_a_valid_numeric_reading);
   RUN_TEST(test_adc2_pressure_separates_conversion_failure_from_a_low_sample);
+  RUN_TEST(test_adc2_pulldown_is_opt_in_and_applied_after_adc_setup);
   RUN_TEST(test_native_low_attenuation_has_a_supported_per_pin_range);
   RUN_TEST(test_native_low_attenuation_validation_does_not_change_ads);
   RUN_TEST(test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivity);
