@@ -124,9 +124,11 @@ and select **Run pump at 50%**. The app stages the voltage and waits for it
 to settle before requesting RUN. Only the dedicated RUN relay is commanded
 closed, for up to 10 seconds. Observe the pump display and measure 14/5.
 Stop, expiry, or loss of USB opens RUN before commanding
-zero. This bench build reads the pump feedback divider on IO34 / GPIO34,
-as wired for the current test. SVN / GPIO39 is used for flow on this setup.
-The app's DB25 voltage estimate assumes a 5:1 divider.
+zero. The bench build expects the pump feedback divider on IO34 / GPIO34,
+as wired for the earlier isolated test. The current full-rig wiring uses
+IO34 for pressure and SVN / GPIO39 for flow. With that wiring, the bench
+window's IO34 voltage comes from the pressure input. The DB25 voltage
+estimate applies only when a 5:1 pump feedback divider is wired to IO34.
 
 ## Spare onboard relay for start/stop
 

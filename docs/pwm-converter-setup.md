@@ -74,9 +74,12 @@ do not turn an unknown interval or an unchecked interface into approval.
 The lab observed about 5 V at DB25 1/3 and 165 mL/min on the drive during
 the isolated 50% open-bucket test. That observation covers the 50% point.
 For the CWF rig the lab specified V1 and V3 open during pumping, an 80 psi
-cutoff, and all installed valves off at Stop. The current sensor wiring
-uses IO34 for pump feedback and SVN for flow. Confirm the pressure input
-and verify its valid reading at rest before enabling a CWF run.
+cutoff, and all installed valves off at Stop. The current full-rig wiring
+uses IO34 for pressure and SVN for flow. Pump feedback has no confirmed
+separate input in this wiring. On November 12, the ESP32 reported 142 mV
+at IO34 with the pump stopped. The configured native ADC range starts at
+150 mV. Verify a calibrated pressure reading at rest and a distinguishable
+fault when the pressure signal is lost before enabling a CWF run.
 
 The PWM-specific fields are `pumpPwmPin`, `pumpPwmChannel`,
 `pumpPwmFrequencyHz`, `pumpPwmResolutionBits`, `pwmSettleMs` and
