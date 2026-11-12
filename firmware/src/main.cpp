@@ -485,7 +485,7 @@ void writeTelemetry(uint32_t now) {
   };
   addReading("pressure_psi", controller.measurements().pressure);
   if (const char* startup = controller.manualPressureStartupStatus(now)) document["pressure_startup"] = startup;
-  if (controller.manualPressureStartupMs()) {
+  if (controller.manualPressureStartupMs() || hardware.pressureMonitoringOnly()) {
     if (const auto millivolts = hardware.pressureAdcMillivolts(now)) document["pressure_adc_mv"] = *millivolts;
   }
   addReading("flow_ml_min", controller.measurements().flow);
@@ -523,7 +523,7 @@ void setup() {
     hardware.beginManualValves(basu::confirmedRigManualValves());
   controller.setValveControlReady(hardware.valveControlReady());
   // Pump/sensor setup remains separate from the confirmed six-valve capability.
-  if (!initialized && board.verifiedBoardConfig) controller.latchFault(hardware.error());
+  if (!initialized && board.verifiedBoardConfig && !hardware.pressureMonitoringOnly()) controller.latchFault(hardware.error());
 #ifdef BASU_BLUETOOTH_DRY_RUN
   bluetoothInput = xQueueCreate(basu::kMaxLineBytes + 1, sizeof(uint8_t));
   if (bluetoothInput == nullptr) {

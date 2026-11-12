@@ -926,7 +926,7 @@ class AppController:
         pressure_startup = checked_pressure_startup(packet, pump_profile)
         self.snapshot["pressure_startup"] = pressure_startup if not self.local_fault else None
         pressure_adc_mv = packet.get("pressure_adc_mv")
-        self.snapshot["pressure_adc_mv"] = (pressure_adc_mv if pump_profile and "pressure_startup_ms" in pump_profile
+        self.snapshot["pressure_adc_mv"] = (pressure_adc_mv if not packet["simulation"]
             and type(pressure_adc_mv) is int and 0 <= pressure_adc_mv <= 3300 else None)
         self.snapshot["live_sensor_voltages"] = (_adc_pin_mv(packet.get("adc_pin_mv"))
             if self.snapshot["sensor_test_available"] and not packet["simulation"] and not packet["hardware_verified"] else {})

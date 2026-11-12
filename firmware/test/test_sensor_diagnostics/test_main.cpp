@@ -168,6 +168,36 @@ void test_adc2_pulldown_is_opt_in_and_applied_after_adc_setup() {
   TEST_ASSERT_FALSE(fake::adc2PulldownEnabled[27]);
 }
 
+void test_uncalibrated_adc2_pulldown_monitors_voltage_without_enabling_pump() {
+  auto config = sensorFixture();
+  config.pressure.source = AnalogSource::NativeAdc2;
+  config.pressure.pin = 27;
+  config.pressure.calibrationVerified = false;
+  config.pressure.nativeAdc2Pulldown = true;
+  Hardware hardware(config, false);
+  TEST_ASSERT_FALSE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.pressureMonitoringOnly());
+  TEST_ASSERT_TRUE(fake::adc2PulldownEnabled[27]);
+  TEST_ASSERT_EQUAL_STRING("pressure_calibration_pending", hardware.error());
+  TEST_ASSERT_FALSE(hardware.pumpContactCommandAvailable());
+  for (const auto& event : fake::gpioEvents) {
+    TEST_ASSERT_FALSE(event.write);
+    TEST_ASSERT_EQUAL(27, event.pin);
+    TEST_ASSERT_EQUAL(INPUT, event.value);
+  }
+  Outputs pumping;
+  pumping.pumpPercent = 25;
+  TEST_ASSERT_FALSE(hardware.apply(pumping, 1000, true));
+  fake::adcMillivolts[27] = 800;
+  hardware.sample(1100);
+  TEST_ASSERT_EQUAL_UINT32(800, hardware.pressureAdcMillivolts(1100).value());
+  TEST_ASSERT_FALSE(hardware.measurements().pressure.valid);
+  TEST_ASSERT_EQUAL_STRING("uncalibrated", hardware.sensorStatus(0, 1100));
+  TEST_ASSERT_FALSE(hardware.pressureAdcMillivolts(1301).has_value());
+  TEST_ASSERT_EQUAL(0, Wire.transactionCount);
+  TEST_ASSERT_EQUAL(0, fake::ledcCalls);
+}
+
 void test_native_low_attenuation_has_a_supported_per_pin_range() {
   auto config = sensorFixture();
   config.pressure.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
@@ -392,6 +422,7 @@ int main() {
   RUN_TEST(test_native_out_of_reviewed_range_is_not_a_valid_numeric_reading);
   RUN_TEST(test_adc2_pressure_separates_conversion_failure_from_a_low_sample);
   RUN_TEST(test_adc2_pulldown_is_opt_in_and_applied_after_adc_setup);
+  RUN_TEST(test_uncalibrated_adc2_pulldown_monitors_voltage_without_enabling_pump);
   RUN_TEST(test_native_low_attenuation_has_a_supported_per_pin_range);
   RUN_TEST(test_native_low_attenuation_validation_does_not_change_ads);
   RUN_TEST(test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivity);

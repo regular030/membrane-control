@@ -1840,12 +1840,13 @@ class MainWindow(QMainWindow):
                 else:
                     sensor_setup.sync_connection()
             sensor_zero = sensor_setup.zero_baselines() if sensor_setup is not None else snap.get("live_sensor_zero", {})
-            pressure_adc_mv = snap.get("pressure_adc_mv") if connected and fresh and pump_profile else None
+            pressure_adc_mv = snap.get("pressure_adc_mv") if connected and fresh and not simulation else None
             for key, (_, unit, channel) in METRICS.items():
                 value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
                 raw = live_mv.get(channel)
                 if value == "Waiting" and key == "pressure_psi" and pressure_adc_mv is not None:
-                    unit = f"{pressure_adc_mv} mV at ESP32"
+                    value = _number(pressure_adc_mv / 1000, 3)
+                    unit = "V at ESP32"
                     if pressure_startup:
                         unit += " · below calibrated ADC range"
                 elif value == "Waiting" and raw is not None:

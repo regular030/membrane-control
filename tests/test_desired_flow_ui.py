@@ -217,7 +217,7 @@ def test_reviewed_manual_pump_start_uses_fixed_valves_and_limit(screen, monkeypa
     assert window.manual_stop.isEnabled()
 
 
-def test_manual_pump_pressure_startup_keeps_pressure_waiting_and_stop_available(screen):
+def test_manual_pump_pressure_startup_displays_voltage_and_keeps_stop_available(screen):
     window, controller, now = screen
     controller.set_simulation(False)
     controller.last_telemetry = now[0]
@@ -229,8 +229,8 @@ def test_manual_pump_pressure_startup_keeps_pressure_waiting_and_stop_available(
     window.manual_pump.setValue(25)
     assert window.manual_apply.isEnabled()
     assert "10 s after the RUN relay closes" in window.manual_pump_status.text()
-    assert window._metric_labels["pressure_psi"].text() == "Waiting"
-    assert window._metric_units["pressure_psi"].text() == "74 mV at ESP32 · below calibrated ADC range"
+    assert window._metric_labels["pressure_psi"].text() == "0.074"
+    assert window._metric_units["pressure_psi"].text() == "V at ESP32 · below calibrated ADC range"
 
     snapshot.update(state="manual", valves=valves, pump_percent=25, pressure_startup="active")
     window._update_view(snapshot)
@@ -242,6 +242,22 @@ def test_manual_pump_pressure_startup_keeps_pressure_waiting_and_stop_available(
     window._update_view(snapshot)
     assert window.manual_apply.isEnabled()
     assert window._metric_labels["pressure_psi"].text() == "12.00"
+    assert window._metric_units["pressure_psi"].text() == "psi"
+
+
+def test_uncalibrated_pressure_card_displays_fresh_voltage_without_pump_approval(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, pressure_adc_mv=86)
+    window._update_view(snapshot)
+    assert window._metric_labels["pressure_psi"].text() == "0.086"
+    assert window._metric_units["pressure_psi"].text() == "V at ESP32"
+    assert not window.manual_apply.isEnabled()
+
+    now[0] += 3
+    window._update_view(snapshot)
+    assert window._metric_labels["pressure_psi"].text() == "Waiting"
     assert window._metric_units["pressure_psi"].text() == "psi"
 
 

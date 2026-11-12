@@ -55,6 +55,16 @@ class Hardware {
 
   bool begin() {
     if (simulation_) return true;
+    const auto& pressure = config_.pressure;
+    if (config_.verifiedBoardConfig && !pressure.calibrationVerified && pressure.nativeAdc2Pulldown &&
+        pressure.source == AnalogSource::NativeAdc2 && (pressure.pin == 26 || pressure.pin == 27)) {
+      error_ = initializeNativeInput(pressure);
+      if (!error_) {
+        pressureMonitoringOnly_ = true;
+        error_ = "pressure_calibration_pending";
+      }
+      return false;
+    }
     if (const char* error = validateBoardConfig(config_)) { error_ = error; return false; }
     profileValidated_ = true;
     // Set a GPIO contact to STOP first. A shared relay bit is latched LOW
@@ -82,15 +92,7 @@ class Hardware {
       return fail("pwm_initialization_failed");
     for (const AnalogConfig* input : inputs()) {
       if (!usesNativeAdc(input->source)) continue;
-      pinMode(input->pin, INPUT);
-      const bool lowRange = input->nativeAdcAttenuation == NativeAdcAttenuation::Db2_5;
-      if (input->source == AnalogSource::NativeAdc1) {
-        analogSetPinAttenuation(input->pin, lowRange ? ADC_2_5db : ADC_11db);
-      } else if (adc2_config_channel_atten(adc2Channel(input->pin), lowRange ? ADC_ATTEN_DB_2_5 : ADC_ATTEN_DB_12) != ESP_OK) {
-        return fail("adc2_initialization_failed");
-      } else if (input->nativeAdc2Pulldown && rtc_gpio_pulldown_en(static_cast<gpio_num_t>(input->pin)) != ESP_OK) {
-        return fail("adc2_pulldown_initialization_failed");
-      }
+      if (const char* error = initializeNativeInput(*input)) return fail(error);
     }
     if (boardUsesI2c(config_)) {
       if (!Wire.begin(config_.i2cSdaPin, config_.i2cSclPin, 100000)) return fail("i2c_initialization_failed");
@@ -241,8 +243,8 @@ class Hardware {
   void sample(uint32_t now, bool valveOnly = false) {
     if (simulation_) return;
     pumpTach_.sample(now);
-    if (!ready_) return;
-    if (!valveOnly && config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
+    if (!ready_ && !pressureMonitoringOnly_) return;
+    if (ready_ && !valveOnly && config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
         static_cast<uint32_t>(now - lastHealthMs_) >= 1000) {
       lastHealthMs_ = now;
       if (!probe(config_.gp8403Address)) { fail("gp8403_disconnected"); return; }
@@ -253,6 +255,7 @@ class Hardware {
       auto destinations = readings();
       for (std::size_t i = 0; i < configurations.size(); ++i) {
         const auto& input = *configurations[i];
+        if (pressureMonitoringOnly_ && &input != &config_.pressure) continue;
         if (!usesNativeAdc(input.source)) continue;
         const auto millivolts = readNativeMillivolts(input);
         const double pinVolts = millivolts ? *millivolts / 1000.0 : NAN;
@@ -265,7 +268,7 @@ class Hardware {
             (destinations[i]->valid ? SensorReadState::Reading : SensorReadState::OutOfRange);
       }
     }
-    sampleAds(now);
+    if (ready_) sampleAds(now);
   }
 
   bool sensorTestAvailable(bool factoryProfile) const {
@@ -296,13 +299,15 @@ class Hardware {
   }
 
   bool ready() const { return ready_; }
+  bool pressureMonitoringOnly() const { return pressureMonitoringOnly_; }
   bool valveControlReady() const { return manualValvesReady_; }
   const std::array<int, kManualValveCount>& manualValveBits() const { return manualConfig_.bits; }
   const char* valveError() const { return valveError_ ? valveError_ : "valve_control_not_ready"; }
   const char* error() const { return error_; }
   const Measurements& measurements() const { return measurements_; }
   std::optional<uint32_t> pressureAdcMillivolts(uint32_t now) const {
-    if (!ready_ || static_cast<uint32_t>(now - measurements_.pressure.acquiredMs) > 2 * kNativeAdcSampleIntervalMs)
+    if ((!ready_ && !pressureMonitoringOnly_) ||
+        static_cast<uint32_t>(now - measurements_.pressure.acquiredMs) > 2 * kNativeAdcSampleIntervalMs)
       return std::nullopt;
     return pressureAdcMillivolts_;
   }
@@ -319,6 +324,19 @@ class Hardware {
   }
 
  private:
+  static const char* initializeNativeInput(const AnalogConfig& input) {
+    pinMode(input.pin, INPUT);
+    const bool lowRange = input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5;
+    if (input.source == AnalogSource::NativeAdc1) {
+      analogSetPinAttenuation(input.pin, lowRange ? ADC_2_5db : ADC_11db);
+    } else if (adc2_config_channel_atten(adc2Channel(input.pin), lowRange ? ADC_ATTEN_DB_2_5 : ADC_ATTEN_DB_12) != ESP_OK) {
+      return "adc2_initialization_failed";
+    } else if (input.nativeAdc2Pulldown && rtc_gpio_pulldown_en(static_cast<gpio_num_t>(input.pin)) != ESP_OK) {
+      return "adc2_pulldown_initialization_failed";
+    }
+    return nullptr;
+  }
+
   static adc2_channel_t adc2Channel(int pin) {
     return pin == 27 ? ADC2_CHANNEL_7 : ADC2_CHANNEL_9;
   }
@@ -553,6 +571,7 @@ class Hardware {
   bool pumpRunContactCommanded_ = false;
   uint32_t pumpCommandChangedMs_ = 0;
   bool ready_ = false;
+  bool pressureMonitoringOnly_ = false;
   bool sensorTestPinsInitialized_ = false;
   bool safeStopIssued_ = false;
   const char* error_ = "hardware_not_initialized";

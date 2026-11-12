@@ -118,6 +118,21 @@ def test_adc2_pressure_input_is_preserved_in_connection_diagnostics(app):
     assert rows(controller.snapshot)["pressure"]["status"] == "Reading received"
 
 
+def test_raw_pressure_voltage_is_available_without_pump_approval(app):
+    controller, clock = app
+    hello(controller, clock, sensor_inputs={"pressure": {
+        "source": "native_adc2", "pin": 26, "calibration_verified": False}})
+    telemetry(controller, clock, pressure_adc_mv=86, sensor_status={"pressure": "uncalibrated"})
+    assert controller.snapshot["pressure_adc_mv"] == 86
+    assert controller.snapshot["pressure_psi"] is None
+    assert controller.snapshot["pressure_startup"] is None
+    with pytest.raises(ValueError, match="verified firmware"):
+        controller.start_run()
+
+    telemetry(controller, clock, uptime_ms=1250)
+    assert controller.snapshot["pressure_adc_mv"] is None
+
+
 def test_old_firmware_without_diagnostics_keeps_existing_connection_behavior(app):
     controller, clock = app
     hello(controller, clock)
@@ -214,7 +229,8 @@ def test_missing_or_invalid_startup_capability_never_unlocks_pump(app, startup_m
         "max_percent": 50, "valves": valves, "pressure_startup_ms": startup_ms})
     telemetry(controller, clock, hardware_verified=True, pressure_startup="available", pressure_adc_mv=74)
     assert controller.snapshot["manual_pump_profile"] == {"max_percent": 50, "valves": valves}
-    assert controller.snapshot["pressure_startup"] is controller.snapshot["pressure_adc_mv"] is None
+    assert controller.snapshot["pressure_startup"] is None
+    assert controller.snapshot["pressure_adc_mv"] == 74
     with pytest.raises(ValueError, match="valid pressure"):
         controller.set_manual(valves, 25)
 
