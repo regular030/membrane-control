@@ -43,6 +43,7 @@ basu::SafetyConfig makeSafety() {
   safety.safeValves = board.safeValves;
   safety.valve6Absent = !kSimulation && basu::hasAbsentValve6(board);
   safety.sensorMaxAgeMs = board.sensorMaxAgeMs;
+  safety.pumpLimits = board.pumpLimits;
   return safety;
 }
 basu::Controller controller(makeSafety());

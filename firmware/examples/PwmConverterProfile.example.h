@@ -26,18 +26,21 @@ inline BoardConfig compiledBoardConfig() {
   config.shiftOePin = 5;
   // Installed V1-V5 and V7. Slot 5 is the absent V6 and stays false on the wire.
   config.valveBits = {{0, 1, 2, 3, 5, -1, 6}};
+  config.pumpLimits.maxPercent = 50;
+  config.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
   // Lab Stop leaves all installed valves off. Confirm the rest of the
   // output configuration on the actual rig before enabling the profile.
   // Current full-rig wiring puts the pressure divider on IO34. The
   // separate bucket test previously used that pin for pump feedback.
   config.pressure.source = AnalogSource::NativeAdc1;
   config.pressure.pin = 34;
+  config.pressure.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
   config.pressure.calibrationVerified = false;
   // Certificate endpoints: 0 psi at 0.005 V, 100 psi at 5.004 V.
   // Candidate coefficients assume the documented 5:1 input divider.
   config.pressure.unitsPerVolt = 100.0 * 5.0 / (5.004 - 0.005);
   config.pressure.offset = -0.005 * config.pressure.unitsPerVolt / 5.0;
-  config.pressure.minPinVolts = 0.150;  // Lower end of the production 11 dB ADC range.
+  config.pressure.minPinVolts = 0.100;  // Lower end of the 2.5 dB ADC range.
   config.pressure.maxPinVolts = 5.004 / 5.0;
   config.pressure.minValue = 0;
   config.pressure.maxValue = 100;

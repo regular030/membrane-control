@@ -464,6 +464,43 @@ void test_onboard_contact_opens_even_if_pwm_cannot_be_zeroed() {
   TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
 }
 
+void test_hardware_profile_limits_cannot_be_bypassed() {
+  auto config = onboardContactFixture();
+  config.valveBits[kValve6Slot] = -1;
+  config.pumpLimits.maxPercent = 50;
+  const std::array<bool, kValveCount> requiredValves{{true, false, true, false, false, false, false}};
+  config.pumpLimits.requiredValves = requiredValves;
+  auto invalid = config;
+  invalid.pumpLimits.maxPercent = NAN;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(invalid));
+  invalid.pumpLimits.maxPercent = 100.01;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(invalid));
+  invalid = config;
+  (*invalid.pumpLimits.requiredValves)[kValve6Slot] = true;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(invalid));
+
+  for (const bool wrongPath : {false, true}) {
+    fake::resetGpio();
+    fake::resetLedc();
+    Hardware hardware(config, false);
+    TEST_ASSERT_TRUE(hardware.begin());
+    const Outputs allowed{requiredValves, 50};
+    TEST_ASSERT_TRUE(hardware.apply(allowed, 1000));
+    TEST_ASSERT_EQUAL_HEX16(0x0005, latchedWords().back().word);
+    TEST_ASSERT_TRUE(hardware.apply(allowed, 1100, true));
+    TEST_ASSERT_EQUAL_HEX16(0x8005, latchedWords().back().word);
+    Outputs disallowed = allowed;
+    if (wrongPath) disallowed.valves[1] = true;
+    else disallowed.pumpPercent = 50.01;
+    TEST_ASSERT_FALSE(hardware.apply(disallowed, 1101, true));
+    TEST_ASSERT_EQUAL_STRING(wrongPath ? "pump_valve_path_mismatch" : "pump_percent_exceeds_profile_limit", hardware.error());
+    TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
+    TEST_ASSERT_EQUAL(0, fake::ledcDuties[0]);
+    TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
+    TEST_ASSERT_FALSE(hardware.apply(allowed, 5000, true));
+  }
+}
+
 void test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile() {
   for (bool fullReady : {false, true}) {
     auto config = onboardContactFixture();
@@ -645,6 +682,7 @@ int main() {
   RUN_TEST(test_onboard_startup_latches_stopped_before_enabling_outputs);
   RUN_TEST(test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run);
   RUN_TEST(test_onboard_contact_opens_even_if_pwm_cannot_be_zeroed);
+  RUN_TEST(test_hardware_profile_limits_cannot_be_bypassed);
   RUN_TEST(test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile);
   RUN_TEST(test_manual_fallback_rejects_pump_overlap_or_active_low_relay);
   RUN_TEST(test_absent_v6_frees_bit4_and_rejects_commands_to_the_absent_valve);

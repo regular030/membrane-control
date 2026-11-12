@@ -6,6 +6,7 @@ namespace basu {
 
 enum class RelayKind { DirectGpio, ShiftRegister595 };
 enum class AnalogSource { Disabled, NativeAdc1, Ads1115 };
+enum class NativeAdcAttenuation { Db11, Db2_5 };
 enum class PumpCommandSource { Gp8403, PwmConverter };
 
 struct AnalogConfig {
@@ -20,6 +21,7 @@ struct AnalogConfig {
   double minValue = -1000000;
   double maxValue = 1000000;
   bool rejectRails = true;
+  NativeAdcAttenuation nativeAdcAttenuation = NativeAdcAttenuation::Db11;
 };
 
 struct BoardConfig {
@@ -62,6 +64,7 @@ struct BoardConfig {
   int pumpContactBit = -1;  // Reviewed spare 595 bit; leave -1 for a separate GPIO contact.
   int pumpTachPin = -1;  // Set only for a reviewed, conditioned tach signal.
   uint16_t pumpTachPulsesPerRevolution = 100;  // Masterflex 75211-70 tach specification.
+  PumpOperatingLimits pumpLimits;
 };
 
 inline bool outputCapablePin(int pin) {
@@ -71,7 +74,12 @@ inline bool outputCapablePin(int pin) {
 }
 
 inline bool calibrationValid(const AnalogConfig& input) {
-  return input.calibrationVerified && std::isfinite(input.unitsPerVolt) && input.unitsPerVolt != 0 &&
+  // On classic ESP32 the recommended 2.5 dB ADC1 range is 0.100–1.250 V.
+  const bool nativeRangeValid = input.source != AnalogSource::NativeAdc1 ||
+      input.nativeAdcAttenuation == NativeAdcAttenuation::Db11 ||
+      (input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 &&
+       input.minPinVolts >= 0.100 && input.maxPinVolts <= 1.250);
+  return nativeRangeValid && input.calibrationVerified && std::isfinite(input.unitsPerVolt) && input.unitsPerVolt != 0 &&
          std::isfinite(input.offset) && std::isfinite(input.minPinVolts) &&
          std::isfinite(input.maxPinVolts) && input.minPinVolts >= 0 &&
          input.maxPinVolts <= 3.3 && input.maxPinVolts > input.minPinVolts &&
@@ -116,6 +124,12 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
   if (!config.safeProfileVerified || !std::isfinite(config.pressureLimitPsi) ||
       config.pressureLimitPsi <= 0 || config.sensorMaxAgeMs < 100 || config.sensorMaxAgeMs > 3000)
     return "verified safe states, positive pressure limit and sensor age are required";
+  if (!std::isfinite(config.pumpLimits.maxPercent) ||
+      config.pumpLimits.maxPercent < 0 || config.pumpLimits.maxPercent > 100)
+    return "pump profile limit must be finite and 0-100";
+  if (config.pumpLimits.requiredValves && hasAbsentValve6(config) &&
+      (*config.pumpLimits.requiredValves)[kValve6Slot])
+    return "pump valve path includes absent V6";
   if (config.pumpCommandSource == PumpCommandSource::Gp8403) {
     if (!config.gp8403InterfaceVerified || config.gp8403Address < 0x58 ||
         config.gp8403Address > 0x5f || config.gp8403Channel > 1)

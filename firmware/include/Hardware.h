@@ -79,7 +79,8 @@ class Hardware {
     for (const AnalogConfig* input : inputs()) {
       if (input->source == AnalogSource::NativeAdc1) {
         pinMode(input->pin, INPUT);
-        analogSetPinAttenuation(input->pin, ADC_11db);
+        const auto attenuation = input->nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 ? ADC_2_5db : ADC_11db;
+        analogSetPinAttenuation(input->pin, attenuation);
       }
     }
     if (boardUsesI2c(config_)) {
@@ -171,6 +172,7 @@ class Hardware {
     if (!validOutputs(requested)) return fail("invalid_outputs");
     if (hasAbsentValve6(config_) && requested.valves[kValve6Slot])
       return fail("V6 is not installed; its wire slot must remain false");
+    if (const char* error = pumpOutputLimitError(requested, config_.pumpLimits)) return fail(error);
     if (requested == applied_) {
       // Only the main loop passes allowPumpRun, after the current safety tick.
       // Sensor acquisition and serial ACK paths never release this contact.

@@ -76,10 +76,17 @@ the isolated 50% open-bucket test. That observation covers the 50% point.
 For the CWF rig the lab specified V1 and V3 open during pumping, an 80 psi
 cutoff, and all installed valves off at Stop. The current full-rig wiring
 uses IO34 for pressure and SVN for flow. Pump feedback has no confirmed
-separate input in this wiring. On November 12, the ESP32 reported 142 mV
-at IO34 with the pump stopped. The configured native ADC range starts at
-150 mV. Verify a calibrated pressure reading at rest and a distinguishable
-fault when the pressure signal is lost before enabling a CWF run.
+separate input in this wiring. The lab profile uses 2.5 dB on IO34 with a
+100 mV minimum. At the certificate slope, 10 psi is about 101 mV and 80 psi
+is about 801 mV. Start requires fresh pressure in range with the pump
+stopped. An earlier 142 mV reading was from the bucket firmware's 11 dB
+setting. Use the reading from the lab profile for the start check.
+
+The lab profile caps the pump command at 50% and requires exactly V1 and
+V3 for every positive command. Import `examples/cwf-commissioning.json`
+through **Sequence editor → Import JSON**. The commissioning timings come
+from the earlier CWF demo. Set the desktop pressure stop to 80 psi before
+starting.
 
 The PWM-specific fields are `pumpPwmPin`, `pumpPwmChannel`,
 `pumpPwmFrequencyHz`, `pumpPwmResolutionBits`, `pwmSettleMs` and

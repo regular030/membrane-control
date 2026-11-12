@@ -97,6 +97,54 @@ void test_native_out_of_reviewed_range_is_not_a_valid_numeric_reading() {
   TEST_ASSERT_EQUAL_STRING("reading_received", hardware.sensorStatus(0, 100));
 }
 
+void test_native_low_attenuation_has_a_supported_per_pin_range() {
+  auto config = sensorFixture();
+  config.pressure.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
+  config.pressure.minPinVolts = 0.100;
+  config.pressure.maxPinVolts = 1.250;
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_EQUAL(ADC_2_5db, fake::adcAttenuation[34]);
+  TEST_ASSERT_EQUAL(ADC_11db, fake::adcAttenuation[35]);
+  TEST_ASSERT_EQUAL(ADC_11db, fake::adcAttenuation[36]);
+  uint32_t now = 100;
+  for (const uint32_t millivolts : {99, 100, 142, 1250, 1251}) {
+    fake::adcMillivolts[34] = millivolts;
+    hardware.sample(now);
+    const bool inRange = millivolts >= 100 && millivolts <= 1250;
+    const auto& reading = hardware.measurements().pressure;
+    TEST_ASSERT_EQUAL(inRange, reading.fresh(now, config.sensorMaxAgeMs));
+    if (inRange) {
+      TEST_ASSERT_EQUAL_DOUBLE(millivolts / 1000.0, reading.value);
+      TEST_ASSERT_FALSE(reading.fresh(now + config.sensorMaxAgeMs + 1, config.sensorMaxAgeMs));
+    }
+    now += 100;
+  }
+}
+
+void test_native_low_attenuation_validation_does_not_change_ads() {
+  auto config = sensorFixture();
+  auto& input = config.pressure;
+  input.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
+  input.minPinVolts = 0.099;
+  input.maxPinVolts = 1.250;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  input.minPinVolts = 0.100;
+  input.maxPinVolts = 1.251;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  input.maxPinVolts = 1.250;
+  input.nativeAdcAttenuation = static_cast<NativeAdcAttenuation>(10);
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  input.source = AnalogSource::Ads1115;
+  input.adsChannel = 0;
+  input.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
+  input.minPinVolts = 0;
+  input.maxPinVolts = 3;
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_EQUAL(-1, fake::adcAttenuation[34]);
+}
+
 void test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivity() {
   auto config = sensorFixture();
   config.flow.rejectRails = false;
@@ -270,6 +318,8 @@ int main() {
   RUN_TEST(test_uncalibrated_channel_is_explained_without_initializing_other_inputs);
   RUN_TEST(test_configured_waiting_fresh_and_stale_native_readings_are_reported);
   RUN_TEST(test_native_out_of_reviewed_range_is_not_a_valid_numeric_reading);
+  RUN_TEST(test_native_low_attenuation_has_a_supported_per_pin_range);
+  RUN_TEST(test_native_low_attenuation_validation_does_not_change_ads);
   RUN_TEST(test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivity);
   RUN_TEST(test_ads_read_failure_and_conversion_timeout_are_unavailable_not_zero);
   RUN_TEST(test_ads_conversion_command_failure_is_unavailable_and_never_validates_old_data);

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace basu {
@@ -33,6 +34,18 @@ struct Outputs {
   bool operator!=(const Outputs& other) const { return !(*this == other); }
 };
 
+struct PumpOperatingLimits {
+  double maxPercent = 100;
+  std::optional<std::array<bool, kValveCount>> requiredValves;
+};
+
+inline const char* pumpOutputLimitError(const Outputs& outputs, const PumpOperatingLimits& limits) {
+  if (outputs.pumpPercent > limits.maxPercent) return "pump_percent_exceeds_profile_limit";
+  if (outputs.pumpPercent > 0 && limits.requiredValves && outputs.valves != *limits.requiredValves)
+    return "pump_valve_path_mismatch";
+  return nullptr;
+}
+
 struct Step {
   std::string name;
   double durationSeconds = 0;
@@ -56,7 +69,8 @@ inline bool validOutputs(const Outputs& outputs) {
          outputs.pumpPercent <= 100;
 }
 
-inline const char* validateRecipe(const Recipe& recipe, bool valve6Absent = false) {
+inline const char* validateRecipe(const Recipe& recipe, bool valve6Absent = false,
+                                  const PumpOperatingLimits& pumpLimits = {}) {
   if (recipe.schemaVersion != 1) return "unsupported recipe schema_version";
   if (recipe.name.empty() || recipe.name.size() > 80) return "recipe name must contain 1-80 bytes";
   if (recipe.description.size() > 1000) return "recipe description exceeds 1000 bytes";
@@ -72,6 +86,7 @@ inline const char* validateRecipe(const Recipe& recipe, bool valve6Absent = fals
         step.durationSeconds > 86400) return "duration_s must be 0.1-86400";
     if (!validOutputs(step.outputs)) return "pump_percent must be finite and 0-100";
     if (valve6Absent && step.outputs.valves[kValve6Slot]) return "V6 is not installed; its wire slot must remain false";
+    if (const char* error = pumpOutputLimitError(step.outputs, pumpLimits)) return error;
     total += step.durationSeconds;
   }
   if (!std::isfinite(total) || total * recipe.repeat > kMaxTotalSeconds)
@@ -103,6 +118,7 @@ struct SafetyConfig {
   uint32_t sensorMaxAgeMs = 1000;
   std::array<bool, kValveCount> safeValves{};
   bool valve6Absent = false;
+  PumpOperatingLimits pumpLimits;
 };
 
 enum class State { Idle, Running, Manual, ManualValves, Fault };
@@ -124,7 +140,7 @@ class Controller {
 
   const char* load(const Recipe& candidate) {
     if (state_ != State::Idle) return "recipe can only be replaced while idle";
-    if (const char* error = validateRecipe(candidate, safety_.valve6Absent)) return error;
+    if (const char* error = validateRecipe(candidate, safety_.valve6Absent, safety_.pumpLimits)) return error;
     recipe_ = candidate;  // Commit only after every field/step has passed validation.
     loaded_ = true;
     return nullptr;
@@ -150,6 +166,7 @@ class Controller {
       return "manual control requires idle or manual state";
     if (!validOutputs(requested)) return "pump_percent must be finite and 0-100";
     if (safety_.valve6Absent && requested.valves[kValve6Slot]) return "V6 is not installed; its wire slot must remain false";
+    if (const char* error = pumpOutputLimitError(requested, safety_.pumpLimits)) return error;
     if (const char* error = readiness(now)) return error;
     valveOnlyOutputs_ = false;
     if (state_ == State::Idle) lastHeartbeatMs_ = now;
