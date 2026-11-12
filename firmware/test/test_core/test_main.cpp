@@ -141,8 +141,7 @@ void test_low_pressure_manual_start_preserves_cutoff_and_restores_strict_readine
   safety.hardwareReady = true;
   safety.safeProfileVerified = true;
   safety.pressureLimitPsi = 80;
-  safety.pressureStartupMs = 1000;
-  safety.pwmSettleMs = 1500;
+  safety.pressureStartupMs = 10000;
   safety.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
   const Outputs pumping{*safety.pumpLimits.requiredValves, 30};
   for (double firstPressure : {20.0, 81.0}) {

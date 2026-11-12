@@ -29,7 +29,7 @@ def checked_manual_pump_profile(packet: dict) -> dict | None:
         return None
     result = {"max_percent": maximum, "valves": list(valves)}
     startup_ms = profile.get("pressure_startup_ms")
-    if type(startup_ms) is int and 1 <= startup_ms <= 1000:
+    if type(startup_ms) is int and 1 <= startup_ms <= 10_000:
         result["pressure_startup_ms"] = startup_ms
     return result
 

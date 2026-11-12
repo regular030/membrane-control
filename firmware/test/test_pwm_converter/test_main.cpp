@@ -312,7 +312,7 @@ void test_low_pressure_start_requires_a_fresh_low_adc_sample_and_expires() {
   config.pressure.maxPinVolts = 1;
   config.pressure.unitsPerVolt = 100;
   config.pwmSettleMs = 1500;
-  config.pressureStartupMs = 1000;
+  config.pressureStartupMs = 10000;
   config.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
   Hardware hardware(config, false);
   TEST_ASSERT_TRUE(hardware.begin());
@@ -323,7 +323,6 @@ void test_low_pressure_start_requires_a_fresh_low_adc_sample_and_expires() {
   safety.safeProfileVerified = true;
   safety.pressureLimitPsi = config.pressureLimitPsi;
   safety.pumpLimits = config.pumpLimits;
-  safety.pwmSettleMs = config.pwmSettleMs;
   safety.pressureStartupMs = config.pressureStartupMs;
   Controller core(safety);
   const Outputs pumping{*config.pumpLimits.requiredValves, 40};
@@ -335,6 +334,7 @@ void test_low_pressure_start_requires_a_fresh_low_adc_sample_and_expires() {
   };
   auto apply = [&](uint32_t now) {
     TEST_ASSERT_TRUE(hardware.apply(core.outputs(), now, true));
+    if (hardware.pumpRunContactCommanded()) core.notePumpRunCommanded(now);
   };
 
   TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 0, true));
@@ -351,18 +351,25 @@ void test_low_pressure_start_requires_a_fresh_low_adc_sample_and_expires() {
   TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 600));
   TEST_ASSERT_NULL(core.manual(pumping, 600, true));
   TEST_ASSERT_EQUAL_STRING("active", core.manualPressureStartupStatus(600));
-  TEST_ASSERT_TRUE(hardware.apply(core.outputs(), 600, false));
-  sample(2099, 74);
-  apply(2099);
+  // Stage later than the command's timestamp, as can happen while processing serial input.
+  TEST_ASSERT_TRUE(hardware.apply(core.outputs(), 700, false));
+  sample(2199, 74);
+  apply(2199);
   TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
-  apply(2100);
+  apply(2200);
   TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
-  TEST_ASSERT_EQUAL_STRING("pressure_startup_in_progress", core.manual(pumping, 2100, true));
-  sample(3099, 74);
-  apply(3099);
+  TEST_ASSERT_EQUAL_STRING("pressure_startup_in_progress", core.manual(pumping, 2200, true));
+  for (uint32_t now = 2300; now <= 12100; now += 100) {
+    core.heartbeat(now);
+    sample(now, 74);
+    apply(now);
+    TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
+  }
+  core.tick(12199);
+  apply(12199);
   TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
-  core.tick(3100);
-  apply(3100);
+  core.tick(12200);
+  apply(12200);
   TEST_ASSERT_EQUAL_STRING("pressure_startup_timeout", core.fault().c_str());
   TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   TEST_ASSERT_EQUAL(0, fake::ledcDuties[config.pumpPwmChannel]);

@@ -45,7 +45,6 @@ basu::SafetyConfig makeSafety() {
   safety.sensorMaxAgeMs = board.sensorMaxAgeMs;
   safety.pumpLimits = board.pumpLimits;
   safety.pressureStartupMs = board.pressureStartupMs;
-  safety.pwmSettleMs = board.pwmSettleMs;
   return safety;
 }
 basu::Controller controller(makeSafety());
@@ -576,6 +575,7 @@ void loop() {
   const bool valveOnly = controller.state() == basu::State::ManualValves;
   const bool applied = valveOnly ? hardware.applyManualValves(controller.outputs().valves) :
       (hardware.ready() ? hardware.apply(controller.outputs(), now, true) : true);
+  if (applied && hardware.pumpRunContactCommanded()) controller.notePumpRunCommanded(millis());
   if (!applied && controller.active()) {
     controller.setHardwareReady(false);
     controller.latchFault(valveOnly ? hardware.valveError() : hardware.error());

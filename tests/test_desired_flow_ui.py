@@ -223,12 +223,12 @@ def test_manual_pump_pressure_startup_keeps_pressure_waiting_and_stop_available(
     controller.last_telemetry = now[0]
     valves = [True, False, True, False, False, False, False]
     snapshot = dict(controller.snapshot, controller_connected=True, simulation=False, hardware_verified=True,
-                    manual_pump_profile={"max_percent": 50, "valves": valves, "pressure_startup_ms": 1000},
+                    manual_pump_profile={"max_percent": 50, "valves": valves, "pressure_startup_ms": 10_000},
                     pressure_startup="available", pressure_adc_mv=74)
     window._update_view(snapshot)
     window.manual_pump.setValue(25)
     assert window.manual_apply.isEnabled()
-    assert "1 s" in window.manual_pump_status.text()
+    assert "10 s after the RUN relay closes" in window.manual_pump_status.text()
     assert window._metric_labels["pressure_psi"].text() == "Waiting"
     assert window._metric_units["pressure_psi"].text() == "74 mV at ESP32 · below calibrated ADC range"
 

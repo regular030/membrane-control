@@ -1799,7 +1799,7 @@ class MainWindow(QMainWindow):
                          if pump_profile else "")
             if pressure_startup == "available":
                 wait_seconds = pump_profile["pressure_startup_ms"] / 1000
-                pump_path += f" Pump stops if pressure is unavailable {wait_seconds:g} s after starting."
+                pump_path += f" Pump stops if pressure is unavailable {wait_seconds:g} s after the RUN relay closes."
             self.manual_pump_status.setText(pump_blocker or pump_path or self.manual_stop.toolTip())
             self.manual_apply.setToolTip(pump_blocker or pump_path or "Enter a speed above 0% to send it with the current valve settings.")
             self.manual_apply.setText("Starting pump…" if pressure_startup == "active" else
