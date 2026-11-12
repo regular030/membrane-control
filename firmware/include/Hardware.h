@@ -60,7 +60,12 @@ class Hardware {
         pressure.source == AnalogSource::NativeAdc2 && (pressure.pin == 26 || pressure.pin == 27)) {
       error_ = initializeNativeInput(pressure);
       if (!error_) {
-        pressureMonitoringOnly_ = true;
+        sensorMonitoringOnly_ = true;
+        // The optional ADC1 flow input can be sampled with the pump locked.
+        // Restrict this to exposed input-only pins, apart from the pressure pin.
+        const auto& flow = config_.flow;
+        if (flow.source == AnalogSource::NativeAdc1 && flow.pin >= 34 && flow.pin <= 39)
+          monitoringFlowReady_ = !initializeNativeInput(flow);
         error_ = "pressure_calibration_pending";
       }
       return false;
@@ -243,7 +248,7 @@ class Hardware {
   void sample(uint32_t now, bool valveOnly = false) {
     if (simulation_) return;
     pumpTach_.sample(now);
-    if (!ready_ && !pressureMonitoringOnly_) return;
+    if (!ready_ && !sensorMonitoringOnly_) return;
     if (ready_ && !valveOnly && config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
         static_cast<uint32_t>(now - lastHealthMs_) >= 1000) {
       lastHealthMs_ = now;
@@ -255,7 +260,8 @@ class Hardware {
       auto destinations = readings();
       for (std::size_t i = 0; i < configurations.size(); ++i) {
         const auto& input = *configurations[i];
-        if (pressureMonitoringOnly_ && &input != &config_.pressure) continue;
+        if (sensorMonitoringOnly_ && &input != &config_.pressure &&
+            (&input != &config_.flow || !monitoringFlowReady_)) continue;
         if (!usesNativeAdc(input.source)) continue;
         const auto millivolts = readNativeMillivolts(input);
         const double pinVolts = millivolts ? *millivolts / 1000.0 : NAN;
@@ -264,6 +270,7 @@ class Hardware {
           pressureAdcMillivolts_ = millivolts;
           measurements_.pressureBelowAdcRange = pinVolts > 0 && pinVolts < input.minPinVolts;
         }
+        if (&input == &config_.flow) flowAdcMillivolts_ = millivolts;
         sensorReadState_[i] = !millivolts ? SensorReadState::Unavailable :
             (destinations[i]->valid ? SensorReadState::Reading : SensorReadState::OutOfRange);
       }
@@ -299,17 +306,23 @@ class Hardware {
   }
 
   bool ready() const { return ready_; }
-  bool pressureMonitoringOnly() const { return pressureMonitoringOnly_; }
+  bool sensorMonitoringOnly() const { return sensorMonitoringOnly_; }
   bool valveControlReady() const { return manualValvesReady_; }
   const std::array<int, kManualValveCount>& manualValveBits() const { return manualConfig_.bits; }
   const char* valveError() const { return valveError_ ? valveError_ : "valve_control_not_ready"; }
   const char* error() const { return error_; }
   const Measurements& measurements() const { return measurements_; }
   std::optional<uint32_t> pressureAdcMillivolts(uint32_t now) const {
-    if ((!ready_ && !pressureMonitoringOnly_) ||
+    if ((!ready_ && !sensorMonitoringOnly_) ||
         static_cast<uint32_t>(now - measurements_.pressure.acquiredMs) > 2 * kNativeAdcSampleIntervalMs)
       return std::nullopt;
     return pressureAdcMillivolts_;
+  }
+  std::optional<uint32_t> flowAdcMillivolts(uint32_t now) const {
+    if ((!ready_ && !monitoringFlowReady_) ||
+        static_cast<uint32_t>(now - measurements_.flow.acquiredMs) > 2 * kNativeAdcSampleIntervalMs)
+      return std::nullopt;
+    return flowAdcMillivolts_;
   }
   bool pumpContactCommandAvailable() const { return pumpContactCommandAvailable_; }
   bool pumpRunContactCommanded() const { return pumpRunContactCommanded_; }
@@ -319,8 +332,9 @@ class Hardware {
     const auto configured = inputs();
     const std::array<const Reading*, 3> measured{{&measurements_.pressure, &measurements_.flow, &measurements_.pumpFeedback}};
     if (index >= configured.size()) return "not_configured";
+    const bool canRead = ready_ || (index == 1 && monitoringFlowReady_);
     return classifySensorStatus(config_, *configured[index], *measured[index], sensorReadState_[index],
-                                profileValidated_, ready_, simulation_, now);
+                                profileValidated_ || canRead, canRead, simulation_, now);
   }
 
  private:
@@ -571,13 +585,15 @@ class Hardware {
   bool pumpRunContactCommanded_ = false;
   uint32_t pumpCommandChangedMs_ = 0;
   bool ready_ = false;
-  bool pressureMonitoringOnly_ = false;
+  bool sensorMonitoringOnly_ = false;
+  bool monitoringFlowReady_ = false;
   bool sensorTestPinsInitialized_ = false;
   bool safeStopIssued_ = false;
   const char* error_ = "hardware_not_initialized";
   Outputs applied_;
   Measurements measurements_;
   std::optional<uint32_t> pressureAdcMillivolts_;
+  std::optional<uint32_t> flowAdcMillivolts_;
   std::array<SensorReadState, 3> sensorReadState_{{SensorReadState::Never, SensorReadState::Never, SensorReadState::Never}};
   uint32_t lastNativeSampleMs_ = 0;
   uint32_t lastHealthMs_ = 0;

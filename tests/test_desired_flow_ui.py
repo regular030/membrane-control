@@ -261,6 +261,29 @@ def test_uncalibrated_pressure_card_displays_fresh_voltage_without_pump_approval
     assert window._metric_units["pressure_psi"].text() == "psi"
 
 
+def test_flow_card_shows_fresh_pin_voltage_in_monitor_mode(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, flow_adc_mv=126)
+    window._update_view(snapshot)
+    assert window._metric_labels["flow_ml_min"].text() == "0.126"
+    assert window._metric_units["flow_ml_min"].text() == "V at ESP32"
+
+    window._update_view(dict(snapshot, flow_ml_min=21.5))
+    assert window._metric_labels["flow_ml_min"].text() == "0.126"
+    assert window._metric_units["flow_ml_min"].text() == "V at ESP32"
+
+    window._update_view(dict(snapshot, hardware_verified=True, flow_ml_min=21.5))
+    assert window._metric_labels["flow_ml_min"].text() == "21.5"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min"
+
+    now[0] += 3
+    window._update_view(snapshot)
+    assert window._metric_labels["flow_ml_min"].text() == "Waiting"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min"
+
+
 def test_pump_feedback_distinguishes_command_drive_voltage_and_rotation(screen):
     window, controller, now = screen
     controller.set_simulation(False)

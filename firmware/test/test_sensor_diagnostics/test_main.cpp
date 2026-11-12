@@ -176,24 +176,30 @@ void test_uncalibrated_adc2_pulldown_monitors_voltage_without_enabling_pump() {
   config.pressure.nativeAdc2Pulldown = true;
   Hardware hardware(config, false);
   TEST_ASSERT_FALSE(hardware.begin());
-  TEST_ASSERT_TRUE(hardware.pressureMonitoringOnly());
+  TEST_ASSERT_TRUE(hardware.sensorMonitoringOnly());
   TEST_ASSERT_TRUE(fake::adc2PulldownEnabled[27]);
   TEST_ASSERT_EQUAL_STRING("pressure_calibration_pending", hardware.error());
   TEST_ASSERT_FALSE(hardware.pumpContactCommandAvailable());
   for (const auto& event : fake::gpioEvents) {
     TEST_ASSERT_FALSE(event.write);
-    TEST_ASSERT_EQUAL(27, event.pin);
+    TEST_ASSERT_TRUE(event.pin == 27 || event.pin == config.flow.pin);
     TEST_ASSERT_EQUAL(INPUT, event.value);
   }
   Outputs pumping;
   pumping.pumpPercent = 25;
   TEST_ASSERT_FALSE(hardware.apply(pumping, 1000, true));
   fake::adcMillivolts[27] = 800;
+  fake::adcMillivolts[config.flow.pin] = 500;
   hardware.sample(1100);
   TEST_ASSERT_EQUAL_UINT32(800, hardware.pressureAdcMillivolts(1100).value());
   TEST_ASSERT_FALSE(hardware.measurements().pressure.valid);
   TEST_ASSERT_EQUAL_STRING("uncalibrated", hardware.sensorStatus(0, 1100));
+  TEST_ASSERT_EQUAL_UINT32(500, hardware.flowAdcMillivolts(1100).value());
+  TEST_ASSERT_EQUAL_DOUBLE(0.5, hardware.measurements().flow.value);
+  TEST_ASSERT_EQUAL_STRING("reading_received", hardware.sensorStatus(1, 1100));
+  TEST_ASSERT_FALSE(hardware.measurements().pumpFeedback.valid);
   TEST_ASSERT_FALSE(hardware.pressureAdcMillivolts(1301).has_value());
+  TEST_ASSERT_FALSE(hardware.flowAdcMillivolts(1301).has_value());
   TEST_ASSERT_EQUAL(0, Wire.transactionCount);
   TEST_ASSERT_EQUAL(0, fake::ledcCalls);
 }

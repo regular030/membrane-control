@@ -485,10 +485,13 @@ void writeTelemetry(uint32_t now) {
   };
   addReading("pressure_psi", controller.measurements().pressure);
   if (const char* startup = controller.manualPressureStartupStatus(now)) document["pressure_startup"] = startup;
-  if (controller.manualPressureStartupMs() || hardware.pressureMonitoringOnly()) {
+  if (controller.manualPressureStartupMs() || hardware.sensorMonitoringOnly()) {
     if (const auto millivolts = hardware.pressureAdcMillivolts(now)) document["pressure_adc_mv"] = *millivolts;
   }
   addReading("flow_ml_min", controller.measurements().flow);
+  if (hardware.sensorMonitoringOnly() || !controller.measurements().flow.fresh(now, controller.sensorMaxAgeMs())) {
+    if (const auto millivolts = hardware.flowAdcMillivolts(now)) document["flow_adc_mv"] = *millivolts;
+  }
   addReading("pump_feedback_v", controller.measurements().pumpFeedback);
   basu::SensorTestMillivolts rawInputs;
   if (!hardware.readSensorTestInputs(kFactoryProfile, controller.state(), rawInputs,
@@ -523,7 +526,7 @@ void setup() {
     hardware.beginManualValves(basu::confirmedRigManualValves());
   controller.setValveControlReady(hardware.valveControlReady());
   // Pump/sensor setup remains separate from the confirmed six-valve capability.
-  if (!initialized && board.verifiedBoardConfig && !hardware.pressureMonitoringOnly()) controller.latchFault(hardware.error());
+  if (!initialized && board.verifiedBoardConfig && !hardware.sensorMonitoringOnly()) controller.latchFault(hardware.error());
 #ifdef BASU_BLUETOOTH_DRY_RUN
   bluetoothInput = xQueueCreate(basu::kMaxLineBytes + 1, sizeof(uint8_t));
   if (bluetoothInput == nullptr) {

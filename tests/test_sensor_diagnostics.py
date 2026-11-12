@@ -133,6 +133,24 @@ def test_raw_pressure_voltage_is_available_without_pump_approval(app):
     assert controller.snapshot["pressure_adc_mv"] is None
 
 
+def test_raw_flow_voltage_clears_on_invalid_or_stale_data(app):
+    controller, clock = app
+    hello(controller, clock)
+    telemetry(controller, clock, flow_adc_mv=0)
+    assert controller.snapshot["flow_adc_mv"] == 0
+    assert controller.snapshot["flow_ml_min"] is None
+
+    for uptime, invalid in enumerate((True, -1, 3301, 120.0, "120", None), start=1001):
+        telemetry(controller, clock, uptime_ms=uptime, flow_adc_mv=invalid)
+        assert controller.snapshot["flow_adc_mv"] is None
+
+    telemetry(controller, clock, uptime_ms=1250, flow_adc_mv=126)
+    assert controller.snapshot["flow_adc_mv"] == 126
+    clock.now += 3
+    controller.tick()
+    assert controller.snapshot["flow_adc_mv"] is None
+
+
 def test_old_firmware_without_diagnostics_keeps_existing_connection_behavior(app):
     controller, clock = app
     hello(controller, clock)
