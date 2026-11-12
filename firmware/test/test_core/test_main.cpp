@@ -135,6 +135,49 @@ void test_profile_limits_cover_manual_and_every_recipe_step() {
   TEST_ASSERT_TRUE(controller.outputs() == Outputs{});
 }
 
+void test_low_pressure_manual_start_preserves_cutoff_and_restores_strict_readiness() {
+  SafetyConfig safety;
+  safety.simulation = false;
+  safety.hardwareReady = true;
+  safety.safeProfileVerified = true;
+  safety.pressureLimitPsi = 80;
+  safety.pressureStartupMs = 1000;
+  safety.pwmSettleMs = 1500;
+  safety.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
+  const Outputs pumping{*safety.pumpLimits.requiredValves, 30};
+  for (double firstPressure : {20.0, 81.0}) {
+    Controller controller(safety);
+    Measurements low;
+    low.pressure.acquiredMs = 100;
+    low.pressureBelowAdcRange = true;
+    controller.setMeasurements(low);
+
+    auto recipe = exampleRecipe();
+    recipe.hardwareApproved = true;
+    recipe.steps[0].outputs = pumping;
+    recipe.stepCount = 1;
+    TEST_ASSERT_NULL(controller.load(recipe));
+    TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", controller.start(100));
+    TEST_ASSERT_NULL(controller.manual(pumping, 100, true));
+
+    Measurements measured;
+    measured.pressure = {firstPressure, true, 200};
+    controller.setMeasurements(measured);
+    controller.tick(200);
+    if (firstPressure > safety.pressureLimitPsi) {
+      TEST_ASSERT_EQUAL_STRING("pressure_limit_exceeded", controller.fault().c_str());
+    } else {
+      TEST_ASSERT_TRUE(controller.state() == State::Manual);
+      TEST_ASSERT_NULL(controller.manualPressureStartupStatus(200));
+      low.pressure.acquiredMs = 300;
+      controller.setMeasurements(low);
+      controller.tick(300);
+      TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", controller.fault().c_str());
+    }
+    TEST_ASSERT_EQUAL_DOUBLE(0, controller.outputs().pumpPercent);
+  }
+}
+
 void test_timeout_latches_and_stop_does_not_clear() {
   Controller controller;
   Outputs manual;
@@ -416,6 +459,7 @@ int main(int, char**) {
   RUN_TEST(test_invalid_recipe_is_atomic);
   RUN_TEST(test_active_recipe_replacement_and_manual_rejected);
   RUN_TEST(test_profile_limits_cover_manual_and_every_recipe_step);
+  RUN_TEST(test_low_pressure_manual_start_preserves_cutoff_and_restores_strict_readiness);
   RUN_TEST(test_timeout_latches_and_stop_does_not_clear);
   RUN_TEST(test_timer_wraparound);
   RUN_TEST(test_physical_commissioning_and_pressure_guards);

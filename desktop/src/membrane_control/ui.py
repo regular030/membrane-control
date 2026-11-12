@@ -26,7 +26,10 @@ import pyqtgraph as pg
 
 from .models import MAX_STEPS, Recipe
 from .connection_diagnostics import connection_diagnostics
-from .device_status import checked_manual_pump_profile, device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
+from .device_status import (
+    MANUAL_VALVE_BITS, MANUAL_VALVE_IDS, checked_manual_pump_profile, checked_pressure_startup,
+    device_statuses,
+)
 from .pump_voltage_test import PumpVoltageTestWindow
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
@@ -1745,6 +1748,7 @@ class MainWindow(QMainWindow):
             applied_recipe = getattr(self.controller, "recipe", None)
             applied_approved = bool(getattr(applied_recipe, "hardware_approved", False))
             pump_profile = checked_manual_pump_profile(snap)
+            pressure_startup = checked_pressure_startup(snap, pump_profile)
             pump_state = state.lower()
             pump_percent = snap.get("pump_percent") or 0
             manual_needs_scale = bool(self.controller.settings.get("require_balance", False)) or (
@@ -1781,7 +1785,9 @@ class MainWindow(QMainWindow):
                 (snap.get("manual_pending"), "Waiting for the controller to confirm the manual command."),
                 (active or pump_state not in pump_states, "Stop the current operation before using the manual pump."),
                 (not simulation and not pump_profile and not applied_approved, "Apply the reviewed sequence first in Sequence editor."),
-                (not simulation and snap.get("pressure_psi") is None, "Wait for a valid calibrated pressure reading."),
+                (pressure_startup == "active", "Starting pump. Waiting for the first pressure reading."),
+                (not simulation and snap.get("pressure_psi") is None and pressure_startup != "available",
+                 "Wait for a valid calibrated pressure reading."),
                 (pump_profile and snap.get("pressure_psi") is not None
                  and snap["pressure_psi"] > self.controller.settings["max_pressure_psi"],
                  "Pressure is above the desktop stop threshold."),
@@ -1791,9 +1797,13 @@ class MainWindow(QMainWindow):
             self.manual_pump.setEnabled(not pump_blocker)
             pump_path = (f"Pump runs with V1 and V3 open. Maximum {pump_profile['max_percent']:g}%."
                          if pump_profile else "")
+            if pressure_startup == "available":
+                wait_seconds = pump_profile["pressure_startup_ms"] / 1000
+                pump_path += f" Pump stops if pressure is unavailable {wait_seconds:g} s after starting."
             self.manual_pump_status.setText(pump_blocker or pump_path or self.manual_stop.toolTip())
             self.manual_apply.setToolTip(pump_blocker or pump_path or "Enter a speed above 0% to send it with the current valve settings.")
-            self.manual_apply.setText("Apply speed" if pump_state == "manual" and pump_percent > 0 else "Start pump")
+            self.manual_apply.setText("Starting pump…" if pressure_startup == "active" else
+                "Apply speed" if pump_state == "manual" and pump_percent > 0 else "Start pump")
             manual_request = self.controller.manual_requested
             pump_start_pending = bool(snap.get("manual_pending") and manual_request and manual_request[1] > 0)
             self.manual_stop.setEnabled((pump_state == "manual" or pump_start_pending) and not snap.get("stop_pending"))
@@ -1830,10 +1840,15 @@ class MainWindow(QMainWindow):
                 else:
                     sensor_setup.sync_connection()
             sensor_zero = sensor_setup.zero_baselines() if sensor_setup is not None else snap.get("live_sensor_zero", {})
+            pressure_adc_mv = snap.get("pressure_adc_mv") if connected and fresh and pump_profile else None
             for key, (_, unit, channel) in METRICS.items():
                 value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
                 raw = live_mv.get(channel)
-                if value == "Waiting" and raw is not None:
+                if value == "Waiting" and key == "pressure_psi" and pressure_adc_mv is not None:
+                    unit = f"{pressure_adc_mv} mV at ESP32"
+                    if pressure_startup:
+                        unit += " · below calibrated ADC range"
+                elif value == "Waiting" and raw is not None:
                     reference = sensor_setup.reference_estimate(channel, raw) if sensor_setup is not None else (False, None)
                     zero_mv = sensor_zero.get(channel)
                     estimate, source = sensor_display_estimate(channel, raw, reference, zero_mv)

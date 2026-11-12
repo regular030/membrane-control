@@ -151,6 +151,66 @@ def test_reviewed_manual_pump_profile_guards_takeover_without_recipe_approval(ap
     assert controller.snapshot["manual_pump_profile"] is None
 
 
+def test_manual_pressure_startup_uses_firmware_status_and_keeps_loss_stop(app):
+    controller, clock = app
+    valves = [True, False, True, False, False, False, False]
+    profile = {"max_percent": 50, "valves": valves, "pressure_startup_ms": 1000}
+    hello(controller, clock, hardware_verified=True, manual_pump_profile=profile)
+    telemetry(controller, clock, hardware_verified=True, pressure_startup="available", pressure_adc_mv=74)
+    assert controller.snapshot["manual_pump_profile"] == profile
+    assert controller.snapshot["pressure_startup"] == "available"
+    assert controller.snapshot["pressure_psi"] is None
+    assert controller.snapshot["pressure_adc_mv"] == 74
+    controller.recipe.hardware_approved = True
+    with pytest.raises(ValueError, match="valid pressure"):
+        controller.start_run()
+    controller.set_manual(valves, 25)
+    request = controller.driver.sent[-1]
+    assert request["cmd"] == "manual"
+    assert request["allow_pressure_startup"] is True
+    controller._handle_packet({"v": 1, "type": "ack", "ok": True, "id": request["id"]}, clock())
+
+    running = {"hardware_verified": True, "state": "manual", "valves": valves, "pump_percent": 25}
+    telemetry(controller, clock, **running, uptime_ms=1250, pressure_startup="active", pressure_adc_mv=74)
+    assert controller.snapshot["pressure_startup"] == "active"
+    assert controller.local_fault is None
+    with pytest.raises(ValueError, match="before changing pump speed"):
+        controller.set_manual(valves, 35)
+
+    telemetry(controller, clock, **running, uptime_ms=1500, pressure_psi=12, pressure_adc_mv=121)
+    assert controller.snapshot["pressure_psi"] == 12
+    assert controller.snapshot["pressure_startup"] is None
+    telemetry(controller, clock, **running, uptime_ms=1750, pressure_adc_mv=True)
+    assert controller.snapshot["pressure_adc_mv"] is None
+    assert controller.local_fault == "Pressure reading unavailable during physical operation"
+    assert controller.driver.sent[-1]["cmd"] == "stop"
+
+
+@pytest.mark.parametrize("startup_ms", [None, False, 0, 1001, 1000.0, "1000"])
+def test_missing_or_invalid_startup_capability_never_unlocks_pump(app, startup_ms):
+    controller, clock = app
+    valves = [True, False, True, False, False, False, False]
+    hello(controller, clock, hardware_verified=True, manual_pump_profile={
+        "max_percent": 50, "valves": valves, "pressure_startup_ms": startup_ms})
+    telemetry(controller, clock, hardware_verified=True, pressure_startup="available", pressure_adc_mv=74)
+    assert controller.snapshot["manual_pump_profile"] == {"max_percent": 50, "valves": valves}
+    assert controller.snapshot["pressure_startup"] is controller.snapshot["pressure_adc_mv"] is None
+    with pytest.raises(ValueError, match="valid pressure"):
+        controller.set_manual(valves, 25)
+
+
+def test_startup_phase_does_not_override_valid_overpressure(app):
+    controller, clock = app
+    valves = [True, False, True, False, False, False, False]
+    hello(controller, clock, hardware_verified=True, manual_pump_profile={
+        "max_percent": 50, "valves": valves, "pressure_startup_ms": 1000})
+    controller.settings["max_pressure_psi"] = 80
+    telemetry(controller, clock, hardware_verified=True, state="manual", valves=valves, pump_percent=25,
+              pressure_startup="active", pressure_psi=81)
+    assert controller.snapshot["pressure_startup"] is None
+    assert controller.local_fault == "Desktop pressure limit exceeded"
+
+
 @pytest.mark.parametrize("verified,maximum,valves", [
     (False, 50, [True, False, True, False, False, False, False]),
     (True, 51, [True, False, True, False, False, False, False]),

@@ -304,6 +304,70 @@ void test_pending_activation_cannot_beat_watchdog_or_pressure_fault() {
   }
 }
 
+void test_low_pressure_start_requires_a_fresh_low_adc_sample_and_expires() {
+  auto config = pwmFixture();
+  config.pressureLimitPsi = 80;
+  config.pressure.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
+  config.pressure.minPinVolts = 0.100;
+  config.pressure.maxPinVolts = 1;
+  config.pressure.unitsPerVolt = 100;
+  config.pwmSettleMs = 1500;
+  config.pressureStartupMs = 1000;
+  config.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+
+  SafetyConfig safety;
+  safety.simulation = false;
+  safety.hardwareReady = true;
+  safety.safeProfileVerified = true;
+  safety.pressureLimitPsi = config.pressureLimitPsi;
+  safety.pumpLimits = config.pumpLimits;
+  safety.pwmSettleMs = config.pwmSettleMs;
+  safety.pressureStartupMs = config.pressureStartupMs;
+  Controller core(safety);
+  const Outputs pumping{*config.pumpLimits.requiredValves, 40};
+  auto sample = [&](uint32_t now, uint32_t millivolts) {
+    fake::adcMillivolts[config.pressure.pin] = millivolts;
+    hardware.sample(now);
+    core.setMeasurements(hardware.measurements());
+    core.tick(now);
+  };
+  auto apply = [&](uint32_t now) {
+    TEST_ASSERT_TRUE(hardware.apply(core.outputs(), now, true));
+  };
+
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 0, true));
+  sample(100, 0);
+  TEST_ASSERT_NULL(core.manualPressureStartupStatus(100));
+  sample(200, 1100);
+  TEST_ASSERT_NULL(core.manualPressureStartupStatus(200));
+  sample(300, 74);
+  TEST_ASSERT_EQUAL_UINT32(74, hardware.pressureAdcMillivolts(300).value());
+  TEST_ASSERT_FALSE(hardware.pressureAdcMillivolts(501).has_value());
+  TEST_ASSERT_EQUAL_STRING("available", core.manualPressureStartupStatus(300));
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 501, true));
+  sample(600, 74);
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 600));
+  TEST_ASSERT_NULL(core.manual(pumping, 600, true));
+  TEST_ASSERT_EQUAL_STRING("active", core.manualPressureStartupStatus(600));
+  TEST_ASSERT_TRUE(hardware.apply(core.outputs(), 600, false));
+  sample(2099, 74);
+  apply(2099);
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
+  apply(2100);
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
+  TEST_ASSERT_EQUAL_STRING("pressure_startup_in_progress", core.manual(pumping, 2100, true));
+  sample(3099, 74);
+  apply(3099);
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
+  core.tick(3100);
+  apply(3100);
+  TEST_ASSERT_EQUAL_STRING("pressure_startup_timeout", core.fault().c_str());
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
+  TEST_ASSERT_EQUAL(0, fake::ledcDuties[config.pumpPwmChannel]);
+}
+
 void test_gp8403_range_zero_and_health_probe_are_preserved_without_ledc_calls() {
   auto config = pwmFixture(); config.pumpCommandSource = PumpCommandSource::Gp8403;
   config.gp8403InterfaceVerified = true; config.i2cSdaPin = 21; config.i2cSclPin = 22;
@@ -709,6 +773,7 @@ int main() {
   RUN_TEST(test_invalid_pump_commands_reject_nonfinite_and_out_of_range_and_stop);
   RUN_TEST(test_settling_timer_is_correct_across_millis_rollover);
   RUN_TEST(test_pending_activation_cannot_beat_watchdog_or_pressure_fault);
+  RUN_TEST(test_low_pressure_start_requires_a_fresh_low_adc_sample_and_expires);
   RUN_TEST(test_gp8403_range_zero_and_health_probe_are_preserved_without_ledc_calls);
   RUN_TEST(test_onboard_contact_must_be_spare_in_range_low_at_rest_and_exclusive);
   RUN_TEST(test_onboard_startup_latches_stopped_before_enabling_outputs);

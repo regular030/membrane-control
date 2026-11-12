@@ -217,6 +217,34 @@ def test_reviewed_manual_pump_start_uses_fixed_valves_and_limit(screen, monkeypa
     assert window.manual_stop.isEnabled()
 
 
+def test_manual_pump_pressure_startup_keeps_pressure_waiting_and_stop_available(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    valves = [True, False, True, False, False, False, False]
+    snapshot = dict(controller.snapshot, controller_connected=True, simulation=False, hardware_verified=True,
+                    manual_pump_profile={"max_percent": 50, "valves": valves, "pressure_startup_ms": 1000},
+                    pressure_startup="available", pressure_adc_mv=74)
+    window._update_view(snapshot)
+    window.manual_pump.setValue(25)
+    assert window.manual_apply.isEnabled()
+    assert "1 s" in window.manual_pump_status.text()
+    assert window._metric_labels["pressure_psi"].text() == "Waiting"
+    assert window._metric_units["pressure_psi"].text() == "74 mV at ESP32 · below calibrated ADC range"
+
+    snapshot.update(state="manual", valves=valves, pump_percent=25, pressure_startup="active")
+    window._update_view(snapshot)
+    assert not window.manual_apply.isEnabled()
+    assert window.manual_stop.isEnabled()
+    assert "Waiting for the first pressure reading" in window.manual_pump_status.text()
+
+    snapshot.update(pressure_startup=None, pressure_adc_mv=121, pressure_psi=12)
+    window._update_view(snapshot)
+    assert window.manual_apply.isEnabled()
+    assert window._metric_labels["pressure_psi"].text() == "12.00"
+    assert window._metric_units["pressure_psi"].text() == "psi"
+
+
 def test_pump_feedback_distinguishes_command_drive_voltage_and_rotation(screen):
     window, controller, now = screen
     controller.set_simulation(False)

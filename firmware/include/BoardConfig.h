@@ -61,6 +61,7 @@ struct BoardConfig {
   AnalogConfig pumpFeedback;
   double pressureLimitPsi = NAN;
   uint32_t sensorMaxAgeMs = 1000;
+  uint32_t pressureStartupMs = 0;  // Optional bounded manual start below the native ADC range.
   int pumpContactBit = -1;  // Reviewed spare 595 bit; leave -1 for a separate GPIO contact.
   int pumpTachPin = -1;  // Set only for a reviewed, conditioned tach signal.
   uint16_t pumpTachPulsesPerRevolution = 100;  // Masterflex 75211-70 tach specification.
@@ -142,6 +143,12 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
       return "PWM converter interface, channel, frequency or resolution is not verified";
   } else return "unknown pump command source";
   if (config.pressure.source == AnalogSource::Disabled) return "physical operation requires pressure input";
+  if (config.pressureStartupMs &&
+      (config.pressureStartupMs > kMaxPressureStartupMs || !config.pumpLimits.requiredValves ||
+       config.pumpCommandSource != PumpCommandSource::PwmConverter || config.pressure.source != AnalogSource::NativeAdc1 ||
+       config.pressure.nativeAdcAttenuation != NativeAdcAttenuation::Db2_5 || config.pressure.unitsPerVolt <= 0 ||
+       config.pressure.minPinVolts * config.pressure.unitsPerVolt + config.pressure.offset >= config.pressureLimitPsi))
+    return "pressure startup requires a bounded PWM profile with a low-range native pressure input";
   std::array<bool, 40> used{};
   // On the selected X16 PCB GPIO4 may serve the shift-register clear input.
   // New PWM profiles must leave it alone; legacy GP8403 profiles are unchanged.

@@ -238,13 +238,19 @@ class Hardware {
       lastHealthMs_ = now;
       if (!probe(config_.gp8403Address)) { fail("gp8403_disconnected"); return; }
     }
-    if (static_cast<uint32_t>(now - lastNativeSampleMs_) >= 100) {
+    if (static_cast<uint32_t>(now - lastNativeSampleMs_) >= kNativeAdcSampleIntervalMs) {
       lastNativeSampleMs_ = now;
       auto configurations = inputs();
       auto destinations = readings();
       for (std::size_t i = 0; i < configurations.size(); ++i) {
         if (configurations[i]->source == AnalogSource::NativeAdc1) {
-          *destinations[i] = calibratedReading(*configurations[i], analogReadMilliVolts(configurations[i]->pin) / 1000.0, now);
+          const uint32_t pinMillivolts = analogReadMilliVolts(configurations[i]->pin);
+          const double pinVolts = pinMillivolts / 1000.0;
+          *destinations[i] = calibratedReading(*configurations[i], pinVolts, now);
+          if (configurations[i] == &config_.pressure) {
+            pressureAdcMillivolts_ = pinMillivolts;
+            measurements_.pressureBelowAdcRange = pinVolts > 0 && pinVolts < config_.pressure.minPinVolts;
+          }
           sensorReadState_[i] = destinations[i]->valid ? SensorReadState::Reading : SensorReadState::OutOfRange;
         }
       }
@@ -285,6 +291,11 @@ class Hardware {
   const char* valveError() const { return valveError_ ? valveError_ : "valve_control_not_ready"; }
   const char* error() const { return error_; }
   const Measurements& measurements() const { return measurements_; }
+  std::optional<uint32_t> pressureAdcMillivolts(uint32_t now) const {
+    if (!ready_ || static_cast<uint32_t>(now - measurements_.pressure.acquiredMs) > 2 * kNativeAdcSampleIntervalMs)
+      return std::nullopt;
+    return pressureAdcMillivolts_;
+  }
   bool pumpContactCommandAvailable() const { return pumpContactCommandAvailable_; }
   bool pumpRunContactCommanded() const { return pumpRunContactCommanded_; }
   const char* pumpTachStatus(uint32_t now) const { return simulation_ ? nullptr : pumpTach_.status(now); }
@@ -520,6 +531,7 @@ class Hardware {
   const char* error_ = "hardware_not_initialized";
   Outputs applied_;
   Measurements measurements_;
+  std::optional<uint32_t> pressureAdcMillivolts_;
   std::array<SensorReadState, 3> sensorReadState_{{SensorReadState::Never, SensorReadState::Never, SensorReadState::Never}};
   uint32_t lastNativeSampleMs_ = 0;
   uint32_t lastHealthMs_ = 0;

@@ -23,6 +23,8 @@ constexpr std::size_t kMaxSteps = 32;
 constexpr std::size_t kMaxLineBytes = 8192;
 constexpr uint32_t kHeartbeatTimeoutMs = 3000;
 constexpr uint32_t kTelemetryIntervalMs = 250;
+constexpr uint32_t kNativeAdcSampleIntervalMs = 100;
+constexpr uint32_t kMaxPressureStartupMs = 1000;
 constexpr double kMaxTotalSeconds = 604800.0;
 
 struct Outputs {
@@ -107,6 +109,7 @@ struct Measurements {
   Reading pressure;
   Reading flow;
   Reading pumpFeedback;
+  bool pressureBelowAdcRange = false;
 };
 
 struct SafetyConfig {
@@ -119,6 +122,8 @@ struct SafetyConfig {
   std::array<bool, kValveCount> safeValves{};
   bool valve6Absent = false;
   PumpOperatingLimits pumpLimits;
+  uint32_t pressureStartupMs = 0;
+  uint32_t pwmSettleMs = 0;
 };
 
 enum class State { Idle, Running, Manual, ManualValves, Fault };
@@ -161,7 +166,7 @@ class Controller {
     return nullptr;
   }
 
-  const char* manual(const Outputs& requested, uint32_t now) {
+  const char* manual(const Outputs& requested, uint32_t now, bool allowPressureStartup = false) {
     const bool valveHandoff = state_ == State::ManualValves && manualPumpProfile();
     if (valveHandoff) {
       tick(now);
@@ -174,7 +179,10 @@ class Controller {
     if (const char* error = pumpOutputLimitError(requested, safety_.pumpLimits)) return error;
     if (valveHandoff && (outputs_.valves != *safety_.pumpLimits.requiredValves || requested.valves != outputs_.valves))
       return "pump_valve_path_mismatch";
-    if (const char* error = readiness(now)) return error;
+    if (pressureStartupStartedMs_) return "pressure_startup_in_progress";
+    const bool pressureStartup = allowPressureStartup && requested.pumpPercent > 0 && canStartWithLowPressure(now);
+    if (const char* error = readiness(now, pressureStartup)) return error;
+    if (pressureStartup) pressureStartupStartedMs_ = now;
     valveOnlyOutputs_ = false;
     if (state_ == State::Idle) lastHeartbeatMs_ = now;
     state_ = State::Manual;
@@ -255,9 +263,18 @@ class Controller {
       return;  // Pump is zero; physical pressure/pump readiness applies to other modes.
     }
     if (!safety_.simulation) {
-      if (const char* error = readiness(now)) {
+      if (const char* error = readiness(now, pressureStartupStartedMs_.has_value())) {
         latchFault(error);
         return;
+      }
+      if (pressureStartupStartedMs_) {
+        // A speed command stages PWM first. RUN cannot close until pwmSettleMs
+        // after staging, so this fixed deadline bounds time with RUN closed.
+        if (static_cast<uint32_t>(now - *pressureStartupStartedMs_) >= safety_.pwmSettleMs + safety_.pressureStartupMs) {
+          latchFault("pressure_startup_timeout");
+          return;
+        }
+        if (measurements_.pressure.fresh(now, safety_.sensorMaxAgeMs)) pressureStartupStartedMs_.reset();
       }
     }
     if (state_ != State::Running) return;
@@ -292,6 +309,13 @@ class Controller {
     const auto& limits = safety_.pumpLimits;
     return hardwareVerified() && limits.requiredValves && limits.maxPercent > 0 ? &limits : nullptr;
   }
+  uint32_t manualPressureStartupMs() const {
+    return manualPumpProfile() && safety_.pressureStartupMs <= kMaxPressureStartupMs ? safety_.pressureStartupMs : 0;
+  }
+  const char* manualPressureStartupStatus(uint32_t now) const {
+    if (pressureStartupStartedMs_) return "active";
+    return canStartWithLowPressure(now) ? "available" : nullptr;
+  }
   int stepIndex() const { return stepIndex_; }
   uint16_t cycle() const { return cycle_; }
   uint32_t sensorMaxAgeMs() const { return safety_.sensorMaxAgeMs; }
@@ -303,13 +327,22 @@ class Controller {
   }
 
  private:
-  const char* readiness(uint32_t now) const {
+  bool freshLowPressure(uint32_t now) const {
+    return measurements_.pressureBelowAdcRange && !measurements_.pressure.valid &&
+        static_cast<uint32_t>(now - measurements_.pressure.acquiredMs) <= 2 * kNativeAdcSampleIntervalMs;
+  }
+  bool canStartWithLowPressure(uint32_t now) const {
+    return manualPressureStartupMs() && freshLowPressure(now) &&
+        (state_ == State::Idle || (state_ == State::ManualValves && outputs_.valves == *safety_.pumpLimits.requiredValves));
+  }
+  const char* readiness(uint32_t now, bool allowLowPressure = false) const {
     if (safety_.simulation) return nullptr;
     if (!safety_.hardwareReady) return "hardware_not_verified";
     if (!safety_.safeProfileVerified || !std::isfinite(safety_.pressureLimitPsi) ||
         safety_.pressureLimitPsi <= 0 || safety_.sensorMaxAgeMs == 0)
       return "safe_profile_not_verified";
-    if (!measurements_.pressure.fresh(now, safety_.sensorMaxAgeMs)) return "pressure_invalid_or_stale";
+    if (!measurements_.pressure.fresh(now, safety_.sensorMaxAgeMs))
+      return allowLowPressure && freshLowPressure(now) ? nullptr : "pressure_invalid_or_stale";
     if (measurements_.pressure.value > safety_.pressureLimitPsi) return "pressure_limit_exceeded";
     return nullptr;
   }
@@ -318,6 +351,7 @@ class Controller {
     return std::max<uint32_t>(1, static_cast<uint32_t>(std::ceil(recipe_.steps[index].durationSeconds * 1000.0)));
   }
   void resetOutputs() {
+    pressureStartupStartedMs_.reset();
     if (valveOnlyOutputs_) outputs_.valves.fill(false);
     else outputs_.valves = safety_.safeValves;
     outputs_.pumpPercent = 0;
@@ -333,6 +367,7 @@ class Controller {
   uint16_t cycle_ = 0;
   uint32_t stepStartedMs_ = 0;
   uint32_t lastHeartbeatMs_ = 0;
+  std::optional<uint32_t> pressureStartupStartedMs_;
   std::string fault_;
   bool valveOnlyOutputs_ = false;
 };

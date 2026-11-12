@@ -27,7 +27,29 @@ def checked_manual_pump_profile(packet: dict) -> dict | None:
             or type(valves) is not list or any(type(value) is not bool for value in valves)
             or tuple(valves) != LAB_PUMP_VALVES):
         return None
-    return {"max_percent": maximum, "valves": list(valves)}
+    result = {"max_percent": maximum, "valves": list(valves)}
+    startup_ms = profile.get("pressure_startup_ms")
+    if type(startup_ms) is int and 1 <= startup_ms <= 1000:
+        result["pressure_startup_ms"] = startup_ms
+    return result
+
+
+def checked_pressure_startup(packet: dict, pump_profile: dict | None) -> str | None:
+    """Accept a startup phase only in the corresponding physical pump state."""
+    if not pump_profile or "pressure_startup_ms" not in pump_profile:
+        return None
+    if (packet.get("simulation") is not False or packet.get("hardware_verified") is not True
+            or packet.get("pressure_psi") is not None or packet.get("fault")):
+        return None
+    phase, state, pump = packet.get("pressure_startup"), packet.get("state"), packet.get("pump_percent")
+    if type(pump) not in (int, float):
+        return None
+    if phase == "available" and state in ("idle", "manual_valves") and pump == 0:
+        return phase
+    if (phase == "active" and state == "manual" and 0 < pump <= pump_profile["max_percent"]
+            and packet.get("valves") == pump_profile["valves"]):
+        return phase
+    return None
 
 
 def checked_valve_control(packet: dict) -> dict:

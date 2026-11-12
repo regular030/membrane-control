@@ -44,6 +44,8 @@ basu::SafetyConfig makeSafety() {
   safety.valve6Absent = !kSimulation && basu::hasAbsentValve6(board);
   safety.sensorMaxAgeMs = board.sensorMaxAgeMs;
   safety.pumpLimits = board.pumpLimits;
+  safety.pressureStartupMs = board.pressureStartupMs;
+  safety.pwmSettleMs = board.pwmSettleMs;
   return safety;
 }
 basu::Controller controller(makeSafety());
@@ -290,6 +292,7 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
     if (const auto* profile = controller.manualPumpProfile(); profile && hardware.ready()) {
       JsonObject manualPump = document["manual_pump_profile"].to<JsonObject>();
       manualPump["max_percent"] = profile->maxPercent;
+      if (const auto startupMs = controller.manualPressureStartupMs()) manualPump["pressure_startup_ms"] = startupMs;
       JsonArray valves = manualPump["valves"].to<JsonArray>();
       for (bool valve : *profile->requiredValves) valves.add(valve);
     }
@@ -352,7 +355,10 @@ void handleLine(uint32_t now) {
   else if (command == "manual") {
     basu::Outputs candidate;
     error = basu::parseOutputs(request["valves"], request["pump_percent"], candidate);
-    if (!error) error = controller.manual(candidate, now);
+    const auto startup = request["allow_pressure_startup"];
+    if (!error && !startup.isUnbound() && !startup.is<bool>())
+      error = "allow_pressure_startup must be a boolean";
+    if (!error) error = controller.manual(candidate, now, startup.as<bool>());
   } else if (command == "manual_valves") {
     basu::Outputs candidate;
     error = basu::parseManualValves(request.as<JsonVariantConst>(), candidate);
@@ -479,6 +485,10 @@ void writeTelemetry(uint32_t now) {
     else document[name] = nullptr;
   };
   addReading("pressure_psi", controller.measurements().pressure);
+  if (const char* startup = controller.manualPressureStartupStatus(now)) document["pressure_startup"] = startup;
+  if (controller.manualPressureStartupMs()) {
+    if (const auto millivolts = hardware.pressureAdcMillivolts(now)) document["pressure_adc_mv"] = *millivolts;
+  }
   addReading("flow_ml_min", controller.measurements().flow);
   addReading("pump_feedback_v", controller.measurements().pumpFeedback);
   basu::SensorTestMillivolts rawInputs;
