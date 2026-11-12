@@ -501,6 +501,38 @@ void test_hardware_profile_limits_cannot_be_bypassed() {
   }
 }
 
+void test_manual_pump_handoff_holds_the_existing_valves_until_run() {
+  auto config = onboardContactFixture();
+  config.valveBits[kValve6Slot] = -1;
+  config.pumpLimits.maxPercent = 50;
+  config.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.beginManualValves(confirmedRigManualValves()));
+  const Outputs pumping{*config.pumpLimits.requiredValves, 50};
+  TEST_ASSERT_TRUE(hardware.applyManualValves(pumping.valves));
+  TEST_ASSERT_EQUAL_HEX16(0x0005, latchedWords().back().word);
+  fake::gpioEvents.clear();
+
+  TEST_ASSERT_TRUE(hardware.apply(pumping, 1000, false));
+  TEST_ASSERT_TRUE(hardware.apply(pumping, 1099, true));
+  TEST_ASSERT_EQUAL_HEX16(0x0005, latchedWords().back().word);
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
+  TEST_ASSERT_EQUAL(2048, fake::ledcDuties[0]);
+  TEST_ASSERT_TRUE(hardware.apply(pumping, 1100, true));
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
+  const auto words = latchedWords();
+  TEST_ASSERT_EQUAL(2, words.size());
+  TEST_ASSERT_EQUAL_HEX16(0x0005, words[0].word);
+  TEST_ASSERT_EQUAL_HEX16(0x8005, words[1].word);
+  for (const auto& event : fake::gpioEvents)
+    if (event.write && event.pin == 5) TEST_ASSERT_EQUAL(LOW, event.value);
+
+  hardware.safeStop();
+  TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
+  TEST_ASSERT_EQUAL(0, fake::ledcDuties[0]);
+}
+
 void test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile() {
   for (bool fullReady : {false, true}) {
     auto config = onboardContactFixture();
@@ -683,6 +715,7 @@ int main() {
   RUN_TEST(test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run);
   RUN_TEST(test_onboard_contact_opens_even_if_pwm_cannot_be_zeroed);
   RUN_TEST(test_hardware_profile_limits_cannot_be_bypassed);
+  RUN_TEST(test_manual_pump_handoff_holds_the_existing_valves_until_run);
   RUN_TEST(test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile);
   RUN_TEST(test_manual_fallback_rejects_pump_overlap_or_active_low_relay);
   RUN_TEST(test_absent_v6_frees_bit4_and_rejects_commands_to_the_absent_valve);

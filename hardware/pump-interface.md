@@ -126,9 +126,9 @@ closed, for up to 10 seconds. Observe the pump display and measure 14/5.
 Stop, expiry, or loss of USB opens RUN before commanding
 zero. The bench build expects the pump feedback divider on IO34 / GPIO34,
 as wired for the earlier isolated test. The current full-rig wiring uses
-IO34 for pressure and SVN / GPIO39 for flow. With that wiring, the bench
-window's IO34 voltage comes from the pressure input. The DB25 voltage
-estimate applies only when a 5:1 pump feedback divider is wired to IO34.
+SVP / GPIO36 for pressure and SVN / GPIO39 for flow. The bench window's
+DB25 voltage estimate applies only with its separate 5:1 pump feedback
+divider wired to IO34.
 
 ## Spare onboard relay for start/stop
 

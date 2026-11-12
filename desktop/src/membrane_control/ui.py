@@ -26,7 +26,7 @@ import pyqtgraph as pg
 
 from .models import MAX_STEPS, Recipe
 from .connection_diagnostics import connection_diagnostics
-from .device_status import device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
+from .device_status import checked_manual_pump_profile, device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
 from .pump_voltage_test import PumpVoltageTestWindow
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
@@ -1122,7 +1122,9 @@ class MainWindow(QMainWindow):
         pump_percent = self.manual_pump.value()
         if self._updating or not self.manual_apply.isEnabled() or pump_percent <= 0:
             return
-        self._action(lambda: self.controller.set_manual(self._manual_wire_values(), pump_percent), "Pump command sent")
+        profile = checked_manual_pump_profile(self.controller.snapshot)
+        valves = profile["valves"] if profile else self._manual_wire_values()
+        self._action(lambda: self.controller.set_manual(valves, pump_percent), "Pump command sent")
         self._update_view(dict(self.controller.snapshot))
 
     def _manual_wire_values(self):
@@ -1138,6 +1140,8 @@ class MainWindow(QMainWindow):
         if str(self.controller.snapshot.get('state')).lower() == 'manual':
             # Preserve an already running, fully configured pump manual session.
             pump = float(self.controller.snapshot.get('pump_percent') or 0)
+            if pump > 0 and checked_manual_pump_profile(self.controller.snapshot):
+                return
             self._action(lambda: self.controller.set_manual(self._manual_wire_values(), pump), 'Valve command sent; current pump setting retained')
         else:
             self._action(lambda: self.controller.set_manual_valves(valves), 'Valve command sent; pump command is zero')
@@ -1740,9 +1744,14 @@ class MainWindow(QMainWindow):
                 widget.setEnabled(not operating)
             applied_recipe = getattr(self.controller, "recipe", None)
             applied_approved = bool(getattr(applied_recipe, "hardware_approved", False))
-            manual_needs_scale = bool(getattr(applied_recipe, "require_balance", False)) or bool(self.controller.settings.get("require_balance", False))
+            pump_profile = checked_manual_pump_profile(snap)
+            pump_state = state.lower()
+            pump_percent = snap.get("pump_percent") or 0
+            manual_needs_scale = bool(self.controller.settings.get("require_balance", False)) or (
+                not pump_profile and bool(getattr(applied_recipe, "require_balance", False)))
             manual_ready = connected and fresh and (simulation or (verified and applied_approved and snap.get("pressure_psi") is not None)) and (balanced or not manual_needs_scale)
-            manual = not active and manual_ready and not fault
+            manual = not active and manual_ready and not fault and not (
+                pump_profile and pump_state == "manual" and pump_percent > 0)
             valves_only_ready = (connected and fresh and bool(snap.get('valve_control_ready'))
                 and state.lower() in {'idle', 'manual_valves'} and not active and not fault)
             for index, button in enumerate(self.valve_buttons):
@@ -1758,24 +1767,32 @@ class MainWindow(QMainWindow):
                 self.valve_control_note.setText(str(snap.get('valve_control_status') or 'Upload normal controller firmware 0.1.16 for the installed valve mapping.'))
             else:
                 self.valve_control_note.setText('V1–V4 → bits 0–3; V5 → bit 5; V7 → bit 6. No V6. Click ON/OFF; Stop turns all six OFF.')
-            pump_state = state.lower()
+            pump_states = {"idle", "manual"}
+            if pump_profile and snap.get("valves") == pump_profile["valves"]:
+                pump_states.add("manual_valves")
             pump_blocker = next((reason for blocked, reason in (
                 (snap.get("stop_pending"), "Waiting for the controller to confirm Stop."),
                 (not connected, "Connect the controller to use the pump."),
                 (fault, "Clear the controller fault before starting the pump."),
                 (not fresh, "Wait for a fresh controller reading."),
                 (not simulation and not verified, "The controller needs a verified pump and pressure profile. The factory firmware supports manual valves only."),
-                (pump_state == "manual_valves", "Stop manual valves before changing pump control."),
+                (pump_state == "manual_valves" and pump_state not in pump_states,
+                 "Stop manual valves before changing pump control."),
                 (snap.get("manual_pending"), "Waiting for the controller to confirm the manual command."),
-                (active or pump_state not in {"idle", "manual"}, "Stop the current operation before using the manual pump."),
-                (not simulation and not applied_approved, "Apply the reviewed sequence first in Sequence editor."),
+                (active or pump_state not in pump_states, "Stop the current operation before using the manual pump."),
+                (not simulation and not pump_profile and not applied_approved, "Apply the reviewed sequence first in Sequence editor."),
                 (not simulation and snap.get("pressure_psi") is None, "Wait for a valid calibrated pressure reading."),
+                (pump_profile and snap.get("pressure_psi") is not None
+                 and snap["pressure_psi"] > self.controller.settings["max_pressure_psi"],
+                 "Pressure is above the desktop stop threshold."),
                 (manual_needs_scale and not balanced, "Wait for the required scale reading."),
             ) if blocked), "")
+            self.manual_pump.setMaximum(pump_profile["max_percent"] if pump_profile else 100)
             self.manual_pump.setEnabled(not pump_blocker)
-            self.manual_pump_status.setText(pump_blocker or self.manual_stop.toolTip())
-            self.manual_apply.setToolTip(pump_blocker or "Enter a speed above 0% to send it with the current valve settings.")
-            pump_percent = snap.get("pump_percent") or 0
+            pump_path = (f"Pump runs with V1 and V3 open. Maximum {pump_profile['max_percent']:g}%."
+                         if pump_profile else "")
+            self.manual_pump_status.setText(pump_blocker or pump_path or self.manual_stop.toolTip())
+            self.manual_apply.setToolTip(pump_blocker or pump_path or "Enter a speed above 0% to send it with the current valve settings.")
             self.manual_apply.setText("Apply speed" if pump_state == "manual" and pump_percent > 0 else "Start pump")
             manual_request = self.controller.manual_requested
             pump_start_pending = bool(snap.get("manual_pending") and manual_request and manual_request[1] > 0)

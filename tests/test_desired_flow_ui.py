@@ -185,6 +185,38 @@ def test_manual_pump_shows_readiness_blocker(screen):
     assert not window.manual_apply.isEnabled()
 
 
+def test_reviewed_manual_pump_start_uses_fixed_valves_and_limit(screen, monkeypatch):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    valves = [True, False, True, False, False, False, False]
+    controller.snapshot.update(controller_connected=True, simulation=False, hardware_verified=True,
+                               pressure_psi=0, valve_control_ready=True,
+                               manual_pump_profile={"max_percent": 50, "valves": valves})
+    sent = []
+    monkeypatch.setattr(controller, "set_manual", lambda selected, speed: sent.append((selected, speed)))
+    window._update_view(dict(controller.snapshot))
+    assert not controller.recipe.hardware_approved
+    assert window.manual_pump.maximum() == 50
+    assert "V1 and V3" in window.manual_pump_status.text()
+    window.manual_pump.setValue(75)
+    assert window.manual_pump.value() == 50
+    window.manual_apply.click()
+    assert sent == [(valves, 50)]
+
+    controller.snapshot.update(state="manual_valves", valves=[False] * 7)
+    window._update_view(dict(controller.snapshot))
+    assert "Stop manual valves" in window.manual_pump_status.text()
+    assert not window.manual_apply.isEnabled()
+    controller.snapshot["valves"] = valves
+    window._update_view(dict(controller.snapshot))
+    assert window.manual_apply.isEnabled()
+    controller.snapshot.update(state="manual", pump_percent=50)
+    window._update_view(dict(controller.snapshot))
+    assert not any(button.isEnabled() for button in window.valve_buttons)
+    assert window.manual_stop.isEnabled()
+
+
 def test_pump_feedback_distinguishes_command_drive_voltage_and_rotation(screen):
     window, controller, now = screen
     controller.set_simulation(False)

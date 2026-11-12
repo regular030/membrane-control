@@ -9,7 +9,10 @@ from pathlib import Path
 import time
 
 from .balance import MassFlow, parse_mass
-from .device_status import MANUAL_VALVE_IDS, SENSOR_KEYS, checked_controller_diagnostics, checked_sensor_status, checked_valve_control
+from .device_status import (
+    MANUAL_VALVE_IDS, SENSOR_KEYS, checked_controller_diagnostics, checked_manual_pump_profile,
+    checked_sensor_status, checked_valve_control,
+)
 from .esp32_link_log import Esp32LinkLog
 from .models import Recipe, number, valve_states
 from .recipes import built_in_recipes, read_recipe, write_recipe
@@ -111,6 +114,7 @@ class AppController:
             "balance_polling": False,
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
+            "manual_pump_profile": None,
             "live_sensor_voltages": {}, "live_sensor_zero": {},
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
             "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
@@ -346,6 +350,7 @@ class AppController:
         self._reported_valve_control_ready = None
         self.snapshot.update(EMPTY_PUMP_MOTION)
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
+            manual_pump_profile=None,
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
             valve_control_status="Valve-only controls unavailable", sensor_test_available=False,
             sensor_test_voltages={}, sensor_test_status="", live_sensor_voltages={}, live_sensor_zero={})
@@ -477,7 +482,13 @@ class AppController:
         self._log("Stop requested")
 
     def set_manual(self, valves, pump_percent):
-        if self.start_phase or self.manual_pending or self.stop_pending or self.snapshot["state"] not in ("idle", "manual") or self.local_fault:
+        profile = checked_manual_pump_profile(self.snapshot)
+        state = self.snapshot["state"]
+        takeover = state == "manual_valves" and profile and self.snapshot["valves"] == profile["valves"]
+        if (self.start_phase or self.manual_pending or self.stop_pending or self.local_fault
+                or (state not in ("idle", "manual") and not takeover)):
+            if state == "manual_valves" and profile and not takeover:
+                raise ValueError("Stop manual valves before starting the pump with V1 and V3")
             raise ValueError("Stop the sequence or clear the fault first")
         if not self.snapshot["controller_connected"]:
             raise ValueError("Controller is not responding")
@@ -485,10 +496,17 @@ class AppController:
             raise ValueError("Controller telemetry is stale; wait for a fresh reading")
         valves, pump_percent = valve_states(valves), number(pump_percent, "Pump setting", 0, 100)
         if not self.snapshot["simulation"]:
-            if not self.snapshot["hardware_verified"] or not self.recipe.hardware_approved:
+            if not self.snapshot["hardware_verified"] or (not profile and not self.recipe.hardware_approved):
                 raise ValueError("Physical controls are locked until hardware and recipe are approved")
             if self.snapshot["pressure_psi"] is None:
                 raise ValueError("Physical controls require a valid pressure reading")
+            if profile:
+                if self.snapshot["pressure_psi"] > self.settings["max_pressure_psi"]:
+                    raise ValueError("Pressure is above the desktop stop threshold")
+                if pump_percent > profile["max_percent"]:
+                    raise ValueError(f"Pump setting must be at most {profile['max_percent']:g}%")
+                if pump_percent > 0 and list(valves) != profile["valves"]:
+                    raise ValueError("The pump requires V1 and V3 open and all other valves off")
         self.manual_requested = (list(valves), pump_percent)
         self.manual_pending = True
         self.snapshot["manual_pending"] = True
@@ -771,6 +789,7 @@ class AppController:
                 diagnostics = checked_controller_diagnostics(packet)
                 self.device = {key: value for key, value in packet.items()
                                if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
+                                              "manual_pump_profile",
                                               "valve_control_ready", "manual_valve_count", "manual_valve_ids",
                                               "valve_bits", "valve_control_status", "sensor_test_available")}
                 self.device.update(diagnostics)

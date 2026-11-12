@@ -12,6 +12,22 @@ SENSOR_STATUS_CODES = frozenset(("simulated", "not_configured", "profile_locked"
     "hardware_unavailable", "uncalibrated", "out_of_range", "stale", "reading_received"))
 MANUAL_VALVE_IDS = (1, 2, 3, 4, 5, 7)
 MANUAL_VALVE_BITS = (0, 1, 2, 3, 5, 6)
+LAB_PUMP_VALVES = (True, False, True, False, False, False, False)
+
+
+def checked_manual_pump_profile(packet: dict) -> dict | None:
+    if packet.get("simulation") is not False or packet.get("hardware_verified") is not True:
+        return None
+    profile = packet.get("manual_pump_profile")
+    if type(profile) is not dict:
+        return None
+    maximum = profile.get("max_percent")
+    valves = profile.get("valves")
+    if (type(maximum) not in (int, float) or not 0.1 <= maximum <= 50
+            or type(valves) is not list or any(type(value) is not bool for value in valves)
+            or tuple(valves) != LAB_PUMP_VALVES):
+        return None
+    return {"max_percent": maximum, "valves": list(valves)}
 
 
 def checked_valve_control(packet: dict) -> dict:
@@ -34,8 +50,11 @@ def checked_valve_control(packet: dict) -> dict:
 
 
 def checked_controller_diagnostics(packet: dict) -> dict:
-    """Copy only bounded, known optional HELLO diagnostics; never control flags."""
+    """Copy only bounded, known optional HELLO fields."""
     result = {}
+    pump_profile = checked_manual_pump_profile(packet)
+    if pump_profile is not None:
+        result["manual_pump_profile"] = pump_profile
     mode = packet.get("controller_mode")
     if (type(mode) is str and mode in ("dry_run", "physical")
             and mode == ("dry_run" if packet.get("simulation") is True else "physical")):

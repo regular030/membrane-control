@@ -117,6 +117,58 @@ def test_old_firmware_without_diagnostics_keeps_existing_connection_behavior(app
     assert controller.local_fault is None
 
 
+def test_reviewed_manual_pump_profile_guards_takeover_without_recipe_approval(app):
+    controller, clock = app
+    valves = [True, False, True, False, False, False, False]
+    profile = {"max_percent": 50, "valves": valves}
+    hello(controller, clock, hardware_verified=True, manual_pump_profile=profile)
+    telemetry(controller, clock, hardware_verified=True, pressure_psi=0)
+    assert controller.snapshot["manual_pump_profile"] == profile
+    assert not controller.recipe.hardware_approved
+
+    with pytest.raises(ValueError, match="at most 50%"):
+        controller.set_manual(valves, 51)
+    with pytest.raises(ValueError, match="V1 and V3"):
+        controller.set_manual([False] * 7, 35)
+
+    controller.snapshot.update(state="manual_valves", valves=[False] * 7)
+    with pytest.raises(ValueError, match="Stop manual valves"):
+        controller.set_manual(valves, 35)
+    controller.snapshot["valves"] = valves.copy()
+    controller.snapshot["pressure_psi"] = None
+    with pytest.raises(ValueError, match="valid pressure"):
+        controller.set_manual(valves, 35)
+    controller.snapshot["pressure_psi"] = 21
+    with pytest.raises(ValueError, match="desktop stop threshold"):
+        controller.set_manual(valves, 35)
+
+    controller.snapshot["pressure_psi"] = 0
+    controller.set_manual(valves, 50)
+    assert controller.driver.sent[-1]["cmd"] == "manual"
+    assert controller.driver.sent[-1]["valves"] == valves
+    assert controller.driver.sent[-1]["pump_percent"] == 50
+    controller.disconnect_controller(request_stop=False)
+    assert controller.snapshot["manual_pump_profile"] is None
+
+
+@pytest.mark.parametrize("verified,maximum,valves", [
+    (False, 50, [True, False, True, False, False, False, False]),
+    (True, 51, [True, False, True, False, False, False, False]),
+    (True, True, [True, False, True, False, False, False, False]),
+    (True, float("nan"), [True, False, True, False, False, False, False]),
+    (True, 50, [1, False, True, False, False, False, False]),
+    (True, 50, [True, False, True, False, False, False, True]),
+])
+def test_unverified_or_invalid_manual_pump_profile_cannot_bypass_recipe(app, verified, maximum, valves):
+    controller, clock = app
+    hello(controller, clock, hardware_verified=verified,
+          manual_pump_profile={"max_percent": maximum, "valves": valves})
+    telemetry(controller, clock, hardware_verified=verified, pressure_psi=0)
+    assert controller.snapshot["manual_pump_profile"] is None
+    with pytest.raises(ValueError, match="hardware and recipe are approved"):
+        controller.set_manual([True, False, True, False, False, False, False], 35)
+
+
 @pytest.mark.parametrize("bad", [None, True, [], "unknown", {"pressure": []},
     {"pressure": {"source": ["native_adc1"], "calibration_verified": False}},
     {"pressure": {"source": "native_adc1", "pin": True, "calibration_verified": False}},

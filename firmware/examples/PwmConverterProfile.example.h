@@ -30,10 +30,9 @@ inline BoardConfig compiledBoardConfig() {
   config.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
   // Lab Stop leaves all installed valves off. Confirm the rest of the
   // output configuration on the actual rig before enabling the profile.
-  // Current full-rig wiring puts the pressure divider on IO34. The
-  // separate bucket test previously used that pin for pump feedback.
+  // Current full-rig wiring puts the pressure divider on SVP / GPIO36.
   config.pressure.source = AnalogSource::NativeAdc1;
-  config.pressure.pin = 34;
+  config.pressure.pin = 36;
   config.pressure.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
   config.pressure.calibrationVerified = false;
   // Certificate endpoints: 0 psi at 0.005 V, 100 psi at 5.004 V.

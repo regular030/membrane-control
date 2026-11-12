@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "CWF commissioning",
-  "description": "Clean-water commissioning run for the lab rig. V1 and V3 are open whenever the pump runs. The 5-second prime and 30-second observation are adjustable commissioning intervals. Set the desktop pressure stop threshold to 80 psi and confirm a valid calibrated IO34 pressure reading before starting. The final step stops the pump and turns all valves off.",
+  "description": "Clean-water commissioning run for the lab rig. V1 and V3 are open whenever the pump runs. The 5-second prime and 30-second observation are adjustable commissioning intervals. Set the desktop pressure stop threshold to 80 psi and confirm a valid calibrated SVP (GPIO36) pressure reading before starting. The final step stops the pump and turns all valves off.",
   "hardware_approved": true,
   "repeat": 1,
   "sample_interval_s": 1,

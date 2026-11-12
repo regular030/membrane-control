@@ -246,6 +246,80 @@ void test_valve_capability_cannot_unlock_pump_or_recipe_or_silent_mode_switches(
   TEST_ASSERT_NOT_NULL(fullManual.manualValves(sixOn(), 1));
 }
 
+SafetyConfig manualPumpSafety() {
+  SafetyConfig safety;
+  safety.simulation = false;
+  safety.hardwareReady = true;
+  safety.safeProfileVerified = true;
+  safety.valveControlReady = true;
+  safety.pressureLimitPsi = 80;
+  safety.pumpLimits.maxPercent = 50;
+  safety.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
+  return safety;
+}
+
+void test_manual_pump_profile_requires_reviewed_physical_hardware_and_an_opt_in_path() {
+  const auto commissioned = manualPumpSafety();
+  Controller core(commissioned);
+  TEST_ASSERT_NOT_NULL(core.manualPumpProfile());
+  TEST_ASSERT_EQUAL_DOUBLE(50, core.manualPumpProfile()->maxPercent);
+  TEST_ASSERT_TRUE(core.manualPumpProfile()->requiredValves == commissioned.pumpLimits.requiredValves);
+  const Outputs pumping{*commissioned.pumpLimits.requiredValves, 50};
+  std::array<SafetyConfig, 5> unavailable;
+  unavailable.fill(commissioned);
+  unavailable[0].simulation = true;
+  unavailable[1].hardwareReady = false;
+  unavailable[2].safeProfileVerified = false;
+  unavailable[3].pumpLimits.requiredValves.reset();
+  unavailable[4].pumpLimits.maxPercent = 0;
+  for (const auto& safety : unavailable) {
+    Controller blocked(safety);
+    TEST_ASSERT_NULL(blocked.manualPumpProfile());
+    TEST_ASSERT_NULL(blocked.manualValves(pumping.valves, 0));
+    TEST_ASSERT_NOT_NULL(blocked.manual(pumping, 1));
+    TEST_ASSERT_TRUE(blocked.state() == State::ManualValves);
+    TEST_ASSERT_EQUAL_DOUBLE(0, blocked.outputs().pumpPercent);
+  }
+}
+
+void test_manual_pump_handoff_preserves_valve_path_pressure_guard_and_original_lease() {
+  const auto safety = manualPumpSafety();
+  Controller core(safety);
+  const Outputs pumping{*safety.pumpLimits.requiredValves, 50};
+  TEST_ASSERT_NULL(core.manualValves(sixOn(), 0));
+  TEST_ASSERT_EQUAL_STRING("pump_valve_path_mismatch", core.manual(pumping, 1));
+  TEST_ASSERT_TRUE(core.outputs().valves == sixOn());
+  TEST_ASSERT_NULL(core.manualValves(pumping.valves, 2));
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 3));
+  Measurements measured;
+  measured.pressure = {80.1, true, 4};
+  core.setMeasurements(measured);
+  TEST_ASSERT_EQUAL_STRING("pressure_limit_exceeded", core.manual(pumping, 4));
+  Outputs tooFast = pumping;
+  tooFast.pumpPercent = 50.01;
+  TEST_ASSERT_EQUAL_STRING("pump_percent_exceeds_profile_limit", core.manual(tooFast, 5));
+  TEST_ASSERT_EQUAL_STRING("pump_valve_path_mismatch", core.manual(Outputs{}, 5));
+  TEST_ASSERT_TRUE(core.state() == State::ManualValves);
+  TEST_ASSERT_TRUE(core.outputs().valves == pumping.valves);
+  TEST_ASSERT_EQUAL_DOUBLE(0, core.outputs().pumpPercent);
+
+  measured.pressure = {80, true, 2999};
+  core.setMeasurements(measured);
+  TEST_ASSERT_NULL(core.manual(pumping, 2999));
+  TEST_ASSERT_TRUE(core.state() == State::Manual);
+  TEST_ASSERT_TRUE(core.outputs() == pumping);
+  core.tick(3000);
+  TEST_ASSERT_EQUAL_STRING("heartbeat_timeout", core.fault().c_str());
+  TEST_ASSERT_TRUE(core.outputs() == Outputs{});
+
+  Controller expired(safety);
+  TEST_ASSERT_NULL(expired.manualValves(pumping.valves, 0));
+  expired.setMeasurements(measured);
+  TEST_ASSERT_EQUAL_STRING("heartbeat_timeout", expired.manual(pumping, 3000));
+  TEST_ASSERT_TRUE(expired.state() == State::Fault);
+  TEST_ASSERT_TRUE(expired.outputs() == Outputs{});
+}
+
 void test_full_ready_driver_is_reused_without_extra_dac_or_pwm_actuation() {
   Hardware hardware(fullFixture(), false); TEST_ASSERT_TRUE(hardware.begin());
   TEST_ASSERT_TRUE(hardware.beginManualValves(confirmedRigManualValves()));
@@ -355,6 +429,8 @@ int main() {
   RUN_TEST(test_valve_only_stop_and_fault_do_not_use_unrelated_full_process_safe_states);
   RUN_TEST(test_capability_loss_faults_valves_but_pressure_is_not_a_valve_only_gate);
   RUN_TEST(test_valve_capability_cannot_unlock_pump_or_recipe_or_silent_mode_switches);
+  RUN_TEST(test_manual_pump_profile_requires_reviewed_physical_hardware_and_an_opt_in_path);
+  RUN_TEST(test_manual_pump_handoff_preserves_valve_path_pressure_guard_and_original_lease);
   RUN_TEST(test_full_ready_driver_is_reused_without_extra_dac_or_pwm_actuation);
   RUN_TEST(test_optional_full_sensor_acquisition_works_without_pump_health_probe_in_valve_mode);
   RUN_TEST(test_incompatible_full_driver_cannot_be_overwritten_by_second_relay_driver);

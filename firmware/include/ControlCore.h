@@ -162,11 +162,18 @@ class Controller {
   }
 
   const char* manual(const Outputs& requested, uint32_t now) {
-    if (state_ != State::Idle && state_ != State::Manual)
+    const bool valveHandoff = state_ == State::ManualValves && manualPumpProfile();
+    if (valveHandoff) {
+      tick(now);
+      if (state_ == State::Fault) return fault_.c_str();
+    } else if (state_ != State::Idle && state_ != State::Manual) {
       return "manual control requires idle or manual state";
+    }
     if (!validOutputs(requested)) return "pump_percent must be finite and 0-100";
     if (safety_.valve6Absent && requested.valves[kValve6Slot]) return "V6 is not installed; its wire slot must remain false";
     if (const char* error = pumpOutputLimitError(requested, safety_.pumpLimits)) return error;
+    if (valveHandoff && (outputs_.valves != *safety_.pumpLimits.requiredValves || requested.valves != outputs_.valves))
+      return "pump_valve_path_mismatch";
     if (const char* error = readiness(now)) return error;
     valveOnlyOutputs_ = false;
     if (state_ == State::Idle) lastHeartbeatMs_ = now;
@@ -281,6 +288,10 @@ class Controller {
   bool recipeLoaded() const { return loaded_; }
   bool simulation() const { return safety_.simulation; }
   bool hardwareVerified() const { return !safety_.simulation && safety_.hardwareReady && safety_.safeProfileVerified; }
+  const PumpOperatingLimits* manualPumpProfile() const {
+    const auto& limits = safety_.pumpLimits;
+    return hardwareVerified() && limits.requiredValves && limits.maxPercent > 0 ? &limits : nullptr;
+  }
   int stepIndex() const { return stepIndex_; }
   uint16_t cycle() const { return cycle_; }
   uint32_t sensorMaxAgeMs() const { return safety_.sensorMaxAgeMs; }

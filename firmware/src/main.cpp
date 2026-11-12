@@ -287,6 +287,12 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
     document["protocol_version"] = 1;
     document["valve_count"] = basu::kValveCount;
     document["hardware_verified"] = controller.hardwareVerified();
+    if (const auto* profile = controller.manualPumpProfile(); profile && hardware.ready()) {
+      JsonObject manualPump = document["manual_pump_profile"].to<JsonObject>();
+      manualPump["max_percent"] = profile->maxPercent;
+      JsonArray valves = manualPump["valves"].to<JsonArray>();
+      for (bool valve : *profile->requiredValves) valves.add(valve);
+    }
     document["simulation"] = kSimulation;
   }
   writeDocument(document);
