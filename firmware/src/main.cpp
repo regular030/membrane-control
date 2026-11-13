@@ -43,6 +43,8 @@ basu::SafetyConfig makeSafety() {
   safety.safeValves = board.safeValves;
   safety.valve6Absent = !kSimulation && basu::hasAbsentValve6(board);
   safety.sensorMaxAgeMs = board.sensorMaxAgeMs;
+  safety.pumpLimits = board.pumpLimits;
+  safety.pressureStartupMs = board.pressureStartupMs;
   return safety;
 }
 basu::Controller controller(makeSafety());
@@ -257,7 +259,7 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
   if (sensorTest && !error) addAdcPinMillivolts(document, *sensorTest);
   if (hello && !error) {
     document["device"] = "basu-membrane-control";
-    document["firmware_version"] = "0.1.20";
+    document["firmware_version"] = "0.1.28";
     document["reset_reason"] = resetReasonName(esp_reset_reason());
     document["sensor_test_available"] = hardware.sensorTestAvailable(kFactoryProfile);
     document["valve_control_ready"] = hardware.valveControlReady();
@@ -280,12 +282,19 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
       JsonObject input = sensorInputs[names[index]].to<JsonObject>();
       input["source"] = basu::analogSourceName(configured[index]->source);
       input["calibration_verified"] = configured[index]->calibrationVerified;
-      if (configured[index]->source == basu::AnalogSource::NativeAdc1) input["pin"] = configured[index]->pin;
+      if (basu::usesNativeAdc(configured[index]->source)) input["pin"] = configured[index]->pin;
       else if (configured[index]->source == basu::AnalogSource::Ads1115) input["channel"] = configured[index]->adsChannel;
     }
     document["protocol_version"] = 1;
     document["valve_count"] = basu::kValveCount;
     document["hardware_verified"] = controller.hardwareVerified();
+    if (const auto* profile = controller.manualPumpProfile(); profile && hardware.ready()) {
+      JsonObject manualPump = document["manual_pump_profile"].to<JsonObject>();
+      manualPump["max_percent"] = profile->maxPercent;
+      if (const auto startupMs = controller.manualPressureStartupMs()) manualPump["pressure_startup_ms"] = startupMs;
+      JsonArray valves = manualPump["valves"].to<JsonArray>();
+      for (bool valve : *profile->requiredValves) valves.add(valve);
+    }
     document["simulation"] = kSimulation;
   }
   writeDocument(document);
@@ -345,7 +354,10 @@ void handleLine(uint32_t now) {
   else if (command == "manual") {
     basu::Outputs candidate;
     error = basu::parseOutputs(request["valves"], request["pump_percent"], candidate);
-    if (!error) error = controller.manual(candidate, now);
+    const auto startup = request["allow_pressure_startup"];
+    if (!error && !startup.isUnbound() && !startup.is<bool>())
+      error = "allow_pressure_startup must be a boolean";
+    if (!error) error = controller.manual(candidate, now, startup.as<bool>());
   } else if (command == "manual_valves") {
     basu::Outputs candidate;
     error = basu::parseManualValves(request.as<JsonVariantConst>(), candidate);
@@ -460,13 +472,30 @@ void writeTelemetry(uint32_t now) {
   JsonArray valves = document["valves"].to<JsonArray>();
   for (bool state : controller.outputs().valves) valves.add(state);
   document["pump_percent"] = controller.outputs().pumpPercent;
+  if (hardware.pumpContactCommandAvailable())
+    document["pump_run_contact_commanded"] = hardware.pumpRunContactCommanded();
+  if (const char* status = hardware.pumpTachStatus(now)) {
+    document["pump_tach_status"] = status;
+    double rpm;
+    if (hardware.readPumpRpm(now, rpm)) document["pump_rpm"] = rpm;
+  }
   auto addReading = [&](const char* name, const basu::Reading& reading) {
     if (reading.fresh(now, controller.sensorMaxAgeMs())) document[name] = reading.value;
     else document[name] = nullptr;
   };
   addReading("pressure_psi", controller.measurements().pressure);
+  if (const char* startup = controller.manualPressureStartupStatus(now)) document["pressure_startup"] = startup;
+  if (controller.manualPressureStartupMs() || hardware.sensorMonitoringOnly()) {
+    if (const auto millivolts = hardware.pressureAdcMillivolts(now)) document["pressure_adc_mv"] = *millivolts;
+  }
   addReading("flow_ml_min", controller.measurements().flow);
+  if (hardware.sensorMonitoringOnly() || !controller.measurements().flow.fresh(now, controller.sensorMaxAgeMs())) {
+    if (const auto millivolts = hardware.flowAdcMillivolts(now)) document["flow_adc_mv"] = *millivolts;
+  }
   addReading("pump_feedback_v", controller.measurements().pumpFeedback);
+  if (hardware.sensorMonitoringOnly() || !controller.measurements().pumpFeedback.fresh(now, controller.sensorMaxAgeMs())) {
+    if (const auto millivolts = hardware.pumpFeedbackAdcMillivolts(now)) document["pump_feedback_adc_mv"] = *millivolts;
+  }
   basu::SensorTestMillivolts rawInputs;
   if (!hardware.readSensorTestInputs(kFactoryProfile, controller.state(), rawInputs,
                                     basu::SensorTestScope::IdleOrManualValves))
@@ -500,7 +529,7 @@ void setup() {
     hardware.beginManualValves(basu::confirmedRigManualValves());
   controller.setValveControlReady(hardware.valveControlReady());
   // Pump/sensor setup remains separate from the confirmed six-valve capability.
-  if (!initialized && board.verifiedBoardConfig) controller.latchFault(hardware.error());
+  if (!initialized && board.verifiedBoardConfig && !hardware.sensorMonitoringOnly()) controller.latchFault(hardware.error());
 #ifdef BASU_BLUETOOTH_DRY_RUN
   bluetoothInput = xQueueCreate(basu::kMaxLineBytes + 1, sizeof(uint8_t));
   if (bluetoothInput == nullptr) {
@@ -552,6 +581,7 @@ void loop() {
   const bool valveOnly = controller.state() == basu::State::ManualValves;
   const bool applied = valveOnly ? hardware.applyManualValves(controller.outputs().valves) :
       (hardware.ready() ? hardware.apply(controller.outputs(), now, true) : true);
+  if (applied && hardware.pumpRunContactCommanded()) controller.notePumpRunCommanded(millis());
   if (!applied && controller.active()) {
     controller.setHardwareReady(false);
     controller.latchFault(valveOnly ? hardware.valveError() : hardware.error());

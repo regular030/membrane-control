@@ -71,6 +71,24 @@ The example's approval flags are false and its mapping is incomplete on
 purpose. The profile must include the measured converter settling interval;
 do not turn an unknown interval or an unchecked interface into approval.
 
+The lab observed about 5 V at DB25 1/3 and 165 mL/min on the drive during
+the isolated 50% open-bucket test. That observation covers the 50% point.
+For the CWF rig the lab specified V1 and V3 open during pumping, an 80 psi
+cutoff, and all installed valves off at Stop. The current full-rig wiring
+uses SVP / GPIO36 for pressure and SVN / GPIO39 for flow. Pump feedback has
+no confirmed separate input in this wiring. The lab profile uses 2.5 dB on SVP with a
+100 mV minimum. At the certificate slope, 10 psi is about 101 mV and 80 psi
+is about 801 mV. Start requires fresh pressure in range with the pump
+stopped. Earlier IO34 measurements came from a different input. Use the
+pressure reading from the SVP profile for the start check.
+
+The lab profile caps the pump command at 50% and requires exactly V1 and
+V3 for every positive command. Use **Start pump** for manual control. The
+app sends the required valve path with the pump command. For an automated
+run, import `examples/cwf-commissioning.json` through **Sequence editor →
+Import JSON**. The commissioning timings come from the earlier CWF demo.
+Set the desktop pressure stop to 80 psi before starting.
+
 The PWM-specific fields are `pumpPwmPin`, `pumpPwmChannel`,
 `pumpPwmFrequencyHz`, `pumpPwmResolutionBits`, `pwmSettleMs` and
 `pwmConverterInterfaceVerified`. Proposed pin/channel/frequency/resolution are

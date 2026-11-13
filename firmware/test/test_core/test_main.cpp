@@ -80,6 +80,103 @@ void test_active_recipe_replacement_and_manual_rejected() {
   TEST_ASSERT_EQUAL_DOUBLE(10, controller.outputs().pumpPercent);
 }
 
+void test_profile_limits_cover_manual_and_every_recipe_step() {
+  SafetyConfig safety;
+  safety.simulation = false;
+  safety.hardwareReady = true;
+  safety.safeProfileVerified = true;
+  safety.pressureLimitPsi = 80;
+  safety.pumpLimits.maxPercent = 50;
+  const std::array<bool, kValveCount> requiredValves{{true, false, true, false, false, false, false}};
+  safety.pumpLimits.requiredValves = requiredValves;
+  Controller controller(safety);
+  const Outputs allowed{requiredValves, 50};
+  Outputs tooFast = allowed;
+  tooFast.pumpPercent = 50.01;
+  Outputs missingValve = allowed;
+  missingValve.valves[2] = false;
+  Outputs extraValve = allowed;
+  extraValve.valves[3] = true;
+  TEST_ASSERT_EQUAL_STRING("pump_percent_exceeds_profile_limit", controller.manual(tooFast, 0));
+  TEST_ASSERT_EQUAL_STRING("pump_valve_path_mismatch", controller.manual(missingValve, 0));
+  TEST_ASSERT_EQUAL_STRING("pump_valve_path_mismatch", controller.manual(extraValve, 0));
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", controller.manual(allowed, 0));
+
+  Measurements measurements;
+  measurements.pressure = {80, true, 0};
+  controller.setMeasurements(measurements);
+  TEST_ASSERT_NULL(controller.manual(allowed, 0));
+  TEST_ASSERT_EQUAL_DOUBLE(50, controller.outputs().pumpPercent);
+  measurements.pressure = {80.01, true, 100};
+  controller.setMeasurements(measurements);
+  controller.tick(100);
+  TEST_ASSERT_EQUAL_STRING("pressure_limit_exceeded", controller.fault().c_str());
+  TEST_ASSERT_EQUAL_DOUBLE(0, controller.outputs().pumpPercent);
+  TEST_ASSERT_NULL(controller.clearFault());
+
+  auto recipe = exampleRecipe();
+  recipe.hardwareApproved = true;
+  recipe.steps[0].outputs = {extraValve.valves, 0};
+  recipe.steps[1].outputs = tooFast;
+  TEST_ASSERT_EQUAL_STRING("pump_percent_exceeds_profile_limit", controller.load(recipe));
+  recipe.steps[1].outputs = missingValve;
+  TEST_ASSERT_EQUAL_STRING("pump_valve_path_mismatch", controller.load(recipe));
+  recipe.steps[1].outputs = allowed;
+  TEST_ASSERT_NULL(controller.load(recipe));
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", controller.start(1200));
+  measurements.pressure = {70, true, 1200};
+  controller.setMeasurements(measurements);
+  TEST_ASSERT_NULL(controller.start(1200));
+  TEST_ASSERT_EQUAL_DOUBLE(0, controller.outputs().pumpPercent);
+  TEST_ASSERT_TRUE(controller.outputs().valves[3]);
+  controller.tick(1700);
+  TEST_ASSERT_TRUE(controller.outputs() == allowed);
+  controller.stop();
+  TEST_ASSERT_TRUE(controller.outputs() == Outputs{});
+}
+
+void test_low_pressure_manual_start_preserves_cutoff_and_restores_strict_readiness() {
+  SafetyConfig safety;
+  safety.simulation = false;
+  safety.hardwareReady = true;
+  safety.safeProfileVerified = true;
+  safety.pressureLimitPsi = 80;
+  safety.pressureStartupMs = 10000;
+  safety.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
+  const Outputs pumping{*safety.pumpLimits.requiredValves, 30};
+  for (double firstPressure : {20.0, 81.0}) {
+    Controller controller(safety);
+    Measurements low;
+    low.pressure.acquiredMs = 100;
+    low.pressureBelowAdcRange = true;
+    controller.setMeasurements(low);
+
+    auto recipe = exampleRecipe();
+    recipe.hardwareApproved = true;
+    recipe.steps[0].outputs = pumping;
+    recipe.stepCount = 1;
+    TEST_ASSERT_NULL(controller.load(recipe));
+    TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", controller.start(100));
+    TEST_ASSERT_NULL(controller.manual(pumping, 100, true));
+
+    Measurements measured;
+    measured.pressure = {firstPressure, true, 200};
+    controller.setMeasurements(measured);
+    controller.tick(200);
+    if (firstPressure > safety.pressureLimitPsi) {
+      TEST_ASSERT_EQUAL_STRING("pressure_limit_exceeded", controller.fault().c_str());
+    } else {
+      TEST_ASSERT_TRUE(controller.state() == State::Manual);
+      TEST_ASSERT_NULL(controller.manualPressureStartupStatus(200));
+      low.pressure.acquiredMs = 300;
+      controller.setMeasurements(low);
+      controller.tick(300);
+      TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", controller.fault().c_str());
+    }
+    TEST_ASSERT_EQUAL_DOUBLE(0, controller.outputs().pumpPercent);
+  }
+}
+
 void test_timeout_latches_and_stop_does_not_clear() {
   Controller controller;
   Outputs manual;
@@ -360,6 +457,8 @@ int main(int, char**) {
   RUN_TEST(test_sequence_repeats_and_stops);
   RUN_TEST(test_invalid_recipe_is_atomic);
   RUN_TEST(test_active_recipe_replacement_and_manual_rejected);
+  RUN_TEST(test_profile_limits_cover_manual_and_every_recipe_step);
+  RUN_TEST(test_low_pressure_manual_start_preserves_cutoff_and_restores_strict_readiness);
   RUN_TEST(test_timeout_latches_and_stop_does_not_clear);
   RUN_TEST(test_timer_wraparound);
   RUN_TEST(test_physical_commissioning_and_pressure_guards);

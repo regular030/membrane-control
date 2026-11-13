@@ -76,8 +76,59 @@ Keep pins 14/5 disconnected until that complete reference arrangement is
 verified or an isolated feedback input is fitted. After verification, divider
 3 **S** goes to **GPIO39 / SVN** and its **-** to ESP32 GND. Leave **+** open on
 the verified passive revision. A measured 10 V at the input should give about
-2 V at S. The output on 14/5 represents running command speed. Motor-running
-status and actual flow require their own signals.
+2 V at S. The output on 14/5 represents running command speed.
+
+### Measure motor rotation
+
+For measured speed in Pump settings, connect the pump's **DB25 pin 19** tach
+output and **pin 18** return to a reviewed input circuit with a 3.3 V logic
+output for the ESP32. The pump side is an open-collector output referenced
+to earth. Verify input conditioning and isolation before selecting an ESP32
+pin in the local profile. The Masterflex tach is **100 pulses per revolution**,
+so a 1,000 Hz input corresponds to **600 RPM**.
+
+Verify the tach reading against the drive at two known speeds. After Stop,
+check that the reading returns to **No tach pulses**. A disconnected signal
+also gives no pulses. DB25 **6/7** is a separate motor-running status output.
+See the [drive manual, pp. 3-23 to 3-25](https://files.yamato-net.co.jp/support/coleparmer/english/pump/75211-70e.pdf#page=37).
+
+### Measure the connected drive's voltage input
+
+For the known 16-relay rig, the `esp32-pump-voltage-test` firmware holds all
+relay outputs off and accepts a 50% GPIO25 PWM test over USB. Back up the
+installed firmware before flashing this temporary image. On the drive, select
+Voltage Input and Continuous Pump Mode, set START/STOP required ON and Auto
+Start OFF, and confirm the DB25 15/17 contact stays open.
+
+Open the app with `--pump-voltage-test COM5`, using the board's USB port.
+Confirm the drive interlock, then select **Set 50% for up to 30 seconds**.
+Measure DC voltage on DB25 1 relative to 3. Compare the pump display and the
+app's GPIO39 reading with a meter on 14 relative to 5. The default drive
+feedback can read zero while stopped. **Return to 0%** ends the test, and
+the firmware also returns to zero on timeout or loss of the USB heartbeat.
+Restore the normal Bluetooth image before operating the rig.
+
+### Run the drive at 50% with an open discharge
+
+Use `esp32-pump-open-bucket-test` and `--pump-open-bucket-test COM5` for
+the separate, primed water-to-open-container test. Route the discharge
+directly into the container with a secured, unrestricted outlet independent
+of the rig's valves. Stay at the drive with its power switch within reach.
+The drive must be in Voltage Input and Continuous Pump Mode with START/STOP
+required ON and Auto Start OFF. This test does not use the rig's pressure
+input or recipe. Restore the normal Bluetooth image before using the rig.
+
+Verify a steady 5 V at DB25 1/3 at the 50% command with RUN open using the
+voltage test. Confirm the verified voltage in the app's setup checklist
+and select **Run pump at 50%**. The app stages the voltage and waits for it
+to settle before requesting RUN. Only the dedicated RUN relay is commanded
+closed, for up to 10 seconds. Observe the pump display and measure 14/5.
+Stop, expiry, or loss of USB opens RUN before commanding
+zero. The bench build expects the pump feedback divider on IO34 / GPIO34,
+as wired for the earlier isolated test. The current full-rig wiring uses
+SVP / GPIO36 for pressure and SVN / GPIO39 for flow. The bench window's
+DB25 voltage estimate applies only with its separate 5:1 pump feedback
+divider wired to IO34.
 
 ## Spare onboard relay for start/stop
 
@@ -123,6 +174,8 @@ backend. Values below are proposed assignments, not a ready-to-flash profile:
 | `pwmSettleMs` | `0` until measured | Invalid placeholder; review an actual 10-5000 ms settling interval before permitting RUN |
 | `pumpContactBit` | **15**, confirmed by the lab | Leave `pumpContactPin = -1` for the onboard relay |
 | `pumpContactPin` | GPIO26 only for the external driver alternative | Leave unassigned for the onboard contact path |
+| `pumpTachPin` | `-1` with the current analog-only wiring | Assign a free GPIO after testing the conditioned tach signal |
+| `pumpTachPulsesPerRevolution` | `100` | Pulses per motor revolution specified for the 75211-70 |
 
 The PWM branch initializes at zero duty. Its software STOP path commands the
 pump contact to STOP before zeroing PWM and changing valve outputs; communication

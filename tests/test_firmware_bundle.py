@@ -17,6 +17,11 @@ SPEC = importlib.util.spec_from_file_location(
 builder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(builder)
 
+EXPECTED_TARGETS = {
+    "esp32-dry-run", "esp32-relay-bench", "esp32-valve-test", "esp32-physical",
+    "esp32-bluetooth-physical", "esp32-pump-voltage-test", "esp32-pump-open-bucket-test",
+}
+
 
 @pytest.fixture
 def bundle_project(tmp_path, monkeypatch):
@@ -57,6 +62,10 @@ def bundle_project(tmp_path, monkeypatch):
         defines = ["ARDUINO_ESP32_DEV"]
         if target not in ("esp32-relay-bench", "esp32-valve-test"):
             defines.append("BASU_DRY_RUN=" + ("1" if target == "esp32-dry-run" else "0"))
+        if target == "esp32-bluetooth-physical":
+            defines.append("BASU_BLUETOOTH_PHYSICAL=1")
+        if target == "esp32-pump-open-bucket-test":
+            defines.append("BASU_PUMP_OPEN_BUCKET_TEST=1")
         metadata[target] = {
             "env_name": target, "build_type": "release", "defines": defines,
             "prog_path": str(build_dir / "firmware.elf"),
@@ -104,11 +113,14 @@ def test_complete_bundle_uses_metadata_addresses_and_matches_every_hash(bundle_p
         assert "firmware/test/mocks/Arduino.h" in names
         assert "firmware/compact_paths.py" in names
         assert "firmware/native_compiler.py" in names
+        assert "firmware/src/protected_spp.cpp" in names
+        assert "firmware/src/pump_voltage_test_main.cpp" in names
         assert not any(".pio" in name or "credentials" in name or ".env" in name for name in names)
         assert all(b"DO NOT SHIP CREDENTIALS" not in archive.read(name) for name in names)
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["bundle_version"] == "0.1.10"
         assert manifest["hardware_commissioned"] is False
+        assert manifest["targets"].keys() == EXPECTED_TARGETS
         for name, digest in manifest["files"].items():
             assert hashlib.sha256(archive.read(name)).hexdigest() == digest
         for line in archive.read("SHA256SUMS.txt").decode().splitlines():
@@ -168,6 +180,24 @@ def test_rejects_mismatched_or_unsafe_build_metadata(bundle_project, mutation, e
     mutation(metadata["esp32-physical"])
     with pytest.raises(ValueError, match=expected):
         builder.build_firmware("0.1.10")
+
+
+@pytest.mark.parametrize("target, flag, value", [
+    ("esp32-bluetooth-physical", "BASU_BLUETOOTH_PHYSICAL=1", None),
+    ("esp32-physical", None, "BASU_BLUETOOTH_DRY_RUN=1"),
+    ("esp32-pump-open-bucket-test", "BASU_PUMP_OPEN_BUCKET_TEST=1", None),
+    ("esp32-pump-open-bucket-test", "BASU_PUMP_OPEN_BUCKET_TEST=1", "BASU_PUMP_OPEN_BUCKET_TEST=0"),
+    ("esp32-pump-voltage-test", None, "BASU_PUMP_OPEN_BUCKET_TEST=1"),
+])
+def test_rejects_binary_with_wrong_mode_for_its_archive_label(bundle_project, target, flag, value):
+    _, metadata, _, _ = bundle_project
+    defines = metadata[target]["defines"]
+    if flag is not None:
+        defines.remove(flag)
+    if value is not None:
+        defines.append(value)
+    with pytest.raises(ValueError, match="mode flag"):
+        builder.build_firmware("v0.1.28")
 
 
 def test_rejects_application_larger_than_generated_partition(bundle_project):

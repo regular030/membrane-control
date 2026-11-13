@@ -6,7 +6,7 @@
 
 using namespace basu;
 
-void setUp() { fake::resetGpio(); fake::resetLedc(); Wire.reset(); }
+void setUp() { fake::resetGpio(); fake::resetLedc(); fake::resetPcnt(); Wire.reset(); }
 void tearDown() {}
 
 BoardConfig pwmFixture() {
@@ -304,6 +304,77 @@ void test_pending_activation_cannot_beat_watchdog_or_pressure_fault() {
   }
 }
 
+void test_low_pressure_start_requires_a_fresh_low_adc_sample_and_expires() {
+  auto config = pwmFixture();
+  config.pressureLimitPsi = 80;
+  config.pressure.nativeAdcAttenuation = NativeAdcAttenuation::Db2_5;
+  config.pressure.minPinVolts = 0.100;
+  config.pressure.maxPinVolts = 1;
+  config.pressure.unitsPerVolt = 100;
+  config.pwmSettleMs = 1500;
+  config.pressureStartupMs = 10000;
+  config.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+
+  SafetyConfig safety;
+  safety.simulation = false;
+  safety.hardwareReady = true;
+  safety.safeProfileVerified = true;
+  safety.pressureLimitPsi = config.pressureLimitPsi;
+  safety.pumpLimits = config.pumpLimits;
+  safety.pressureStartupMs = config.pressureStartupMs;
+  Controller core(safety);
+  const Outputs pumping{*config.pumpLimits.requiredValves, 40};
+  auto sample = [&](uint32_t now, uint32_t millivolts) {
+    fake::adcMillivolts[config.pressure.pin] = millivolts;
+    hardware.sample(now);
+    core.setMeasurements(hardware.measurements());
+    core.tick(now);
+  };
+  auto apply = [&](uint32_t now) {
+    TEST_ASSERT_TRUE(hardware.apply(core.outputs(), now, true));
+    if (hardware.pumpRunContactCommanded()) core.notePumpRunCommanded(now);
+  };
+
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 0, true));
+  sample(100, 0);
+  TEST_ASSERT_NULL(core.manualPressureStartupStatus(100));
+  sample(200, 1100);
+  TEST_ASSERT_NULL(core.manualPressureStartupStatus(200));
+  sample(300, 74);
+  TEST_ASSERT_EQUAL_UINT32(74, hardware.pressureAdcMillivolts(300).value());
+  TEST_ASSERT_FALSE(hardware.pressureAdcMillivolts(501).has_value());
+  TEST_ASSERT_EQUAL_STRING("available", core.manualPressureStartupStatus(300));
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 501, true));
+  sample(600, 74);
+  TEST_ASSERT_EQUAL_STRING("pressure_invalid_or_stale", core.manual(pumping, 600));
+  TEST_ASSERT_NULL(core.manual(pumping, 600, true));
+  TEST_ASSERT_EQUAL_STRING("active", core.manualPressureStartupStatus(600));
+  // Stage later than the command's timestamp, as can happen while processing serial input.
+  TEST_ASSERT_TRUE(hardware.apply(core.outputs(), 700, false));
+  sample(2199, 74);
+  apply(2199);
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
+  apply(2200);
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
+  TEST_ASSERT_EQUAL_STRING("pressure_startup_in_progress", core.manual(pumping, 2200, true));
+  for (uint32_t now = 2300; now <= 12100; now += 100) {
+    core.heartbeat(now);
+    sample(now, 74);
+    apply(now);
+    TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
+  }
+  core.tick(12199);
+  apply(12199);
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
+  core.tick(12200);
+  apply(12200);
+  TEST_ASSERT_EQUAL_STRING("pressure_startup_timeout", core.fault().c_str());
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
+  TEST_ASSERT_EQUAL(0, fake::ledcDuties[config.pumpPwmChannel]);
+}
+
 void test_gp8403_range_zero_and_health_probe_are_preserved_without_ledc_calls() {
   auto config = pwmFixture(); config.pumpCommandSource = PumpCommandSource::Gp8403;
   config.gp8403InterfaceVerified = true; config.i2cSdaPin = 21; config.i2cSclPin = 22;
@@ -400,15 +471,19 @@ void test_onboard_startup_latches_stopped_before_enabling_outputs() {
 void test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run() {
   Hardware hardware(onboardContactFixture(), false);
   TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.pumpContactCommandAvailable());
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   fake::gpioEvents.clear();
   Outputs first = pump(50);
   first.valves[0] = true;
   TEST_ASSERT_TRUE(hardware.apply(first, 1000));
   TEST_ASSERT_TRUE(hardware.apply(first, 1099, true));
   TEST_ASSERT_TRUE(hardware.apply(first, 1100, false));
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   TEST_ASSERT_EQUAL(1, latchedWords().size());
   TEST_ASSERT_EQUAL_HEX16(0x0001, latchedWords()[0].word);
   TEST_ASSERT_TRUE(hardware.apply(first, 1100, true));
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
   TEST_ASSERT_EQUAL(2, latchedWords().size());
   TEST_ASSERT_EQUAL_HEX16(0x8001, latchedWords()[1].word);
 
@@ -417,6 +492,7 @@ void test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run() 
   Outputs next = pump(25);
   next.valves[1] = true;
   TEST_ASSERT_TRUE(hardware.apply(next, 1101, true));
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   const auto change = latchedWords();
   TEST_ASSERT_EQUAL(2, change.size());
   TEST_ASSERT_EQUAL_HEX16(0x0001, change[0].word);  // STOP preserves existing valves.
@@ -424,11 +500,13 @@ void test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run() 
   TEST_ASSERT_TRUE(change[0].sequence < change[1].sequence);
   TEST_ASSERT_TRUE(change[1].sequence < fake::ledcEvents.front().sequence);
   TEST_ASSERT_TRUE(hardware.apply(next, 1201, true));
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
   TEST_ASSERT_EQUAL_HEX16(0x8002, latchedWords().back().word);
 
   fake::gpioEvents.clear();
   fake::ledcEvents.clear();
   hardware.safeStop();
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
   const auto stop = latchedWords();
   TEST_ASSERT_EQUAL(2, stop.size());
   TEST_ASSERT_EQUAL_HEX16(0x0002, stop[0].word);
@@ -455,6 +533,75 @@ void test_onboard_contact_opens_even_if_pwm_cannot_be_zeroed() {
   TEST_ASSERT_TRUE(stop.front().sequence < fake::ledcEvents.front().sequence);
   TEST_ASSERT_FALSE(hardware.apply(pump(50), 2000, true));
   TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
+}
+
+void test_hardware_profile_limits_cannot_be_bypassed() {
+  auto config = onboardContactFixture();
+  config.valveBits[kValve6Slot] = -1;
+  config.pumpLimits.maxPercent = 50;
+  const std::array<bool, kValveCount> requiredValves{{true, false, true, false, false, false, false}};
+  config.pumpLimits.requiredValves = requiredValves;
+  auto invalid = config;
+  invalid.pumpLimits.maxPercent = NAN;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(invalid));
+  invalid.pumpLimits.maxPercent = 100.01;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(invalid));
+  invalid = config;
+  (*invalid.pumpLimits.requiredValves)[kValve6Slot] = true;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(invalid));
+
+  for (const bool wrongPath : {false, true}) {
+    fake::resetGpio();
+    fake::resetLedc();
+    Hardware hardware(config, false);
+    TEST_ASSERT_TRUE(hardware.begin());
+    const Outputs allowed{requiredValves, 50};
+    TEST_ASSERT_TRUE(hardware.apply(allowed, 1000));
+    TEST_ASSERT_EQUAL_HEX16(0x0005, latchedWords().back().word);
+    TEST_ASSERT_TRUE(hardware.apply(allowed, 1100, true));
+    TEST_ASSERT_EQUAL_HEX16(0x8005, latchedWords().back().word);
+    Outputs disallowed = allowed;
+    if (wrongPath) disallowed.valves[1] = true;
+    else disallowed.pumpPercent = 50.01;
+    TEST_ASSERT_FALSE(hardware.apply(disallowed, 1101, true));
+    TEST_ASSERT_EQUAL_STRING(wrongPath ? "pump_valve_path_mismatch" : "pump_percent_exceeds_profile_limit", hardware.error());
+    TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
+    TEST_ASSERT_EQUAL(0, fake::ledcDuties[0]);
+    TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
+    TEST_ASSERT_FALSE(hardware.apply(allowed, 5000, true));
+  }
+}
+
+void test_manual_pump_handoff_holds_the_existing_valves_until_run() {
+  auto config = onboardContactFixture();
+  config.valveBits[kValve6Slot] = -1;
+  config.pumpLimits.maxPercent = 50;
+  config.pumpLimits.requiredValves = std::array<bool, kValveCount>{{true, false, true, false, false, false, false}};
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.beginManualValves(confirmedRigManualValves()));
+  const Outputs pumping{*config.pumpLimits.requiredValves, 50};
+  TEST_ASSERT_TRUE(hardware.applyManualValves(pumping.valves));
+  TEST_ASSERT_EQUAL_HEX16(0x0005, latchedWords().back().word);
+  fake::gpioEvents.clear();
+
+  TEST_ASSERT_TRUE(hardware.apply(pumping, 1000, false));
+  TEST_ASSERT_TRUE(hardware.apply(pumping, 1099, true));
+  TEST_ASSERT_EQUAL_HEX16(0x0005, latchedWords().back().word);
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());
+  TEST_ASSERT_EQUAL(2048, fake::ledcDuties[0]);
+  TEST_ASSERT_TRUE(hardware.apply(pumping, 1100, true));
+  TEST_ASSERT_TRUE(hardware.pumpRunContactCommanded());
+  const auto words = latchedWords();
+  TEST_ASSERT_EQUAL(2, words.size());
+  TEST_ASSERT_EQUAL_HEX16(0x0005, words[0].word);
+  TEST_ASSERT_EQUAL_HEX16(0x8005, words[1].word);
+  for (const auto& event : fake::gpioEvents)
+    if (event.write && event.pin == 5) TEST_ASSERT_EQUAL(LOW, event.value);
+
+  hardware.safeStop();
+  TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
+  TEST_ASSERT_EQUAL(0, fake::ledcDuties[0]);
 }
 
 void test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile() {
@@ -534,6 +681,86 @@ void test_absent_v6_frees_bit4_and_rejects_commands_to_the_absent_valve() {
   TEST_ASSERT_EQUAL_HEX16(0, latchedWords().back().word);
 }
 
+void test_tach_is_optional_and_requires_a_free_pin_and_positive_pulses_per_revolution() {
+  auto config = pwmFixture();
+  Hardware withoutTach(config, false);
+  TEST_ASSERT_TRUE(withoutTach.begin());
+  TEST_ASSERT_NULL(withoutTach.pumpTachStatus(0));
+  TEST_ASSERT_EQUAL(-1, fake::pcntPin);
+  for (int pin : {-2, 0, 1, 2, 3, 4, 5, 6, 12, 13, 14, 15, 25, 26, 34, 39, 40}) {
+    config.pumpTachPin = pin;
+    TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+  }
+  config.pumpTachPin = 27;
+  TEST_ASSERT_NULL(validateBoardConfig(config));
+  config.pumpTachPulsesPerRevolution = 0;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(config));
+}
+
+void test_tach_counts_across_counter_and_clock_wraps_and_reports_zero_pulses() {
+  auto config = pwmFixture();
+  config.pumpTachPin = 27;
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_EQUAL(27, fake::pcntPin);
+  const uint32_t start = UINT32_MAX - 250U;
+  fake::pcntCount = 32760;
+  hardware.sample(start);
+  double rpm = 0;
+  TEST_ASSERT_FALSE(hardware.readPumpRpm(start, rpm));
+  TEST_ASSERT_EQUAL_STRING("waiting", hardware.pumpTachStatus(start));
+
+  fake::pcntCount = 243;  // 250 pulses across the high-limit reset.
+  hardware.sample(start + 499U);
+  TEST_ASSERT_FALSE(hardware.readPumpRpm(start + 499U, rpm));
+  hardware.sample(start + 500U);
+  TEST_ASSERT_TRUE(hardware.readPumpRpm(start + 500U, rpm));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 300, rpm);
+  TEST_ASSERT_EQUAL_STRING("reading_received", hardware.pumpTachStatus(start + 500U));
+  TEST_ASSERT_FALSE(hardware.pumpRunContactCommanded());  // RPM does not depend on the relay command.
+
+  hardware.sample(start + 1000U);
+  TEST_ASSERT_TRUE(hardware.readPumpRpm(start + 1000U, rpm));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 0, rpm);
+  TEST_ASSERT_EQUAL_STRING("no_pulses", hardware.pumpTachStatus(start + 1000U));
+}
+
+void test_tach_errors_and_missed_windows_omit_rpm_without_blocking_control() {
+  auto config = pwmFixture();
+  config.pumpTachPin = 27;
+  fake::pcntConfigFails = true;
+  Hardware unavailable(config, false);
+  TEST_ASSERT_TRUE(unavailable.begin());
+  TEST_ASSERT_EQUAL_STRING("unavailable", unavailable.pumpTachStatus(0));
+  TEST_ASSERT_TRUE(unavailable.ready());
+
+  fake::pcntConfigFails = false;
+  config.pumpTachPulsesPerRevolution = 50;
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  hardware.sample(0);
+  fake::pcntCount = 250;
+  hardware.sample(500);
+  double rpm = 0;
+  TEST_ASSERT_TRUE(hardware.readPumpRpm(500, rpm));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 600, rpm);
+
+  TEST_ASSERT_FALSE(hardware.readPumpRpm(1501, rpm));
+  hardware.sample(1501);
+  TEST_ASSERT_EQUAL_STRING("unavailable", hardware.pumpTachStatus(1501));
+  fake::pcntReadFails = true;
+  hardware.sample(2001);
+  TEST_ASSERT_FALSE(hardware.readPumpRpm(2001, rpm));
+  TEST_ASSERT_TRUE(hardware.ready());
+  fake::pcntReadFails = false;
+  hardware.sample(2501);
+  TEST_ASSERT_EQUAL_STRING("waiting", hardware.pumpTachStatus(2501));
+  fake::pcntCount += 250;
+  hardware.sample(3001);
+  TEST_ASSERT_TRUE(hardware.readPumpRpm(3001, rpm));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 600, rpm);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_default_and_unreviewed_pwm_never_touch_any_gpio_i2c_or_ledc);
@@ -553,13 +780,19 @@ int main() {
   RUN_TEST(test_invalid_pump_commands_reject_nonfinite_and_out_of_range_and_stop);
   RUN_TEST(test_settling_timer_is_correct_across_millis_rollover);
   RUN_TEST(test_pending_activation_cannot_beat_watchdog_or_pressure_fault);
+  RUN_TEST(test_low_pressure_start_requires_a_fresh_low_adc_sample_and_expires);
   RUN_TEST(test_gp8403_range_zero_and_health_probe_are_preserved_without_ledc_calls);
   RUN_TEST(test_onboard_contact_must_be_spare_in_range_low_at_rest_and_exclusive);
   RUN_TEST(test_onboard_startup_latches_stopped_before_enabling_outputs);
   RUN_TEST(test_onboard_contact_opens_before_valve_and_pwm_changes_and_waits_to_run);
   RUN_TEST(test_onboard_contact_opens_even_if_pwm_cannot_be_zeroed);
+  RUN_TEST(test_hardware_profile_limits_cannot_be_bypassed);
+  RUN_TEST(test_manual_pump_handoff_holds_the_existing_valves_until_run);
   RUN_TEST(test_manual_valves_leave_onboard_contact_off_with_full_or_fallback_profile);
   RUN_TEST(test_manual_fallback_rejects_pump_overlap_or_active_low_relay);
   RUN_TEST(test_absent_v6_frees_bit4_and_rejects_commands_to_the_absent_valve);
+  RUN_TEST(test_tach_is_optional_and_requires_a_free_pin_and_positive_pulses_per_revolution);
+  RUN_TEST(test_tach_counts_across_counter_and_clock_wraps_and_reports_zero_pulses);
+  RUN_TEST(test_tach_errors_and_missed_windows_omit_rpm_without_blocking_control);
   return UNITY_END();
 }

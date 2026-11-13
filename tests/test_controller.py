@@ -87,10 +87,12 @@ def test_invalid_telemetry_does_not_refresh_freshness(app):
 
 def test_controller_disconnect_clears_previous_analog_readings(app):
     controller, _ = app
-    controller.snapshot.update(pressure_psi=12, flow_ml_min=30, pump_feedback_v=2.5)
+    controller.snapshot.update(pressure_psi=12, flow_ml_min=30, pump_feedback_v=2.5,
+        pump_rpm=900, pump_tach_status="reading_received", pump_run_contact_commanded=True)
     controller.disconnect_controller()
     assert not controller.snapshot["controller_connected"]
-    assert all(controller.snapshot[key] is None for key in ("pressure_psi", "flow_ml_min", "pump_feedback_v"))
+    assert all(controller.snapshot[key] is None for key in (
+        "pressure_psi", "flow_ml_min", "pump_feedback_v", "pump_rpm", "pump_tach_status", "pump_run_contact_commanded"))
 
 
 def test_idle_port_open_failure_detaches_and_preserves_original_error(app, monkeypatch):
@@ -419,6 +421,39 @@ def telemetry_packet(**changes):
               "pressure_psi": 0, "flow_ml_min": 0, "pump_feedback_v": 0,
               "step_index": -1, "cycle": 0, "remaining_s": 0, "fault": None}
     return {**packet, **changes}
+
+
+def test_pump_motion_telemetry_accepts_measured_rpm_and_clears_old_values(app):
+    controller, clock = app
+    controller.device.update(simulation=False, hardware_verified=True)
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=True,
+        pump_rpm=900, pump_tach_status="reading_received", pump_run_contact_commanded=True), clock())
+    assert controller.snapshot["pump_rpm"] == 900
+    assert controller.snapshot["pump_run_contact_commanded"] is True
+
+    clock.advance(0.25)
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=True, uptime_ms=250,
+        pump_rpm=0, pump_tach_status="no_pulses", pump_run_contact_commanded=False), clock())
+    assert controller.snapshot["pump_rpm"] == 0
+    assert controller.snapshot["pump_tach_status"] == "no_pulses"
+    assert controller.snapshot["pump_run_contact_commanded"] is False
+
+    clock.advance(0.25)
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=True, uptime_ms=500), clock())
+    assert controller.snapshot["pump_rpm"] is None
+    assert controller.snapshot["pump_tach_status"] is None
+    assert controller.snapshot["pump_run_contact_commanded"] is None
+
+
+def test_bad_pump_motion_telemetry_does_not_hide_valid_pressure(app):
+    controller, clock = app
+    controller.device.update(simulation=False, hardware_verified=True)
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=True, pressure_psi=12,
+        pump_rpm=1200, pump_tach_status="no_pulses", pump_run_contact_commanded=1), clock())
+    assert controller.snapshot["pressure_psi"] == 12
+    assert controller.snapshot["pump_rpm"] is None
+    assert controller.snapshot["pump_tach_status"] == "unavailable"
+    assert controller.snapshot["pump_run_contact_commanded"] is None
 
 
 def test_manual_waits_for_ack_and_ack_closes_idle_restart_window(app):

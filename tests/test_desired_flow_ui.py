@@ -116,6 +116,247 @@ def test_desired_flow_controls_lock_during_operations(screen, state, flag):
     assert window.apply_target_button.isEnabled()
 
 
+def test_manual_pump_start_speed_change_and_stop(screen):
+    window, controller, _ = screen
+    assert window.manual_apply.text() == "Start pump"
+    assert not window.manual_apply.isEnabled()
+    assert not window.manual_stop.isEnabled()
+
+    window.manual_pump.setValue(25)
+    window.manual_apply.click()
+    assert controller.driver.engine.pump_percent == 25
+    assert controller.snapshot["manual_pending"]
+    assert window.manual_stop.isEnabled()
+    window.manual_stop.click()
+    assert controller.driver.engine.pump_percent == 0
+    assert controller.snapshot["stop_pending"]
+    assert not window.manual_stop.isEnabled()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert controller.snapshot["state"] == "idle"
+
+    window.manual_pump.setValue(25)
+    window.manual_apply.click()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert window.manual_apply.text() == "Apply speed"
+    window.manual_pump.setValue(35)
+    window.manual_apply.click()
+    controller.tick()
+    assert controller.driver.engine.pump_percent == 35
+    # Once running, Stop remains available when the requirements to start fail.
+    window._update_view(dict(controller.snapshot, simulation=False, pressure_psi=None))
+    assert not window.manual_apply.isEnabled()
+    assert window.manual_stop.isEnabled()
+    window.manual_stop.click()
+    assert controller.driver.engine.pump_percent == 0
+
+
+def test_manual_pump_shows_readiness_blocker(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, simulation=False, state="manual_valves")
+    window._update_view(snapshot)
+    window.manual_pump.setValue(25)
+    assert not window.manual_apply.isEnabled()
+    assert "factory firmware supports manual valves only" in window.manual_pump_status.text()
+
+    snapshot.update(hardware_verified=True, state="idle")
+    window._update_view(snapshot)
+    assert "Apply the reviewed sequence" in window.manual_pump_status.text()
+    controller.recipe.hardware_approved = True
+    window._update_view(snapshot)
+    assert "valid calibrated pressure" in window.manual_pump_status.text()
+    snapshot.update(pressure_psi=0, state="manual_valves")
+    window._update_view(snapshot)
+    assert "Stop manual valves" in window.manual_pump_status.text()
+    snapshot["state"] = "idle"
+    controller.settings["require_balance"] = True
+    window._update_view(snapshot)
+    assert "required scale reading" in window.manual_pump_status.text()
+    snapshot["balance_connected"] = True
+    window._update_view(snapshot)
+    window.manual_pump.setValue(25)
+    assert window.manual_apply.isEnabled()
+    now[0] += 3
+    window._update_view(snapshot)
+    assert "fresh controller reading" in window.manual_pump_status.text()
+    assert not window.manual_apply.isEnabled()
+
+
+def test_reviewed_manual_pump_start_uses_fixed_valves_and_limit(screen, monkeypatch):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    valves = [True, False, True, False, False, False, False]
+    controller.snapshot.update(controller_connected=True, simulation=False, hardware_verified=True,
+                               pressure_psi=0, valve_control_ready=True,
+                               manual_pump_profile={"max_percent": 50, "valves": valves})
+    sent = []
+    monkeypatch.setattr(controller, "set_manual", lambda selected, speed: sent.append((selected, speed)))
+    window._update_view(dict(controller.snapshot))
+    assert not controller.recipe.hardware_approved
+    assert window.manual_pump.maximum() == 50
+    assert "V1 and V3" in window.manual_pump_status.text()
+    window.manual_pump.setValue(75)
+    assert window.manual_pump.value() == 50
+    window.manual_apply.click()
+    assert sent == [(valves, 50)]
+
+    controller.snapshot.update(state="manual_valves", valves=[False] * 7)
+    window._update_view(dict(controller.snapshot))
+    assert "Stop manual valves" in window.manual_pump_status.text()
+    assert not window.manual_apply.isEnabled()
+    controller.snapshot["valves"] = valves
+    window._update_view(dict(controller.snapshot))
+    assert window.manual_apply.isEnabled()
+    controller.snapshot.update(state="manual", pump_percent=50)
+    window._update_view(dict(controller.snapshot))
+    assert not any(button.isEnabled() for button in window.valve_buttons)
+    assert window.manual_stop.isEnabled()
+
+
+def test_manual_pump_pressure_startup_displays_voltage_and_keeps_stop_available(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    valves = [True, False, True, False, False, False, False]
+    snapshot = dict(controller.snapshot, controller_connected=True, simulation=False, hardware_verified=True,
+                    manual_pump_profile={"max_percent": 50, "valves": valves, "pressure_startup_ms": 10_000},
+                    pressure_startup="available", pressure_adc_mv=74)
+    window._update_view(snapshot)
+    window.manual_pump.setValue(25)
+    assert window.manual_apply.isEnabled()
+    assert "10 s after the RUN relay closes" in window.manual_pump_status.text()
+    assert window._metric_labels["pressure_psi"].text() == "0.074"
+    assert window._metric_units["pressure_psi"].text() == "V at ESP32 · below calibrated ADC range"
+
+    snapshot.update(state="manual", valves=valves, pump_percent=25, pressure_startup="active")
+    window._update_view(snapshot)
+    assert not window.manual_apply.isEnabled()
+    assert window.manual_stop.isEnabled()
+    assert "Waiting for the first pressure reading" in window.manual_pump_status.text()
+
+    snapshot.update(pressure_startup=None, pressure_adc_mv=121, pressure_psi=12)
+    window._update_view(snapshot)
+    assert window.manual_apply.isEnabled()
+    assert window._metric_labels["pressure_psi"].text() == "12.00"
+    assert window._metric_units["pressure_psi"].text() == "psi"
+
+
+def test_uncalibrated_pressure_card_displays_fresh_voltage_without_pump_approval(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, pressure_adc_mv=86)
+    window._update_view(snapshot)
+    assert window._metric_labels["pressure_psi"].text() == "0.086"
+    assert window._metric_units["pressure_psi"].text() == "V at ESP32"
+    assert not window.manual_apply.isEnabled()
+
+    now[0] += 3
+    window._update_view(snapshot)
+    assert window._metric_labels["pressure_psi"].text() == "Waiting"
+    assert window._metric_units["pressure_psi"].text() == "psi"
+
+
+def test_flow_card_shows_fresh_pin_voltage_in_monitor_mode(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, flow_adc_mv=126)
+    window._update_view(snapshot)
+    assert window._metric_labels["flow_ml_min"].text() == "0.126"
+    assert window._metric_units["flow_ml_min"].text() == "V at ESP32"
+
+    window._update_view(dict(snapshot, flow_ml_min=21.5))
+    assert window._metric_labels["flow_ml_min"].text() == "0.126"
+    assert window._metric_units["flow_ml_min"].text() == "V at ESP32"
+
+    window._update_view(dict(snapshot, hardware_verified=True, flow_ml_min=21.5))
+    assert window._metric_labels["flow_ml_min"].text() == "21.5"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min"
+
+    now[0] += 3
+    window._update_view(snapshot)
+    assert window._metric_labels["flow_ml_min"].text() == "Waiting"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min"
+
+
+def test_voltage_cards_identify_ads1115_channels(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, pressure_adc_mv=0,
+                    flow_adc_mv=496, flow_ml_min=49.6, pump_feedback_adc_mv=1500,
+                    pump_feedback_v=7.5, sensor_inputs={
+                        "pressure": {"source": "ads1115", "channel": 0, "calibration_verified": False},
+                        "flow": {"source": "ads1115", "channel": 1, "calibration_verified": True},
+                        "pump_feedback": {"source": "ads1115", "channel": 2, "calibration_verified": False},
+                    })
+    window._update_view(snapshot)
+    assert window._metric_labels["pressure_psi"].text() == "0.000"
+    assert window._metric_units["pressure_psi"].text() == "V at ADS1115 A0"
+    assert window._metric_labels["flow_ml_min"].text() == "0.496"
+    assert window._metric_units["flow_ml_min"].text() == "V at ADS1115 A1"
+    assert window._metric_labels["pump_feedback_v"].text() == "1.500"
+    assert window._metric_units["pump_feedback_v"].text() == "V at ADS1115 A2"
+    assert "Drive command feedback unavailable" in window.manual_pump_feedback.text()
+
+    window._update_view(dict(snapshot, hardware_verified=True))
+    assert window._metric_labels["pump_feedback_v"].text() == "7.50"
+    assert window._metric_units["pump_feedback_v"].text() == "V"
+    assert "Drive command feedback 7.50 V" in window.manual_pump_feedback.text()
+
+
+def test_pump_feedback_distinguishes_command_drive_voltage_and_rotation(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, simulation=False,
+                    hardware_verified=True, state="manual", pump_percent=25,
+                    pump_feedback_v=2.42, pump_run_contact_commanded=True, pump_rpm=147.5)
+    window._update_view(snapshot)
+    assert window.manual_pump_sent.text() == "Commanded 25.0%"
+    assert "Run contact commanded closed" in window.manual_pump_feedback.text()
+    assert "Drive command feedback 2.42 V" in window.manual_pump_feedback.text()
+    assert "147.5 RPM · rotation detected" in window.manual_pump_feedback.text()
+
+    window._update_view(dict(snapshot, stop_pending=True))
+    assert "Waiting for the controller to confirm Stop" in window.manual_pump_status.text()
+    assert "147.5 RPM · rotation detected" in window.manual_pump_feedback.text()
+
+    snapshot.update(state="idle", pump_percent=0, pump_run_contact_commanded=False, pump_rpm=0, pump_feedback_v=None)
+    window._update_view(snapshot)
+    assert window.manual_pump_sent.text() == "Commanded 0.0%"
+    assert "Run contact commanded open" in window.manual_pump_feedback.text()
+    assert "Drive command feedback unavailable" in window.manual_pump_feedback.text()
+    assert "No tach pulses detected" in window.manual_pump_feedback.text()
+
+
+def test_pump_feedback_handles_legacy_simulated_and_stale_data(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, simulation=False, hardware_verified=True, pump_feedback_v=2.42)
+    window._update_view(snapshot)
+    assert "Run contact command unavailable" in window.manual_pump_feedback.text()
+    assert "Motor tachometer unavailable" in window.manual_pump_feedback.text()
+    assert "Drive command feedback 2.42 V" in window.manual_pump_feedback.text()
+
+    window._update_view(dict(snapshot, pump_tach_status="waiting"))
+    assert "Waiting for a tachometer sample" in window.manual_pump_feedback.text()
+
+    window._update_view(dict(snapshot, simulation=True, pump_rpm=147.5, pump_run_contact_commanded=True))
+    assert window.manual_pump_feedback.text() == "Simulated pump command and feedback."
+
+    now[0] += 3
+    window._update_view(snapshot)
+    assert window.manual_pump_sent.text() == "Command unavailable"
+    assert window.manual_pump_feedback.text() == "Waiting for fresh pump feedback."
+
+
 def test_chart_displays_applied_target_as_distinct_dashed_comparison(screen):
     window, controller, _ = screen
     controller.set_simulation(False)
@@ -164,13 +405,16 @@ def test_compact_dashboard_preserves_full_target_and_valve_control_height(screen
     window.resize(1080, 760)
     window.show()
     qt_app.processEvents()
+    scroll = window.dashboard_scroll
+    controls = (*window.valve_buttons, window.manual_pump, window.manual_apply, window.manual_stop,
+                window.desired_flow_spin, window.apply_target_button)
     for percent in (100, 60, 150, 100):
         window.set_zoom_percent(percent)
         qt_app.processEvents()
-    scroll = window.dashboard_scroll
-    scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
-    qt_app.processEvents()
+        scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+        qt_app.processEvents()
+        for control in controls:
+            assert control.height() >= control.sizeHint().height(), (
+                f"{control.accessibleName() or control.text()} at {percent}% zoom"
+            )
     assert scroll.verticalScrollBar().maximum() > 0
-    for control in [*window.valve_buttons, window.manual_pump, window.manual_apply,
-                    window.desired_flow_spin, window.apply_target_button]:
-        assert control.height() >= control.sizeHint().height()

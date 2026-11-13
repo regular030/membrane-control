@@ -20,13 +20,38 @@ def _run_event_loop(app, window):
             pass
 
 
+def _schedule_test_hooks(app, window, args):
+    from PySide6.QtCore import QTimer
+
+    if args.screenshot:
+        def capture():
+            args.screenshot.parent.mkdir(parents=True, exist_ok=True)
+            window.grab().save(str(args.screenshot))
+        QTimer.singleShot(750, capture)
+    if args.quit_after is not None:
+        QTimer.singleShot(max(1000, int(args.quit_after * 1000)), app.quit)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Membrane Control")
-    parser.add_argument("--demo", action="store_true", help="Use simulated devices")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--demo", action="store_true", help="Use simulated devices")
+    mode.add_argument("--pump-voltage-test", metavar="PORT", help="Open the USB pump voltage test")
+    mode.add_argument("--pump-open-bucket-test", metavar="PORT", help="Open the isolated pump test")
     parser.add_argument("--data-dir", type=Path, help="Operator data directory")
     parser.add_argument("--screenshot", type=Path, help="Save a UI screenshot after startup")
     parser.add_argument("--quit-after", type=float, help="Exit after a number of seconds (testing)")
     args = parser.parse_args()
+    test_port = args.pump_voltage_test or args.pump_open_bucket_test
+    if test_port:
+        from PySide6.QtWidgets import QApplication
+        from .pump_voltage_test import PumpVoltageTestWindow
+        app = QApplication(sys.argv[:1])
+        app.setStyle("Fusion")
+        window = PumpVoltageTestWindow(test_port, open_bucket=args.pump_open_bucket_test is not None)
+        window.show()
+        _schedule_test_hooks(app, window, args)
+        return _run_event_loop(app, window)
     data_dir = args.data_dir or Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share")) / "BasuMembraneControl"
     data_dir.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(data_dir / "application.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8")
@@ -58,6 +83,7 @@ def main():
         logging.critical("Application error", exc_info=(kind, value, traceback))
         window.shutdown_relay_bench()
         window.shutdown_valve_test()
+        window.shutdown_pump_test()
         try:
             controller.stop_run()
         except Exception:
@@ -67,13 +93,7 @@ def main():
     window.show()
     if not args.demo:
         QTimer.singleShot(0, window.connect_lab_defaults)
-    if args.screenshot:
-        def capture():
-            args.screenshot.parent.mkdir(parents=True, exist_ok=True)
-            window.grab().save(str(args.screenshot))
-        QTimer.singleShot(750, capture)
-    if args.quit_after is not None:
-        QTimer.singleShot(max(1000, int(args.quit_after*1000)), app.quit)
+    _schedule_test_hooks(app, window, args)
     return _run_event_loop(app, window)
 
 

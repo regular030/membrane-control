@@ -12,6 +12,44 @@ SENSOR_STATUS_CODES = frozenset(("simulated", "not_configured", "profile_locked"
     "hardware_unavailable", "uncalibrated", "out_of_range", "stale", "reading_received"))
 MANUAL_VALVE_IDS = (1, 2, 3, 4, 5, 7)
 MANUAL_VALVE_BITS = (0, 1, 2, 3, 5, 6)
+LAB_PUMP_VALVES = (True, False, True, False, False, False, False)
+
+
+def checked_manual_pump_profile(packet: dict) -> dict | None:
+    if packet.get("simulation") is not False or packet.get("hardware_verified") is not True:
+        return None
+    profile = packet.get("manual_pump_profile")
+    if type(profile) is not dict:
+        return None
+    maximum = profile.get("max_percent")
+    valves = profile.get("valves")
+    if (type(maximum) not in (int, float) or not 0.1 <= maximum <= 50
+            or type(valves) is not list or any(type(value) is not bool for value in valves)
+            or tuple(valves) != LAB_PUMP_VALVES):
+        return None
+    result = {"max_percent": maximum, "valves": list(valves)}
+    startup_ms = profile.get("pressure_startup_ms")
+    if type(startup_ms) is int and 1 <= startup_ms <= 10_000:
+        result["pressure_startup_ms"] = startup_ms
+    return result
+
+
+def checked_pressure_startup(packet: dict, pump_profile: dict | None) -> str | None:
+    """Accept a startup phase only in the corresponding physical pump state."""
+    if not pump_profile or "pressure_startup_ms" not in pump_profile:
+        return None
+    if (packet.get("simulation") is not False or packet.get("hardware_verified") is not True
+            or packet.get("pressure_psi") is not None or packet.get("fault")):
+        return None
+    phase, state, pump = packet.get("pressure_startup"), packet.get("state"), packet.get("pump_percent")
+    if type(pump) not in (int, float):
+        return None
+    if phase == "available" and state in ("idle", "manual_valves") and pump == 0:
+        return phase
+    if (phase == "active" and state == "manual" and 0 < pump <= pump_profile["max_percent"]
+            and packet.get("valves") == pump_profile["valves"]):
+        return phase
+    return None
 
 
 def checked_valve_control(packet: dict) -> dict:
@@ -34,8 +72,11 @@ def checked_valve_control(packet: dict) -> dict:
 
 
 def checked_controller_diagnostics(packet: dict) -> dict:
-    """Copy only bounded, known optional HELLO diagnostics; never control flags."""
+    """Copy only bounded, known optional HELLO fields."""
     result = {}
+    pump_profile = checked_manual_pump_profile(packet)
+    if pump_profile is not None:
+        result["manual_pump_profile"] = pump_profile
     mode = packet.get("controller_mode")
     if (type(mode) is str and mode in ("dry_run", "physical")
             and mode == ("dry_run" if packet.get("simulation") is True else "physical")):
@@ -52,10 +93,10 @@ def checked_controller_diagnostics(packet: dict) -> dict:
             if type(entry) is not dict or type(entry.get("calibration_verified")) is not bool:
                 continue
             source = entry.get("source")
-            if type(source) is not str or source not in ("disabled", "native_adc1", "ads1115"):
+            if type(source) is not str or source not in ("disabled", "native_adc1", "native_adc2", "ads1115"):
                 continue
             checked = {"source": source, "calibration_verified": entry["calibration_verified"]}
-            field, maximum = ("pin", 39) if source == "native_adc1" else ("channel", 3)
+            field, maximum = ("channel", 3) if source == "ads1115" else ("pin", 39)
             if source != "disabled":
                 value = entry.get(field)
                 if type(value) is not int or not -1 <= value <= maximum:

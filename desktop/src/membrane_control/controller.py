@@ -9,7 +9,10 @@ from pathlib import Path
 import time
 
 from .balance import MassFlow, parse_mass
-from .device_status import MANUAL_VALVE_IDS, SENSOR_KEYS, checked_controller_diagnostics, checked_sensor_status, checked_valve_control
+from .device_status import (
+    MANUAL_VALVE_IDS, SENSOR_KEYS, checked_controller_diagnostics, checked_manual_pump_profile,
+    checked_pressure_startup, checked_sensor_status, checked_valve_control,
+)
 from .esp32_link_log import Esp32LinkLog
 from .models import Recipe, number, valve_states
 from .recipes import built_in_recipes, read_recipe, write_recipe
@@ -23,6 +26,8 @@ REQUEST_TIMEOUT_S = 3.0
 LAB_CONTROLLER_FALLBACK_PORT = "COM8"
 LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF50204E"
 WINDOWS_SPP_ID_PREFIX = "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_"
+EMPTY_PUMP_MOTION = {"pump_rpm": None, "pump_tach_status": None, "pump_run_contact_commanded": None}
+EMPTY_ADC_VOLTAGES = {"pressure_adc_mv": None, "flow_adc_mv": None, "pump_feedback_adc_mv": None}
 
 
 def _adc_pin_mv(value):
@@ -31,6 +36,27 @@ def _adc_pin_mv(value):
                                    for key in SENSOR_KEYS):
         return {key: value[key] for key in SENSOR_KEYS}
     return {}
+
+
+def _pump_motion_fields(packet):
+    """Read optional, commissioned motion diagnostics without dropping pressure telemetry."""
+    if packet["simulation"] or not packet["hardware_verified"]:
+        return EMPTY_PUMP_MOTION
+    contact = packet.get("pump_run_contact_commanded")
+    status = packet.get("pump_tach_status")
+    rpm = None
+    if status in ("reading_received", "no_pulses"):
+        try:
+            rpm = number(packet.get("pump_rpm"), "Pump tachometer", 0, 10000)
+        except ValueError:
+            status = "unavailable"
+        else:
+            if (status == "no_pulses") != (rpm == 0):
+                status, rpm = "unavailable", None
+    elif status not in ("waiting", "unavailable"):
+        status = None
+    return {"pump_rpm": rpm, "pump_tach_status": status,
+            "pump_run_contact_commanded": contact if type(contact) is bool else None}
 
 
 class AppController:
@@ -89,10 +115,13 @@ class AppController:
             "balance_polling": False,
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
+            "manual_pump_profile": None, "pressure_startup": None,
+            **EMPTY_ADC_VOLTAGES,
             "live_sensor_voltages": {}, "live_sensor_zero": {},
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
             "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
+            **EMPTY_PUMP_MOTION,
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
             "elapsed_s": 0.0, "run_id": None, "log": [], "recipe_name": self.recipe.name,
@@ -321,7 +350,9 @@ class AppController:
 
     def _reset_diagnostics(self):
         self._reported_valve_control_ready = None
+        self.snapshot.update(EMPTY_PUMP_MOTION, **EMPTY_ADC_VOLTAGES)
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
+            manual_pump_profile=None, pressure_startup=None,
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
             valve_control_status="Valve-only controls unavailable", sensor_test_available=False,
             sensor_test_voltages={}, sensor_test_status="", live_sensor_voltages={}, live_sensor_zero={})
@@ -453,23 +484,43 @@ class AppController:
         self._log("Stop requested")
 
     def set_manual(self, valves, pump_percent):
-        if self.start_phase or self.manual_pending or self.stop_pending or self.snapshot["state"] not in ("idle", "manual") or self.local_fault:
+        profile = checked_manual_pump_profile(self.snapshot)
+        state = self.snapshot["state"]
+        takeover = state == "manual_valves" and profile and self.snapshot["valves"] == profile["valves"]
+        if (self.start_phase or self.manual_pending or self.stop_pending or self.local_fault
+                or (state not in ("idle", "manual") and not takeover)):
+            if state == "manual_valves" and profile and not takeover:
+                raise ValueError("Stop manual valves before starting the pump with V1 and V3")
             raise ValueError("Stop the sequence or clear the fault first")
         if not self.snapshot["controller_connected"]:
             raise ValueError("Controller is not responding")
         if self.last_telemetry is None or self.clock() - self.last_telemetry > 2:
             raise ValueError("Controller telemetry is stale; wait for a fresh reading")
         valves, pump_percent = valve_states(valves), number(pump_percent, "Pump setting", 0, 100)
+        allow_pressure_startup = False
         if not self.snapshot["simulation"]:
-            if not self.snapshot["hardware_verified"] or not self.recipe.hardware_approved:
+            if not self.snapshot["hardware_verified"] or (not profile and not self.recipe.hardware_approved):
                 raise ValueError("Physical controls are locked until hardware and recipe are approved")
-            if self.snapshot["pressure_psi"] is None:
+            pressure_startup = checked_pressure_startup(self.snapshot, profile)
+            if pressure_startup == "active":
+                raise ValueError("Wait for a pressure reading before changing pump speed")
+            allow_pressure_startup = pressure_startup == "available" and pump_percent > 0
+            pressure = self.snapshot["pressure_psi"]
+            if pressure is None and not allow_pressure_startup:
                 raise ValueError("Physical controls require a valid pressure reading")
+            if profile:
+                if pressure is not None and pressure > self.settings["max_pressure_psi"]:
+                    raise ValueError("Pressure is above the desktop stop threshold")
+                if pump_percent > profile["max_percent"]:
+                    raise ValueError(f"Pump setting must be at most {profile['max_percent']:g}%")
+                if pump_percent > 0 and list(valves) != profile["valves"]:
+                    raise ValueError("The pump requires V1 and V3 open and all other valves off")
         self.manual_requested = (list(valves), pump_percent)
         self.manual_pending = True
         self.snapshot["manual_pending"] = True
         try:
-            self._request("manual", valves=list(valves), pump_percent=pump_percent)
+            options = {"allow_pressure_startup": True} if allow_pressure_startup else {}
+            self._request("manual", valves=list(valves), pump_percent=pump_percent, **options)
         except Exception:
             self.manual_requested = None
             self.manual_pending = False
@@ -622,7 +673,8 @@ class AppController:
         self.start_phase = None
         self.manual_pending = False
         self.manual_requested = None
-        self.snapshot.update(fault=self.local_fault, state="fault", start_pending=False, manual_pending=False)
+        self.snapshot.update(fault=self.local_fault, state="fault", start_pending=False, manual_pending=False,
+                             pressure_startup=None)
         if self.stop_pending:
             # A second fault must not replace an outstanding stop or extend
             # its deadline. Otherwise two alternating faults defeat the watchdog.
@@ -648,6 +700,10 @@ class AppController:
         self.snapshot.update(manual_pending=False,
             state="manual_valves" if command == "manual_valves" else "manual", valves=valves,
             pump_percent=pump, step_index=-1, cycle=0, remaining_s=0)
+        if command == "manual":
+            self.snapshot["pump_run_contact_commanded"] = None
+            if self.snapshot["pressure_startup"] == "available":
+                self.snapshot["pressure_startup"] = None
 
     def _accept_manual_valves_receipt(self, receipt_id, valves, now):
         if (not self.manual_pending or self.stop_pending or self.local_fault is not None
@@ -745,6 +801,7 @@ class AppController:
                 diagnostics = checked_controller_diagnostics(packet)
                 self.device = {key: value for key, value in packet.items()
                                if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
+                                              "manual_pump_profile", "pressure_startup", *EMPTY_ADC_VOLTAGES,
                                               "valve_control_ready", "manual_valve_count", "manual_valve_ids",
                                               "valve_bits", "valve_control_status", "sensor_test_available")}
                 self.device.update(diagnostics)
@@ -793,7 +850,7 @@ class AppController:
             elif command == "stop":
                 self.stop_pending = False
                 self.snapshot.update(stop_pending=False, state="fault" if self.local_fault else "idle",
-                    pump_percent=0, step_index=-1, cycle=0, remaining_s=0)
+                    pump_percent=0, step_index=-1, cycle=0, remaining_s=0, pressure_startup=None)
                 if self.stop_valves_only:
                     self.snapshot["valves"] = [False] * 7
                 self.stop_valves_only = False
@@ -865,7 +922,15 @@ class AppController:
         self.connect_started = None
         self.last_controller_uptime = uptime
         self.snapshot.update(values)
+        self.snapshot.update(_pump_motion_fields(packet))
         self.snapshot["sensor_status"] = checked_sensor_status(packet.get("sensor_status"))
+        pump_profile = self.device.get("manual_pump_profile")
+        pressure_startup = checked_pressure_startup(packet, pump_profile)
+        self.snapshot["pressure_startup"] = pressure_startup if not self.local_fault else None
+        for field in EMPTY_ADC_VOLTAGES:
+            millivolts = packet.get(field)
+            self.snapshot[field] = (millivolts if not packet["simulation"]
+                and type(millivolts) is int and 0 <= millivolts <= 3300 else None)
         self.snapshot["live_sensor_voltages"] = (_adc_pin_mv(packet.get("adc_pin_mv"))
             if self.snapshot["sensor_test_available"] and not packet["simulation"] and not packet["hardware_verified"] else {})
         self.snapshot.update(valves=list(valves), pump_percent=pump, step_index=step, cycle=cycle,
@@ -891,7 +956,8 @@ class AppController:
             else:
                 self._finish_run("completed")
         if (not packet["simulation"] and values["pressure_psi"] is None
-                and (state in ("running", "manual") or self.start_phase is not None)):
+                and (state == "running" or self.start_phase is not None
+                     or (state == "manual" and pressure_startup != "active"))):
             self._abort("Pressure reading unavailable during physical operation")
             return
         if state in ("running", "manual") and values["pressure_psi"] is not None and values["pressure_psi"] > self.settings["max_pressure_psi"]:
@@ -990,6 +1056,7 @@ class AppController:
                 if self.snapshot["controller_status"] != "Telemetry stale":
                     self._esp32_event("telemetry_stale")
                 self.snapshot["live_sensor_voltages"] = {}
+                self.snapshot.update(EMPTY_PUMP_MOTION, **EMPTY_ADC_VOLTAGES)
                 if self._active() or self.run_id is not None:
                     self._abort("Controller telemetry is stale")
                     if self.driver is not None:

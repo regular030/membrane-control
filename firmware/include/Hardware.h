@@ -2,9 +2,13 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <driver/adc.h>
 #include <driver/ledc.h>
+#include <driver/rtc_io.h>
+#include <esp_adc_cal.h>
 #include "BoardConfig.h"
 #include "ManualValveConfig.h"
+#include "PumpTach.h"
 
 namespace basu {
 
@@ -20,6 +24,7 @@ struct SensorTestMillivolts {
 inline const char* analogSourceName(AnalogSource source) {
   switch (source) {
     case AnalogSource::NativeAdc1: return "native_adc1";
+    case AnalogSource::NativeAdc2: return "native_adc2";
     case AnalogSource::Ads1115: return "ads1115";
     default: return "disabled";
   }
@@ -45,10 +50,30 @@ inline const char* classifySensorStatus(const BoardConfig& board, const AnalogCo
 // the independent confirmed manual mapping initializes only the 595 relay pins.
 class Hardware {
  public:
-  Hardware(BoardConfig config, bool simulation) : config_(config), simulation_(simulation) {}
+  Hardware(BoardConfig config, bool simulation)
+      : config_(config), simulation_(simulation), pumpTach_(config.pumpTachPin, config.pumpTachPulsesPerRevolution) {}
 
   bool begin() {
     if (simulation_) return true;
+    const auto& pressure = config_.pressure;
+    if (config_.verifiedBoardConfig && !pressure.calibrationVerified && pressure.source == AnalogSource::Ads1115) {
+      beginAdsMonitoring();
+      return false;
+    }
+    if (config_.verifiedBoardConfig && !pressure.calibrationVerified && pressure.nativeAdc2Pulldown &&
+        pressure.source == AnalogSource::NativeAdc2 && (pressure.pin == 26 || pressure.pin == 27)) {
+      error_ = initializeNativeInput(pressure);
+      if (!error_) {
+        sensorMonitoringOnly_ = true;
+        // The optional ADC1 flow input can be sampled with the pump locked.
+        // Restrict this to exposed input-only pins, apart from the pressure pin.
+        const auto& flow = config_.flow;
+        if (flow.source == AnalogSource::NativeAdc1 && flow.pin >= 34 && flow.pin <= 39)
+          monitoringFlowReady_ = !initializeNativeInput(flow);
+        error_ = "pressure_calibration_pending";
+      }
+      return false;
+    }
     if (const char* error = validateBoardConfig(config_)) { error_ = error; return false; }
     profileValidated_ = true;
     // Set a GPIO contact to STOP first. A shared relay bit is latched LOW
@@ -75,16 +100,10 @@ class Hardware {
     if (config_.pumpCommandSource == PumpCommandSource::PwmConverter && !beginPumpPwm())
       return fail("pwm_initialization_failed");
     for (const AnalogConfig* input : inputs()) {
-      if (input->source == AnalogSource::NativeAdc1) {
-        pinMode(input->pin, INPUT);
-        analogSetPinAttenuation(input->pin, ADC_11db);
-      }
+      if (!usesNativeAdc(input->source)) continue;
+      if (const char* error = initializeNativeInput(*input)) return fail(error);
     }
-    if (boardUsesI2c(config_)) {
-      if (!Wire.begin(config_.i2cSdaPin, config_.i2cSclPin, 100000)) return fail("i2c_initialization_failed");
-      Wire.setTimeOut(20);
-      i2cInitialized_ = true;
-    }
+    if (boardUsesI2c(config_) && !beginI2c()) return fail("i2c_initialization_failed");
     if (config_.pumpCommandSource == PumpCommandSource::Gp8403) {
       // GP8403: zero BOTH channels before range change; never store to EEPROM.
       const uint8_t zeroBoth[] = {0, 0, 0, 0};
@@ -99,8 +118,10 @@ class Hardware {
     }
     ready_ = true;
     if (config_.relayKind == RelayKind::ShiftRegister595) setOe(true);
+    pumpContactCommandAvailable_ = true;
     applied_ = safeOutputs();
     safeStopIssued_ = true;
+    pumpTach_.begin();
     return true;
   }
 
@@ -167,6 +188,7 @@ class Hardware {
     if (!validOutputs(requested)) return fail("invalid_outputs");
     if (hasAbsentValve6(config_) && requested.valves[kValve6Slot])
       return fail("V6 is not installed; its wire slot must remain false");
+    if (const char* error = pumpOutputLimitError(requested, config_.pumpLimits)) return fail(error);
     if (requested == applied_) {
       // Only the main loop passes allowPumpRun, after the current safety tick.
       // Sensor acquisition and serial ACK paths never release this contact.
@@ -219,29 +241,41 @@ class Hardware {
     safeStopIssued_ = true;
     writeValves(safeOutputs());
     manualWordKnown_ = false;
-    if (config_.pumpCommandSource == PumpCommandSource::Gp8403 && i2cInitialized_) writePumpCommand(0);
+    if (ioInitialized_ && config_.pumpCommandSource == PumpCommandSource::Gp8403 && i2cInitialized_) writePumpCommand(0);
     applied_ = safeOutputs();
   }
 
   void sample(uint32_t now, bool valveOnly = false) {
-    if (simulation_ || !ready_) return;
-    if (!valveOnly && config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
+    if (simulation_) return;
+    pumpTach_.sample(now);
+    if (!ready_ && !sensorMonitoringOnly_) return;
+    if (ready_ && !valveOnly && config_.pumpCommandSource == PumpCommandSource::Gp8403 &&
         static_cast<uint32_t>(now - lastHealthMs_) >= 1000) {
       lastHealthMs_ = now;
       if (!probe(config_.gp8403Address)) { fail("gp8403_disconnected"); return; }
     }
-    if (static_cast<uint32_t>(now - lastNativeSampleMs_) >= 100) {
+    if (static_cast<uint32_t>(now - lastNativeSampleMs_) >= kNativeAdcSampleIntervalMs) {
       lastNativeSampleMs_ = now;
       auto configurations = inputs();
       auto destinations = readings();
       for (std::size_t i = 0; i < configurations.size(); ++i) {
-        if (configurations[i]->source == AnalogSource::NativeAdc1) {
-          *destinations[i] = calibratedReading(*configurations[i], analogReadMilliVolts(configurations[i]->pin) / 1000.0, now);
-          sensorReadState_[i] = destinations[i]->valid ? SensorReadState::Reading : SensorReadState::OutOfRange;
+        const auto& input = *configurations[i];
+        if (sensorMonitoringOnly_ && &input != &config_.pressure &&
+            (&input != &config_.flow || !monitoringFlowReady_)) continue;
+        if (!usesNativeAdc(input.source)) continue;
+        const auto millivolts = readNativeMillivolts(input);
+        const double pinVolts = millivolts ? *millivolts / 1000.0 : NAN;
+        *destinations[i] = calibratedReading(input, pinVolts, now);
+        if (&input == &config_.pressure) {
+          pressureAdcMillivolts_ = millivolts;
+          measurements_.pressureBelowAdcRange = pinVolts > 0 && pinVolts < input.minPinVolts;
         }
+        if (&input == &config_.flow) flowAdcMillivolts_ = millivolts;
+        sensorReadState_[i] = !millivolts ? SensorReadState::Unavailable :
+            (destinations[i]->valid ? SensorReadState::Reading : SensorReadState::OutOfRange);
       }
     }
-    sampleAds(now);
+    if (i2cInitialized_ && boardUsesAds(config_)) sampleAds(now);
   }
 
   bool sensorTestAvailable(bool factoryProfile) const {
@@ -272,20 +306,124 @@ class Hardware {
   }
 
   bool ready() const { return ready_; }
+  bool sensorMonitoringOnly() const { return sensorMonitoringOnly_; }
   bool valveControlReady() const { return manualValvesReady_; }
   const std::array<int, kManualValveCount>& manualValveBits() const { return manualConfig_.bits; }
   const char* valveError() const { return valveError_ ? valveError_ : "valve_control_not_ready"; }
   const char* error() const { return error_; }
   const Measurements& measurements() const { return measurements_; }
+  std::optional<uint32_t> pressureAdcMillivolts(uint32_t now) const {
+    if ((!ready_ && !sensorMonitoringOnly_) ||
+        static_cast<uint32_t>(now - measurements_.pressure.acquiredMs) > 2 * kNativeAdcSampleIntervalMs)
+      return std::nullopt;
+    return pressureAdcMillivolts_;
+  }
+  std::optional<uint32_t> flowAdcMillivolts(uint32_t now) const {
+    if ((!ready_ && !monitoringFlowReady_) ||
+        static_cast<uint32_t>(now - measurements_.flow.acquiredMs) > 2 * kNativeAdcSampleIntervalMs)
+      return std::nullopt;
+    return flowAdcMillivolts_;
+  }
+  std::optional<uint32_t> pumpFeedbackAdcMillivolts(uint32_t now) const {
+    if (static_cast<uint32_t>(now - measurements_.pumpFeedback.acquiredMs) > 2 * kNativeAdcSampleIntervalMs)
+      return std::nullopt;
+    return pumpFeedbackAdcMillivolts_;
+  }
+  bool pumpContactCommandAvailable() const { return pumpContactCommandAvailable_; }
+  bool pumpRunContactCommanded() const { return pumpRunContactCommanded_; }
+  const char* pumpTachStatus(uint32_t now) const { return simulation_ ? nullptr : pumpTach_.status(now); }
+  bool readPumpRpm(uint32_t now, double& rpm) const { return pumpTach_.readRpm(now, rpm); }
   const char* sensorStatus(std::size_t index, uint32_t now) const {
     const auto configured = inputs();
     const std::array<const Reading*, 3> measured{{&measurements_.pressure, &measurements_.flow, &measurements_.pumpFeedback}};
     if (index >= configured.size()) return "not_configured";
+    if (sensorMonitoringOnly_ && configured[index]->source == AnalogSource::Ads1115 &&
+        sensorReadState_[index] == SensorReadState::Unavailable) return "hardware_unavailable";
+    const bool canRead = ready_ || (index == 1 && monitoringFlowReady_) ||
+        (sensorMonitoringOnly_ && i2cInitialized_ && configured[index]->source == AnalogSource::Ads1115);
     return classifySensorStatus(config_, *configured[index], *measured[index], sensorReadState_[index],
-                                profileValidated_, ready_, simulation_, now);
+                                profileValidated_ || canRead, canRead, simulation_, now);
   }
 
  private:
+  bool beginI2c() {
+    if (!Wire.begin(config_.i2cSdaPin, config_.i2cSclPin, 100000)) return false;
+    Wire.setTimeOut(20);
+    i2cInitialized_ = true;
+    return true;
+  }
+
+  void beginAdsMonitoring() {
+    // The manual relay driver owns these pins even without a full pump profile.
+    const auto availableI2cPin = [this](int pin) {
+      return outputCapablePin(pin) && pin != kManualDataPin && pin != kManualClockPin &&
+          pin != kManualLatchPin && pin != kManualOePin && pin != 4 &&
+          pin != config_.pumpPwmPin && pin != config_.pumpContactPin;
+    };
+    if (!availableI2cPin(config_.i2cSdaPin) || !availableI2cPin(config_.i2cSclPin) ||
+        config_.i2cSdaPin == config_.i2cSclPin) {
+      error_ = "ADS1115 I2C pins invalid or conflicting with relay board";
+      return;
+    }
+    if (config_.ads1115Address < 0x48 || config_.ads1115Address > 0x4b) {
+      error_ = "ADS1115 address must be 0x48-0x4b";
+      return;
+    }
+    const auto configured = inputs();
+    std::array<bool, 4> channels{};
+    for (const auto* input : configured) {
+      if (input->source != AnalogSource::Ads1115) continue;
+      const int channel = input->adsChannel;
+      if (channel < 0 || channel >= static_cast<int>(channels.size()) || channels[channel]) {
+        error_ = "ADS1115 channel invalid or duplicated";
+        return;
+      }
+      channels[channel] = true;
+    }
+    sensorMonitoringOnly_ = true;
+    if (!beginI2c()) {
+      for (std::size_t index = 0; index < configured.size(); ++index) {
+        if (configured[index]->source == AnalogSource::Ads1115)
+          sensorReadState_[index] = SensorReadState::Unavailable;
+      }
+      error_ = "i2c_initialization_failed";
+      return;
+    }
+    // Conversions retry if the ADS1115 is temporarily absent.
+    monitoringFlowReady_ = config_.flow.source == AnalogSource::Ads1115;
+    error_ = "pressure_calibration_pending";
+  }
+
+  static const char* initializeNativeInput(const AnalogConfig& input) {
+    pinMode(input.pin, INPUT);
+    const bool lowRange = input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5;
+    if (input.source == AnalogSource::NativeAdc1) {
+      analogSetPinAttenuation(input.pin, lowRange ? ADC_2_5db : ADC_11db);
+    } else if (adc2_config_channel_atten(adc2Channel(input.pin), lowRange ? ADC_ATTEN_DB_2_5 : ADC_ATTEN_DB_12) != ESP_OK) {
+      return "adc2_initialization_failed";
+    } else if (input.nativeAdc2Pulldown && rtc_gpio_pulldown_en(static_cast<gpio_num_t>(input.pin)) != ESP_OK) {
+      return "adc2_pulldown_initialization_failed";
+    }
+    return nullptr;
+  }
+
+  static adc2_channel_t adc2Channel(int pin) {
+    return pin == 27 ? ADC2_CHANNEL_7 : ADC2_CHANNEL_9;
+  }
+
+  static std::optional<uint32_t> readNativeMillivolts(const AnalogConfig& input) {
+    if (input.source == AnalogSource::NativeAdc1) return analogReadMilliVolts(input.pin);
+
+    // Arduino's analogReadMilliVolts can turn an ADC2 driver failure into a
+    // calibrated zero-code voltage. Keep failure distinct from low pressure.
+    int raw = 0;
+    if (adc2_get_raw(adc2Channel(input.pin), ADC_WIDTH_BIT_12, &raw) != ESP_OK) return std::nullopt;
+    const auto attenuation = input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 ? ADC_ATTEN_DB_2_5 : ADC_ATTEN_DB_12;
+    esp_adc_cal_characteristics_t calibration{};
+    esp_adc_cal_characterize(ADC_UNIT_2, attenuation, ADC_WIDTH_BIT_12, 1100, &calibration);
+    return esp_adc_cal_raw_to_voltage(raw, &calibration);
+  }
+
   static constexpr int kManualDataPin = 14;
   static constexpr int kManualClockPin = 13;
   static constexpr int kManualLatchPin = 12;
@@ -333,6 +471,7 @@ class Hardware {
     digitalWrite(config_.shiftOePin, config_.shiftOeActiveLow ? !enabled : enabled);
   }
   void setPumpContact(bool run) {
+    pumpRunContactCommanded_ = run;
     if (config_.pumpContactBit == -1) {
       digitalWrite(config_.pumpContactPin, run == config_.pumpContactActiveHigh);
       return;
@@ -377,7 +516,10 @@ class Hardware {
     Wire.beginTransmission(address);
     Wire.write(reg);
     if (Wire.endTransmission(false) != 0 || Wire.requestFrom(address, static_cast<uint8_t>(2)) != 2) return false;
-    value = static_cast<uint16_t>((Wire.read() << 8) | Wire.read());
+    const int high = Wire.read();
+    const int low = Wire.read();
+    if (high < 0 || low < 0) return false;
+    value = static_cast<uint16_t>((high << 8) | low);
     return true;
   }
   bool beginPumpPwm() {
@@ -428,36 +570,35 @@ class Hardware {
     const uint8_t bytes[] = {static_cast<uint8_t>(code), static_cast<uint8_t>(code >> 8)};
     return writeRegister(config_.gp8403Address, config_.gp8403Channel == 0 ? 0x02 : 0x04, bytes, sizeof(bytes));
   }
+  void recordAdsReading(std::size_t index, std::optional<double> volts, uint32_t now) {
+    const auto configured = inputs();
+    Reading& reading = *readings()[index];
+    reading = calibratedReading(*configured[index], volts.value_or(NAN), now);
+    sensorReadState_[index] = !volts ? SensorReadState::Unavailable :
+        (reading.valid ? SensorReadState::Reading : SensorReadState::OutOfRange);
+    const std::array<std::optional<uint32_t>*, 3> adcMillivolts{{
+        &pressureAdcMillivolts_, &flowAdcMillivolts_, &pumpFeedbackAdcMillivolts_}};
+    auto& millivolts = *adcMillivolts[index];
+    millivolts.reset();
+    if (volts && *volts <= 3.3)
+      millivolts = static_cast<uint32_t>(std::lround(std::max(0.0, *volts) * 1000.0));
+  }
+
   void sampleAds(uint32_t now) {
-    auto configurations = inputs();
-    auto destinations = readings();
+    const auto configurations = inputs();
+    const auto elapsed = static_cast<uint32_t>(now - adsStartedMs_);
+    if (elapsed < 9) return;
     if (adsPending_) {
-      if (static_cast<uint32_t>(now - adsStartedMs_) < 9) return;
       uint16_t conversionConfig = 0;
       uint16_t raw = 0;
-      if (!readRegister16(config_.ads1115Address, 0x01, conversionConfig)) {
-        destinations[adsInputIndex_]->valid = false;
-        sensorReadState_[adsInputIndex_] = SensorReadState::Unavailable;
-        adsPending_ = false;
-        return;
+      std::optional<double> volts;
+      if (readRegister16(config_.ads1115Address, 0x01, conversionConfig)) {
+        if (conversionConfig & 0x8000) {
+          if (readRegister16(config_.ads1115Address, 0x00, raw))
+            volts = static_cast<int16_t>(raw) * (4.096 / 32768.0);
+        } else if (elapsed <= 30) return;
       }
-      if (!(conversionConfig & 0x8000)) {
-        if (static_cast<uint32_t>(now - adsStartedMs_) > 30) {
-          destinations[adsInputIndex_]->valid = false;
-          sensorReadState_[adsInputIndex_] = SensorReadState::Unavailable;
-          adsPending_ = false;
-        }
-        return;
-      }
-      if (readRegister16(config_.ads1115Address, 0x00, raw)) {
-        const double volts = static_cast<int16_t>(raw) * (4.096 / 32768.0);
-        *destinations[adsInputIndex_] = calibratedReading(*configurations[adsInputIndex_], volts, now);
-        sensorReadState_[adsInputIndex_] = destinations[adsInputIndex_]->valid ?
-            SensorReadState::Reading : SensorReadState::OutOfRange;
-      } else {
-        destinations[adsInputIndex_]->valid = false;
-        sensorReadState_[adsInputIndex_] = SensorReadState::Unavailable;
-      }
+      recordAdsReading(adsInputIndex_, volts, now);
       adsPending_ = false;
       adsInputIndex_ = (adsInputIndex_ + 1) % configurations.size();
     }
@@ -469,12 +610,11 @@ class Hardware {
         // remain inside the actual 3.3 V supply rails; PGA range is not tolerance.
         const uint16_t configWord = static_cast<uint16_t>(0x8383U | ((4U + input.adsChannel) << 12));
         const uint8_t bytes[] = {static_cast<uint8_t>(configWord >> 8), static_cast<uint8_t>(configWord)};
-        if (writeRegister(config_.ads1115Address, 0x01, bytes, sizeof(bytes))) {
-          adsStartedMs_ = now;
-          adsPending_ = true;
-        } else {
-          destinations[adsInputIndex_]->valid = false;
-          sensorReadState_[adsInputIndex_] = SensorReadState::Unavailable;
+        adsStartedMs_ = now;
+        adsPending_ = writeRegister(config_.ads1115Address, 0x01, bytes, sizeof(bytes));
+        if (!adsPending_) {
+          recordAdsReading(adsInputIndex_, std::nullopt, now);
+          adsInputIndex_ = (adsInputIndex_ + 1) % configurations.size();
         }
         break;
       }
@@ -484,6 +624,7 @@ class Hardware {
 
   BoardConfig config_;
   bool simulation_;
+  PumpTach pumpTach_;
   ManualValveConfig manualConfig_;
   bool manualValvesReady_ = false;
   bool manualRelayInitialized_ = false;
@@ -497,13 +638,20 @@ class Hardware {
   bool i2cInitialized_ = false;
   bool pwmInitialized_ = false;
   bool pumpRunPending_ = false;
+  bool pumpContactCommandAvailable_ = false;
+  bool pumpRunContactCommanded_ = false;
   uint32_t pumpCommandChangedMs_ = 0;
   bool ready_ = false;
+  bool sensorMonitoringOnly_ = false;
+  bool monitoringFlowReady_ = false;
   bool sensorTestPinsInitialized_ = false;
   bool safeStopIssued_ = false;
   const char* error_ = "hardware_not_initialized";
   Outputs applied_;
   Measurements measurements_;
+  std::optional<uint32_t> pressureAdcMillivolts_;
+  std::optional<uint32_t> flowAdcMillivolts_;
+  std::optional<uint32_t> pumpFeedbackAdcMillivolts_;
   std::array<SensorReadState, 3> sensorReadState_{{SensorReadState::Never, SensorReadState::Never, SensorReadState::Never}};
   uint32_t lastNativeSampleMs_ = 0;
   uint32_t lastHealthMs_ = 0;

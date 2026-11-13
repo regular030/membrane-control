@@ -15,17 +15,29 @@ import sys
 import tempfile
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
-TARGETS = ("esp32-dry-run", "esp32-relay-bench", "esp32-valve-test", "esp32-physical")
+# Preserve a short Windows drive alias for PlatformIO child processes. The
+# source and staging path checks below resolve both sides before comparison.
+ROOT = Path(__file__).absolute().parents[1]
 PURPOSES = {
     "esp32-dry-run": "Protocol test with simulated measurements; no relay or sensor GPIO access.",
     "esp32-relay-bench": "Real relay pulses on an unloaded board only; no pump or sensor control.",
     "esp32-valve-test": "Sensor-free solenoid valve commissioning; reviewed valve-only profile required, factory profile locked.",
     "esp32-physical": "Normal controller: six confirmed manual valve toggles without sensors; pump/experiments require full configuration.",
+    "esp32-bluetooth-physical": "Normal Bluetooth controller and restore image; six manual valves, with pump/experiments requiring full configuration.",
+    "esp32-pump-voltage-test": "USB 50% voltage test; holds all relay outputs off and reads raw GPIO39 feedback.",
+    "esp32-pump-open-bucket-test": "USB 50% pump test for an isolated, primed open-bucket water path; closes only RUN for at most ten seconds and reads raw GPIO34 feedback.",
+}
+TARGETS = tuple(PURPOSES)
+MODE_TARGETS = {
+    "BASU_BLUETOOTH_PHYSICAL": "esp32-bluetooth-physical",
+    "BASU_BLUETOOTH_DRY_RUN": "esp32-bluetooth-dry-run",
+    "BASU_PUMP_OPEN_BUCKET_TEST": "esp32-pump-open-bucket-test",
 }
 REQUIRED_SOURCES = (
     "firmware/README.md", "firmware/platformio.ini", "firmware/compact_paths.py",
     "firmware/native_compiler.py", "firmware/src/main.cpp", "firmware/src/relay_bench_main.cpp",
+    "firmware/src/protected_spp.cpp", "firmware/include/ProtectedSpp.h",
+    "firmware/src/pump_voltage_test_main.cpp", "firmware/include/PumpTach.h",
     "firmware/include/BoardProfile.h", "firmware/include/BoardConfig.h",
     "firmware/include/ManualValveConfig.h",
     "firmware/src/valve_test_main.cpp", "firmware/include/ValveTestCore.h",
@@ -133,7 +145,8 @@ def flash_inputs(metadata: dict, target: str, core_dir: Path) -> tuple[list[tupl
     if metadata.get("env_name") != target or metadata.get("build_type") != "release":
         raise ValueError("Incorrect firmware build metadata")
     defines = metadata.get("defines", [])
-    if not isinstance(defines, list) or "ARDUINO_ESP32_DEV" not in defines:
+    if (not isinstance(defines, list) or any(not isinstance(value, str) for value in defines)
+            or "ARDUINO_ESP32_DEV" not in defines):
         raise ValueError("Firmware bundle requires the classic esp32dev board target")
     if any(any(flag in str(value) for flag in ("BASU_VERIFIED_PROFILE_HEADER", "BASU_VALVE_PROFILE_HEADER")) for value in defines):
         raise ValueError("A commissioned physical profile cannot be labelled as the unverified factory build")
@@ -141,6 +154,11 @@ def flash_inputs(metadata: dict, target: str, core_dir: Path) -> tuple[list[tupl
         expected = "BASU_DRY_RUN=" + ("1" if target == "esp32-dry-run" else "0")
         if expected not in defines:
             raise ValueError("Firmware target simulation flag does not match its label")
+    for flag, mode_target in MODE_TARGETS.items():
+        actual = [value for value in defines if value.split("=", 1)[0] == flag]
+        expected_mode = [flag + "=1"] if target == mode_target else []
+        if actual != expected_mode:
+            raise ValueError(f"Firmware target mode flag {flag} does not match its label")
     build_dir = ROOT / "firmware" / ".pio" / "build" / target
     program = Path(metadata.get("prog_path", ""))
     if program.resolve() != (build_dir / "firmware.elf").resolve():
@@ -192,10 +210,9 @@ remain unchanged. See manifest.json and each target's manifest.json for hashes
 and the exact addresses exported by PlatformIO. No device was opened or flashed
 while creating this bundle.
 
-The source-only firmware/examples/pwm-converter-bench project provides a separate
-converter signal test with the pump and valve contact loads disconnected. It is
-not a fifth factory image. Its README explains explicit confirmation, serial
-commands and bounded tests; do not use it to operate the pump or valves.
+The source-only firmware/examples/pwm-converter-bench project also provides a
+converter signal test with the pump and valve contact loads disconnected. Its
+README explains explicit confirmation, serial commands and bounded tests.
 
 Choose one target:
 
@@ -209,11 +226,28 @@ Choose one target:
   = bits0,1,2,3,5,6, all LOW off. V6 is absent; bit4 and7-15 stay LOW.
   Dashboard ON/OFF works without sensors or a
   separate valve profile. Pump and experiment configuration remains incomplete.
+- esp32-bluetooth-physical: NORMAL Bluetooth controller for the same six
+  valves and the restore image after USB pump tests. Use the outgoing paired
+  Bluetooth COM port in the app after uploading through USB.
+- esp32-pump-voltage-test: USB-only 50% command voltage test with all relays
+  held off. Follow hardware/pump-interface.md to keep the motor stopped and
+  verify the converter voltage. Open the app with --pump-voltage-test COM5,
+  replacing COM5 with the controller's wired port if different.
+- esp32-pump-open-bucket-test: USB-only motor test. It can start the pump at
+  50% for up to ten seconds while all valve commands stay off. Use it only
+  with the primed, unrestricted water-to-open-bucket path in
+  hardware/pump-interface.md. Open the app with --pump-open-bucket-test COM5.
 
 factory.bin contains the bootloader, partition table, boot_app0 and application,
 and is written at offset 0x0. Individual firmware.bin is only the application;
 its address is in that target's manifest. Do not write firmware.bin at 0x0.
 The merge preserves compiled flash mode/frequency/size header settings.
+The merged image spans gaps between the components and can erase saved
+Bluetooth pairing data. To keep the pairing when restoring normal Bluetooth,
+use the normal Bluetooth Setup flash helper or write the verified
+images/esp32-bluetooth-physical/firmware.bin at its manifest's application
+offset if the existing bootloader and partitions already match. Do not erase
+the flash first.
 
 Use the installed Flash ESP32 shortcut or build from firmware/platformio.ini
 with PlatformIO Core 6.2.0. Source builds download the pinned ESP32 toolchain and
@@ -245,7 +279,7 @@ def build_firmware(version: str, release_dir=None, build: bool = True) -> Path:
     if importlib.metadata.version("platformio") != "6.2.0":
         raise RuntimeError("Firmware packaging requires PlatformIO Core 6.2.0")
     environment = os.environ.copy()
-    core_dir = Path(environment.get("PLATFORMIO_CORE_DIR", ROOT / "work" / "platformio")).resolve()
+    core_dir = Path(environment.get("PLATFORMIO_CORE_DIR", ROOT / "work" / "platformio")).absolute()
     environment.update(PLATFORMIO_CORE_DIR=str(core_dir),
                        PLATFORMIO_BUILD_DIR=str(ROOT / "firmware" / ".pio" / "build"),
                        PLATFORMIO_LIBDEPS_DIR=str(ROOT / "firmware" / ".pio" / "libdeps"),

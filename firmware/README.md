@@ -50,6 +50,21 @@ firmware operates real 74HC595 outputs in bounded test pulses. Use the app's
 record the physical channel mapping. No pump or sensor interface is needed for
 this unloaded test, and it cannot run experiments.
 
+## USB pump commissioning targets
+
+The 0.1.28 firmware archive includes prebuilt `esp32-pump-voltage-test` and
+`esp32-pump-open-bucket-test` images. The first stages the 50% command with all
+relay outputs held off. The second can close the RUN contact for up to ten
+seconds at 50%. Use it only with a primed pump and an unrestricted discharge
+to an open bucket, isolated from the rig valves. The tests use the wired USB
+port and their own app screens. See the [pump interface](../hardware/pump-interface.md)
+and [firmware upload guide](../docs/full-firmware.md#run-the-usb-pump-tests).
+
+After testing, return to the normal Bluetooth controller with
+`esp32-bluetooth-physical` or the wired controller with `esp32-physical`. The
+normal firmware still requires a reviewed profile and a valid pressure reading
+for pump operation on the rig.
+
 ## Legacy separate solenoid valve commissioning
 
 The older separate **esp32-valve-test** target supports one named solenoid at a time
