@@ -284,6 +284,32 @@ def test_flow_card_shows_fresh_pin_voltage_in_monitor_mode(screen):
     assert window._metric_units["flow_ml_min"].text() == "mL/min"
 
 
+def test_voltage_cards_identify_ads1115_channels(screen):
+    window, controller, now = screen
+    controller.set_simulation(False)
+    controller.last_telemetry = now[0]
+    snapshot = dict(controller.snapshot, controller_connected=True, pressure_adc_mv=0,
+                    flow_adc_mv=496, flow_ml_min=49.6, pump_feedback_adc_mv=1500,
+                    pump_feedback_v=7.5, sensor_inputs={
+                        "pressure": {"source": "ads1115", "channel": 0, "calibration_verified": False},
+                        "flow": {"source": "ads1115", "channel": 1, "calibration_verified": True},
+                        "pump_feedback": {"source": "ads1115", "channel": 2, "calibration_verified": False},
+                    })
+    window._update_view(snapshot)
+    assert window._metric_labels["pressure_psi"].text() == "0.000"
+    assert window._metric_units["pressure_psi"].text() == "V at ADS1115 A0"
+    assert window._metric_labels["flow_ml_min"].text() == "0.496"
+    assert window._metric_units["flow_ml_min"].text() == "V at ADS1115 A1"
+    assert window._metric_labels["pump_feedback_v"].text() == "1.500"
+    assert window._metric_units["pump_feedback_v"].text() == "V at ADS1115 A2"
+    assert "Drive command feedback unavailable" in window.manual_pump_feedback.text()
+
+    window._update_view(dict(snapshot, hardware_verified=True))
+    assert window._metric_labels["pump_feedback_v"].text() == "7.50"
+    assert window._metric_units["pump_feedback_v"].text() == "V"
+    assert "Drive command feedback 7.50 V" in window.manual_pump_feedback.text()
+
+
 def test_pump_feedback_distinguishes_command_drive_voltage_and_rotation(screen):
     window, controller, now = screen
     controller.set_simulation(False)

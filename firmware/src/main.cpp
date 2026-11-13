@@ -493,6 +493,9 @@ void writeTelemetry(uint32_t now) {
     if (const auto millivolts = hardware.flowAdcMillivolts(now)) document["flow_adc_mv"] = *millivolts;
   }
   addReading("pump_feedback_v", controller.measurements().pumpFeedback);
+  if (hardware.sensorMonitoringOnly() || !controller.measurements().pumpFeedback.fresh(now, controller.sensorMaxAgeMs())) {
+    if (const auto millivolts = hardware.pumpFeedbackAdcMillivolts(now)) document["pump_feedback_adc_mv"] = *millivolts;
+  }
   basu::SensorTestMillivolts rawInputs;
   if (!hardware.readSensorTestInputs(kFactoryProfile, controller.state(), rawInputs,
                                     basu::SensorTestScope::IdleOrManualValves))

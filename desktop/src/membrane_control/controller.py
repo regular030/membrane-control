@@ -27,6 +27,7 @@ LAB_CONTROLLER_FALLBACK_PORT = "COM8"
 LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF50204E"
 WINDOWS_SPP_ID_PREFIX = "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_"
 EMPTY_PUMP_MOTION = {"pump_rpm": None, "pump_tach_status": None, "pump_run_contact_commanded": None}
+EMPTY_ADC_VOLTAGES = {"pressure_adc_mv": None, "flow_adc_mv": None, "pump_feedback_adc_mv": None}
 
 
 def _adc_pin_mv(value):
@@ -115,7 +116,7 @@ class AppController:
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
             "manual_pump_profile": None, "pressure_startup": None,
-            "pressure_adc_mv": None, "flow_adc_mv": None,
+            **EMPTY_ADC_VOLTAGES,
             "live_sensor_voltages": {}, "live_sensor_zero": {},
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
             "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
@@ -349,9 +350,9 @@ class AppController:
 
     def _reset_diagnostics(self):
         self._reported_valve_control_ready = None
-        self.snapshot.update(EMPTY_PUMP_MOTION)
+        self.snapshot.update(EMPTY_PUMP_MOTION, **EMPTY_ADC_VOLTAGES)
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
-            manual_pump_profile=None, pressure_startup=None, pressure_adc_mv=None, flow_adc_mv=None,
+            manual_pump_profile=None, pressure_startup=None,
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
             valve_control_status="Valve-only controls unavailable", sensor_test_available=False,
             sensor_test_voltages={}, sensor_test_status="", live_sensor_voltages={}, live_sensor_zero={})
@@ -800,7 +801,7 @@ class AppController:
                 diagnostics = checked_controller_diagnostics(packet)
                 self.device = {key: value for key, value in packet.items()
                                if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
-                                              "manual_pump_profile", "pressure_startup", "pressure_adc_mv", "flow_adc_mv",
+                                              "manual_pump_profile", "pressure_startup", *EMPTY_ADC_VOLTAGES,
                                               "valve_control_ready", "manual_valve_count", "manual_valve_ids",
                                               "valve_bits", "valve_control_status", "sensor_test_available")}
                 self.device.update(diagnostics)
@@ -926,7 +927,7 @@ class AppController:
         pump_profile = self.device.get("manual_pump_profile")
         pressure_startup = checked_pressure_startup(packet, pump_profile)
         self.snapshot["pressure_startup"] = pressure_startup if not self.local_fault else None
-        for field in ("pressure_adc_mv", "flow_adc_mv"):
+        for field in EMPTY_ADC_VOLTAGES:
             millivolts = packet.get(field)
             self.snapshot[field] = (millivolts if not packet["simulation"]
                 and type(millivolts) is int and 0 <= millivolts <= 3300 else None)
@@ -1055,8 +1056,7 @@ class AppController:
                 if self.snapshot["controller_status"] != "Telemetry stale":
                     self._esp32_event("telemetry_stale")
                 self.snapshot["live_sensor_voltages"] = {}
-                self.snapshot.update(pressure_adc_mv=None, flow_adc_mv=None)
-                self.snapshot.update(EMPTY_PUMP_MOTION)
+                self.snapshot.update(EMPTY_PUMP_MOTION, **EMPTY_ADC_VOLTAGES)
                 if self._active() or self.run_id is not None:
                     self._abort("Controller telemetry is stale")
                     if self.driver is not None:

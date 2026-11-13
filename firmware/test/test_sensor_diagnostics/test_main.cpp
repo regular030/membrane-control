@@ -30,6 +30,30 @@ BoardConfig sensorFixture() {
   return config;
 }
 
+BoardConfig adsMonitoringFixture() {
+  auto config = sensorFixture();
+  config.pumpCommandSource = PumpCommandSource::PwmConverter;
+  config.pwmConverterInterfaceVerified = true;
+  config.pumpPwmPin = 25;
+  config.pwmSettleMs = 1500;
+  config.pressure = AnalogConfig{};
+  config.pressure.source = AnalogSource::Ads1115;
+  config.pressure.adsChannel = 0;
+  config.flow = AnalogConfig{};
+  config.flow.source = AnalogSource::Ads1115;
+  config.flow.adsChannel = 1;
+  config.flow.calibrationVerified = true;
+  config.flow.unitsPerVolt = 100;
+  config.flow.minPinVolts = 0.130;
+  config.flow.maxPinVolts = 1.000;
+  config.flow.minValue = 13;
+  config.flow.maxValue = 100;
+  config.pumpFeedback = AnalogConfig{};
+  config.pumpFeedback.source = AnalogSource::Ads1115;
+  config.pumpFeedback.adsChannel = 2;
+  return config;
+}
+
 void test_factory_disabled_inputs_are_distinct_from_configured_locked_inputs() {
   Hardware factory(BoardConfig{}, false);
   TEST_ASSERT_FALSE(factory.begin());
@@ -202,6 +226,119 @@ void test_uncalibrated_adc2_pulldown_monitors_voltage_without_enabling_pump() {
   TEST_ASSERT_FALSE(hardware.flowAdcMillivolts(1301).has_value());
   TEST_ASSERT_EQUAL(0, Wire.transactionCount);
   TEST_ASSERT_EQUAL(0, fake::ledcCalls);
+}
+
+void test_uncalibrated_ads_monitors_three_distinct_inputs_without_enabling_pump() {
+  const auto config = adsMonitoringFixture();
+  Wire.adsAddress = config.ads1115Address;
+  Wire.adsConversions[0] = 6;      // 0.75 mV rounds to 1 mV for telemetry.
+  Wire.adsConversions[1] = 3968;   // 496 mV at the flow divider output.
+  Wire.adsConversions[2] = 14400;  // 1.8 V at the pump feedback divider output.
+  Hardware hardware(config, false);
+  TEST_ASSERT_FALSE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.sensorMonitoringOnly());
+  TEST_ASSERT_EQUAL_STRING("pressure_calibration_pending", hardware.error());
+  TEST_ASSERT_EQUAL_UINT(1, Wire.beginCount);
+  TEST_ASSERT_FALSE(hardware.pumpContactCommandAvailable());
+
+  Outputs pumping;
+  pumping.pumpPercent = 25;
+  TEST_ASSERT_FALSE(hardware.apply(pumping, 100, true));
+  for (uint32_t now = 100; now <= 150; now += 10) hardware.sample(now);
+
+  TEST_ASSERT_TRUE(hardware.pressureAdcMillivolts(150).has_value());
+  TEST_ASSERT_EQUAL_UINT32(1, *hardware.pressureAdcMillivolts(150));
+  TEST_ASSERT_FALSE(hardware.measurements().pressure.valid);
+  TEST_ASSERT_FALSE(hardware.measurements().pressureBelowAdcRange);
+  TEST_ASSERT_EQUAL_STRING("uncalibrated", hardware.sensorStatus(0, 150));
+  TEST_ASSERT_TRUE(hardware.flowAdcMillivolts(150).has_value());
+  TEST_ASSERT_EQUAL_UINT32(496, *hardware.flowAdcMillivolts(150));
+  TEST_ASSERT_DOUBLE_WITHIN(0.001, 49.6, hardware.measurements().flow.value);
+  TEST_ASSERT_EQUAL_STRING("reading_received", hardware.sensorStatus(1, 150));
+  TEST_ASSERT_TRUE(hardware.pumpFeedbackAdcMillivolts(150).has_value());
+  TEST_ASSERT_EQUAL_UINT32(1800, *hardware.pumpFeedbackAdcMillivolts(150));
+  TEST_ASSERT_FALSE(hardware.measurements().pumpFeedback.valid);
+  TEST_ASSERT_EQUAL_STRING("uncalibrated", hardware.sensorStatus(2, 150));
+  TEST_ASSERT_FALSE(hardware.pressureAdcMillivolts(351).has_value());
+  TEST_ASSERT_FALSE(hardware.flowAdcMillivolts(351).has_value());
+  TEST_ASSERT_FALSE(hardware.pumpFeedbackAdcMillivolts(351).has_value());
+  TEST_ASSERT_EQUAL(0, fake::gpioCalls);
+  TEST_ASSERT_EQUAL(0, fake::ledcCalls);
+  for (auto address : Wire.addresses) TEST_ASSERT_EQUAL_UINT8(config.ads1115Address, address);
+}
+
+void test_ads_monitor_clears_failed_voltage_and_keeps_sampling_the_other_channel() {
+  const auto config = adsMonitoringFixture();
+  Wire.adsAddress = config.ads1115Address;
+  Wire.adsConversions[0] = 16;
+  Wire.adsConversions[1] = 4000;
+  Wire.adsConversions[2] = 14400;
+  Hardware hardware(config, false);
+  TEST_ASSERT_FALSE(hardware.begin());
+  for (uint32_t now = 100; now <= 130; now += 10) hardware.sample(now);
+  TEST_ASSERT_TRUE(hardware.flowAdcMillivolts(130).has_value());
+
+  Wire.adsFailedChannel = 1;
+  Wire.adsConversions[0] = -1;  // A slightly negative code around ground.
+  Wire.adsConversions[2] = 16000;
+  for (uint32_t now = 140; now <= 180; now += 10) hardware.sample(now);
+  TEST_ASSERT_FALSE(hardware.flowAdcMillivolts(180).has_value());
+  TEST_ASSERT_FALSE(hardware.measurements().flow.valid);
+  TEST_ASSERT_EQUAL_STRING("hardware_unavailable", hardware.sensorStatus(1, 180));
+  TEST_ASSERT_TRUE(hardware.pressureAdcMillivolts(180).has_value());
+  TEST_ASSERT_EQUAL_UINT32(0, *hardware.pressureAdcMillivolts(180));
+  TEST_ASSERT_FALSE(hardware.measurements().pressureBelowAdcRange);
+  TEST_ASSERT_TRUE(hardware.pumpFeedbackAdcMillivolts(180).has_value());
+  TEST_ASSERT_EQUAL_UINT32(2000, *hardware.pumpFeedbackAdcMillivolts(180));
+}
+
+void test_ads_monitor_recovers_when_the_converter_starts_responding() {
+  const auto config = adsMonitoringFixture();
+  Wire.adsAddress = config.ads1115Address;
+  Wire.failingAddress = config.ads1115Address;
+  Hardware hardware(config, false);
+  TEST_ASSERT_FALSE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.sensorMonitoringOnly());
+  for (uint32_t now = 100; now <= 150; now += 10) hardware.sample(now);
+  TEST_ASSERT_FALSE(hardware.pressureAdcMillivolts(150).has_value());
+  TEST_ASSERT_FALSE(hardware.flowAdcMillivolts(150).has_value());
+  TEST_ASSERT_EQUAL_STRING("hardware_unavailable", hardware.sensorStatus(1, 150));
+
+  Wire.failingAddress = -1;
+  Wire.adsConversions[0] = 800;
+  Wire.adsConversions[1] = 2400;
+  Wire.adsConversions[2] = 14400;
+  for (uint32_t now = 160; now <= 250; now += 10) hardware.sample(now);
+  TEST_ASSERT_TRUE(hardware.pressureAdcMillivolts(250).has_value());
+  TEST_ASSERT_EQUAL_UINT32(100, *hardware.pressureAdcMillivolts(250));
+  TEST_ASSERT_TRUE(hardware.flowAdcMillivolts(250).has_value());
+  TEST_ASSERT_EQUAL_UINT32(300, *hardware.flowAdcMillivolts(250));
+  TEST_ASSERT_FALSE(hardware.ready());
+  TEST_ASSERT_EQUAL(0, fake::ledcCalls);
+}
+
+void test_ads_monitor_rejects_i2c_pins_used_by_the_manual_relay_driver() {
+  auto config = adsMonitoringFixture();
+  config.i2cSdaPin = 14;
+  config.i2cSclPin = 13;
+  Hardware hardware(config, false);
+  TEST_ASSERT_FALSE(hardware.begin());
+  TEST_ASSERT_FALSE(hardware.sensorMonitoringOnly());
+  hardware.sample(100);
+  TEST_ASSERT_EQUAL(0, Wire.beginCount);
+  TEST_ASSERT_EQUAL(0, Wire.transactionCount);
+  TEST_ASSERT_EQUAL(0, fake::gpioCalls);
+  TEST_ASSERT_EQUAL(0, fake::ledcCalls);
+}
+
+void test_ads_monitor_rejects_duplicate_channels() {
+  auto config = adsMonitoringFixture();
+  config.pumpFeedback.adsChannel = config.flow.adsChannel;
+  Hardware hardware(config, false);
+  TEST_ASSERT_FALSE(hardware.begin());
+  TEST_ASSERT_FALSE(hardware.sensorMonitoringOnly());
+  TEST_ASSERT_EQUAL(0, Wire.beginCount);
+  TEST_ASSERT_EQUAL(0, fake::gpioCalls);
 }
 
 void test_native_low_attenuation_has_a_supported_per_pin_range() {
@@ -429,6 +566,11 @@ int main() {
   RUN_TEST(test_adc2_pressure_separates_conversion_failure_from_a_low_sample);
   RUN_TEST(test_adc2_pulldown_is_opt_in_and_applied_after_adc_setup);
   RUN_TEST(test_uncalibrated_adc2_pulldown_monitors_voltage_without_enabling_pump);
+  RUN_TEST(test_uncalibrated_ads_monitors_three_distinct_inputs_without_enabling_pump);
+  RUN_TEST(test_ads_monitor_clears_failed_voltage_and_keeps_sampling_the_other_channel);
+  RUN_TEST(test_ads_monitor_recovers_when_the_converter_starts_responding);
+  RUN_TEST(test_ads_monitor_rejects_i2c_pins_used_by_the_manual_relay_driver);
+  RUN_TEST(test_ads_monitor_rejects_duplicate_channels);
   RUN_TEST(test_native_low_attenuation_has_a_supported_per_pin_range);
   RUN_TEST(test_native_low_attenuation_validation_does_not_change_ads);
   RUN_TEST(test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivity);

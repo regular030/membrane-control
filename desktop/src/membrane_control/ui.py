@@ -1840,14 +1840,19 @@ class MainWindow(QMainWindow):
                 else:
                     sensor_setup.sync_connection()
             sensor_zero = sensor_setup.zero_baselines() if sensor_setup is not None else snap.get("live_sensor_zero", {})
-            native_mv = {"pressure": snap.get("pressure_adc_mv"), "flow": snap.get("flow_adc_mv")} if connected and fresh and not simulation else {}
+            adc_fresh = connected and fresh and not simulation
+            sensor_inputs = snap.get("sensor_inputs", {})
             for key, (_, unit, channel) in METRICS.items():
                 value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
                 raw = live_mv.get(channel)
-                pin_mv = native_mv.get(channel)
-                if pin_mv is not None and (value == "Waiting" or (channel == "flow" and not verified)):
+                pin_mv = snap.get(f"{channel}_adc_mv") if adc_fresh and channel else None
+                if pin_mv is not None and (value == "Waiting" or not verified):
                     value = _number(pin_mv / 1000, 3)
                     unit = "V at ESP32"
+                    sensor_input = sensor_inputs.get(channel, {})
+                    ads_channel = sensor_input.get("channel", -1)
+                    if sensor_input.get("source") == "ads1115" and 0 <= ads_channel <= 3:
+                        unit = f"V at ADS1115 A{ads_channel}"
                     if key == "pressure_psi" and pressure_startup:
                         unit += " · below calibrated ADC range"
                 elif value == "Waiting" and raw is not None:
@@ -1893,8 +1898,7 @@ class MainWindow(QMainWindow):
             elif verified:
                 hardware_text = "Equipment setup: approved by the controller. A trained operator must also review the sequence."
             elif snap.get('valve_control_ready'):
-                inputs = snap.get("sensor_inputs", {})
-                if all(inputs.get(key, {}).get("source") == "disabled" for key in ("pressure", "flow")):
+                if all(sensor_inputs.get(key, {}).get("source") == "disabled" for key in ("pressure", "flow")):
                     hardware_text = ("Manual valves are ready. Open Sensor setup to check live input voltages. "
                                      "Calibrated pressure and flow still need a reviewed profile.")
                 else:
