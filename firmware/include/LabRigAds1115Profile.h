@@ -15,7 +15,7 @@ inline BoardConfig compiledBoardConfig() {
   config.valveBits = {{0, 1, 2, 3, 5, -1, 6}};
   config.pumpCommandSource = PumpCommandSource::PwmConverter;
   config.pwmConverterInterfaceVerified = true;
-  config.pumpPwmPin = 25;
+  config.pumpPwmPin = 33;
   config.pwmSettleMs = 1500;
   config.pumpContactBit = 15;
   config.pumpLimits.maxPercent = 50;
