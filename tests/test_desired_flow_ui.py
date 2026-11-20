@@ -306,7 +306,7 @@ def test_voltage_cards_identify_ads1115_channels(screen):
 
     window._update_view(dict(snapshot, hardware_verified=True))
     assert window._metric_labels["pump_feedback_v"].text() == "7.50"
-    assert window._metric_units["pump_feedback_v"].text() == "V · 1.5000 V at ADS1115 A2"
+    assert window._metric_units["pump_feedback_v"].text() == "V · 75.0% drive feedback · 1.5000 V at ADS1115 A2"
     assert "Drive command feedback 7.50 V" in window.manual_pump_feedback.text()
 
 

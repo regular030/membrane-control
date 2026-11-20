@@ -152,6 +152,13 @@ def _number(value: Any, precision: int = 2) -> str:
         return "Waiting"
 
 
+def _drive_feedback_percent(volts):
+    """Nominal 0–10 V drive-output level, independent of app command or RPM."""
+    if type(volts) not in (int, float) or not 0 <= volts <= 10.5 or not math.isfinite(volts):
+        return None
+    return volts * 10
+
+
 class MainWindow(QMainWindow):
     """Single-window dashboard, recipe editor and device setup."""
 
@@ -1135,6 +1142,9 @@ class MainWindow(QMainWindow):
         feedback = snapshot.get("pump_feedback_v") if snapshot.get("hardware_verified") else None
         drive_text = ("Drive command feedback unavailable" if feedback is None
                       else f"Drive command feedback {_number(feedback)} V")
+        feedback_percent = _drive_feedback_percent(feedback)
+        if feedback_percent is not None:
+            drive_text += f" · Reported drive level {feedback_percent:.1f}%"
         rpm = snapshot.get("pump_rpm")
         if snapshot.get("pump_tach_status") == "waiting":
             tach_text = "Waiting for a tachometer sample"
@@ -1978,6 +1988,10 @@ class MainWindow(QMainWindow):
                         unit = f"No {unit} reading · {raw} mV at ESP32 · {source}"
                     if zero_mv is not None:
                         unit += " · observed zero saved"
+                if key == "pump_feedback_v" and adc_fresh and verified:
+                    feedback_percent = _drive_feedback_percent(snap.get("pump_feedback_v"))
+                    if feedback_percent is not None:
+                        unit = f"V · {feedback_percent:.1f}% drive feedback" + unit[1:]
                 self._metric_labels[key].setText(value)
                 self._metric_units[key].setText(unit)
             self.live_sensor_detail.setVisible(bool(live_mv) or adc_selected)
