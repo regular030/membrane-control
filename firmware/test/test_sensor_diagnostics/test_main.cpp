@@ -1,5 +1,6 @@
 #include <unity.h>
 #include "Hardware.h"
+#include "LabRigAds1115Profile.h"
 
 using namespace basu;
 
@@ -456,6 +457,38 @@ void test_ads_zero_tolerance_preserves_certificate_and_80_psi_crossing() {
   TEST_ASSERT_EQUAL_DOUBLE(5, calibratedReading(config.pumpFeedback, 1, 100).value);
 }
 
+void test_lab_profile_reads_pressure_on_A3_with_calibration_and_cutoff_unchanged() {
+  const auto config = compiledBoardConfig();
+  TEST_ASSERT_NULL(validateBoardConfig(config));
+  TEST_ASSERT_EQUAL(3, config.pressure.adsChannel);
+  TEST_ASSERT_EQUAL(1, config.flow.adsChannel);
+  TEST_ASSERT_EQUAL(2, config.pumpFeedback.adsChannel);
+  TEST_ASSERT_EQUAL_DOUBLE(80, config.pressureLimitPsi);
+  TEST_ASSERT_DOUBLE_WITHIN(0.00000001, 0, calibratedReading(config.pressure, 0.001, 100).value);
+  TEST_ASSERT_DOUBLE_WITHIN(0.00000001, 80, calibratedReading(config.pressure, 0.80084, 100).value);
+  TEST_ASSERT_DOUBLE_WITHIN(0.00000001, 100, calibratedReading(config.pressure, 1.0008, 100).value);
+  TEST_ASSERT_TRUE(calibratedReading(config.pressure, 6406 * 0.000125, 100).value < config.pressureLimitPsi);
+  TEST_ASSERT_TRUE(calibratedReading(config.pressure, 6407 * 0.000125, 100).value > config.pressureLimitPsi);
+
+  Wire.adsAddress = 0x48;
+  Wire.adsConversions[0] = 24000;  // An unrelated high A0 must never become pressure.
+  Wire.adsConversions[1] = 4000;   // A1 = 0.5 V = 50 mL/min.
+  Wire.adsConversions[2] = 8000;   // A2 = 1 V = 5 V drive feedback.
+  Wire.adsConversions[3] = 6407;   // A3 is just above the 80 psi threshold.
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  for (uint32_t now = 100; now <= 230; now += 10) hardware.sample(now);
+  TEST_ASSERT_TRUE(hardware.measurements().pressure.valid);
+  TEST_ASSERT_TRUE(hardware.measurements().pressure.value > 80);
+  const auto rawPressure = hardware.pressureAdcVolts(230);
+  TEST_ASSERT_TRUE(rawPressure.has_value());
+  TEST_ASSERT_DOUBLE_WITHIN(0.00000001, 6407 * 0.000125, *rawPressure);
+  TEST_ASSERT_EQUAL_DOUBLE(50, hardware.measurements().flow.value);
+  TEST_ASSERT_EQUAL_DOUBLE(5, hardware.measurements().pumpFeedback.value);
+  for (const auto& bytes : Wire.writes)
+    if (bytes.size() == 3 && bytes[0] == 1) TEST_ASSERT_FALSE(bytes[1] == 0xC3);
+}
+
 void test_ads_zero_tolerance_is_explicit_bounded_and_cannot_change_native_inputs() {
   const auto configured = adsZeroFixture().pressure;
   auto input = configured;
@@ -708,6 +741,7 @@ int main() {
   RUN_TEST(test_native_low_attenuation_validation_does_not_change_ads);
   RUN_TEST(test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivity);
   RUN_TEST(test_ads_zero_tolerance_preserves_certificate_and_80_psi_crossing);
+  RUN_TEST(test_lab_profile_reads_pressure_on_A3_with_calibration_and_cutoff_unchanged);
   RUN_TEST(test_ads_zero_tolerance_is_explicit_bounded_and_cannot_change_native_inputs);
   RUN_TEST(test_ads_signed_raw_values_survive_zero_handling_and_expire);
   RUN_TEST(test_ads_zero_handling_never_preserves_values_after_read_failure_or_timeout);

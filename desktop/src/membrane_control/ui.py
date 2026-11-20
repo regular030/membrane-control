@@ -716,7 +716,7 @@ class MainWindow(QMainWindow):
         self.adc_detail.setAccessibleName("External sensor board connection status")
         adc_form.addRow(self.adc_detail)
         adc_form.addRow(_label(
-            "Only use this connection with a separate USB sensor-only board. The full rig reads A0 pressure, A1 flow and A2 pump feedback through its controller connection above. This optional port does not connect automatically.",
+            "Only use this connection with a separate USB sensor-only board. The full rig reads A3 pressure, A1 flow and A2 pump feedback through its controller connection above. This optional port does not connect automatically.",
             "muted", True))
         layout.addWidget(adc_box)
         refresh = QHBoxLayout()
@@ -816,7 +816,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(modes)
         equipment = QGroupBox("When you are ready to connect the rig")
         equipment_layout = QVBoxLayout(equipment)
-        equipment_layout.addWidget(_label("Pair MembraneControl-Rig in Windows, then open Connections and settings. The app finds its outgoing Bluetooth port automatically and uses COM6 for the scale. All three sensors connect to the rig's ADS1115: A0 pressure, A1 flow and A2 pump feedback, with SDA GPIO22 and SCL GPIO21. The scale baud rate must match the setting on the scale.", "", True))
+        equipment_layout.addWidget(_label("Pair MembraneControl-Rig in Windows, then open Connections and settings. The app finds its outgoing Bluetooth port automatically and uses COM6 for the scale. All three sensors connect to the rig's ADS1115: A3 pressure, A1 flow and A2 pump feedback, with SDA GPIO22 and SCL GPIO21. The scale baud rate must match the setting on the scale.", "", True))
         equipment_layout.addWidget(_label("The Dashboard explains why Start run is unavailable and gives you the next action. ON and OFF are commands, not proof that equipment moved. Stop run is a software stop; use the lab's physical stop procedure in an emergency.", "", True))
         buttons = QHBoxLayout()
         buttons.addWidget(_button("Open connections", lambda: self.tabs.setCurrentIndex(2)))

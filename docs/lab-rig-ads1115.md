@@ -11,9 +11,10 @@ Classic serial (SPP), which Windows exposes as an outgoing COM port.
 | ADS1115 SCL | GPIO21, 25 kHz |
 | ADS1115 ADDR | GND, address 0x48 |
 | ADS1115 VDD / GND | ESP32 3V3 / common GND |
-| A0 | Pressure divider S |
+| A0 | Unused |
 | A1 | Flow divider S |
 | A2 | Pump feedback divider S, DB25 14/5 |
+| A3 | Pressure divider S (moved from A0) |
 | Divider negative terminals | Common ADC/ESP32/sensor return |
 | Relay data / clock / latch / OE | GPIO14 / 13 / 12 / 5 |
 | V1,V2,V3,V4,V5,V7 | Register bits 0,1,2,3,5,6; no V6 |
@@ -23,7 +24,7 @@ Classic serial (SPP), which Windows exposes as an outgoing COM port.
 The profile uses the reported 5:1 dividers and pressure certificate endpoints
 0 psi at 0.005 V and 100 psi at 5.004 V before division. Pressure is
 `(ADC volts - 0.001) * 500 / 4.999`. The 80 psi stop threshold corresponds to
-0.80084 V at A0. Very small ADS zero offsets are treated as zero engineering
+0.80084 V at A3. Very small ADS zero offsets are treated as zero engineering
 units within the explicitly configured 2 mV tolerance; the actual signed raw
 voltage is still reported. Missing, failed or stale conversions stay unavailable.
 

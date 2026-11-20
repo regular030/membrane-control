@@ -27,7 +27,7 @@ inline BoardConfig compiledBoardConfig() {
   config.pressureLimitPsi = 80;
 
   config.pressure.source = AnalogSource::Ads1115;
-  config.pressure.adsChannel = 0;
+  config.pressure.adsChannel = 3;
   config.pressure.calibrationVerified = true;
   // Certificate: 0 psi at 0.005 V and 100 psi at 5.004 V, before 5:1 division.
   config.pressure.unitsPerVolt = 500.0 / (5.004 - 0.005);
