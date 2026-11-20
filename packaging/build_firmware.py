@@ -26,6 +26,7 @@ PURPOSES = {
     "esp32-bluetooth-physical": "Normal Bluetooth controller and restore image; six manual valves, with pump/experiments requiring full configuration.",
     "esp32-pump-voltage-test": "USB 50% voltage test; holds all relay outputs off and reads raw GPIO39 feedback.",
     "esp32-pump-open-bucket-test": "USB 50% pump test for an isolated, primed open-bucket water path; closes only RUN for at most ten seconds and reads raw GPIO34 feedback.",
+    "esp32-ads1115-usb-monitor": "Separate USB sensor board: ADS1115 A0 pressure, A1 flow, A2 pump feedback; SDA GPIO22, SCL GPIO21; no relay or pump output control.",
 }
 TARGETS = tuple(PURPOSES)
 MODE_TARGETS = {
@@ -38,6 +39,7 @@ REQUIRED_SOURCES = (
     "firmware/native_compiler.py", "firmware/src/main.cpp", "firmware/src/relay_bench_main.cpp",
     "firmware/src/protected_spp.cpp", "firmware/include/ProtectedSpp.h",
     "firmware/src/pump_voltage_test_main.cpp", "firmware/include/PumpTach.h",
+    "firmware/src/ads1115_usb_monitor_main.cpp", "docs/ads1115-usb-monitor.md",
     "firmware/include/BoardProfile.h", "firmware/include/BoardConfig.h",
     "firmware/include/ManualValveConfig.h",
     "firmware/src/valve_test_main.cpp", "firmware/include/ValveTestCore.h",
@@ -82,11 +84,9 @@ def source_files(root: Path) -> dict[str, bytes]:
             continue
         name = archive_name(relative.as_posix())
         result[name] = checked_file(source, root / "firmware").read_bytes()
-    for name in REQUIRED_SOURCES:
-        if name not in result:
-            raise ValueError(f"Required firmware source is missing: {name}")
     for name in ("protocol/v1.md", "protocol/relay-bench.md", "docs/relay-board-test.md",
                  "protocol/valve-test.md", "docs/valve-test.md",
+                 "docs/ads1115-usb-monitor.md",
                  "docs/flow-sensor-troubleshooting.md",
                  "docs/normal-valves.md", "docs/scale-connection.md",
                  "docs/serial-recovery.md",
@@ -96,6 +96,9 @@ def source_files(root: Path) -> dict[str, bytes]:
         path = root / name
         if path.is_file():
             result[archive_name(name)] = checked_file(path, root).read_bytes()
+    for name in REQUIRED_SOURCES:
+        if name not in result:
+            raise ValueError(f"Required firmware source is missing: {name}")
     return result
 
 
@@ -237,6 +240,10 @@ Choose one target:
   50% for up to ten seconds while all valve commands stay off. Use it only
   with the primed, unrestricted water-to-open-bucket path in
   hardware/pump-interface.md. Open the app with --pump-open-bucket-test COM5.
+- esp32-ads1115-usb-monitor: separate ESP32 reading ADS1115 A0 pressure,
+  A1 flow and A2 pump feedback over USB. SDA is GPIO22 and SCL is GPIO21.
+  It emits sensor readings and a heartbeat without initializing relay or
+  pump outputs. Follow docs/ads1115-usb-monitor.md for wiring and connection.
 
 factory.bin contains the bootloader, partition table, boot_app0 and application,
 and is written at offset 0x0. Individual firmware.bin is only the application;

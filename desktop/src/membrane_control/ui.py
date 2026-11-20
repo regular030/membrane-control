@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 import pyqtgraph as pg
 
 from .models import MAX_STEPS, Recipe
+from .adc_display import adc_display_readings, adc_display_values, adc_monitor_selected
 from .connection_diagnostics import connection_diagnostics
 from .device_status import (
     MANUAL_VALVE_BITS, MANUAL_VALVE_IDS, checked_manual_pump_profile, checked_pressure_startup,
@@ -38,6 +39,7 @@ from .valve_test import ValveTestDialog
 
 
 LAB_BALANCE_PORT = "COM6"
+LAB_ADC_PORT = "COM5"
 
 METRICS = {
     "flow_ml_min": ("Flow", "mL/min", "flow"),
@@ -609,7 +611,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(18, 15, 18, 15)
-        layout.addWidget(_label("The app tries COM8 for the ESP32 and COM6 for the scale on startup. Use the controls below to reconnect or choose other ports.", "muted", True))
+        layout.addWidget(_label("The app connects to the rig on outgoing Bluetooth COM9, the scale on COM6 and the sensor board on USB COM5 at startup. Use the controls below to reconnect or choose other ports.", "muted", True))
         devices = QHBoxLayout()
         controller_box = QGroupBox("ESP32 controller")
         cform = QFormLayout(controller_box)
@@ -686,6 +688,25 @@ class MainWindow(QMainWindow):
         bform.addRow(self.balance_port_hint)
         devices.addWidget(balance_box)
         layout.addLayout(devices)
+        adc_box = QGroupBox("External sensor board · ADS1115")
+        adc_form = QFormLayout(adc_box)
+        self.adc_port = QComboBox()
+        self.adc_port.setAccessibleName("External sensor board serial port")
+        adc_form.addRow("USB serial port", self.adc_port)
+        adc_buttons = QHBoxLayout()
+        self.adc_connect = _button("Connect sensors", self._connect_adc_monitor)
+        self.adc_disconnect = _button("Disconnect sensors", lambda: self._action(
+            self.controller.disconnect_adc_monitor, "Sensor board disconnected"))
+        adc_buttons.addWidget(self.adc_connect)
+        adc_buttons.addWidget(self.adc_disconnect)
+        adc_form.addRow(adc_buttons)
+        self.adc_detail = _label("Sensor board not connected", "muted", True)
+        self.adc_detail.setAccessibleName("External sensor board connection status")
+        adc_form.addRow(self.adc_detail)
+        adc_form.addRow(_label(
+            "A0 pressure · A1 flow · A2 pump feedback. SDA GPIO22, SCL GPIO21; all divider − terminals share ADC and ESP32 GND. Dashboard estimates use the certificates and 5:1 dividers.",
+            "muted", True))
+        layout.addWidget(adc_box)
         refresh = QHBoxLayout()
         refresh.addWidget(_button("Refresh serial ports", self._refresh_ports))
         refresh.addStretch()
@@ -783,7 +804,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(modes)
         equipment = QGroupBox("When you are ready to connect the rig")
         equipment_layout = QVBoxLayout(equipment)
-        equipment_layout.addWidget(_label("Ask the lab maintainer to finish and check the controller setup first. Then open Connections and settings and connect the ESP32 and scale. The default lab ports are COM8 for the ESP32 and COM6 for the scale. The scale baud rate must match the setting on the scale.", "", True))
+        equipment_layout.addWidget(_label("Open Connections and settings to connect the rig controller, scale and external sensor board. The lab ports are outgoing Bluetooth COM9 for the rig, COM6 for the scale and USB COM5 for the ADC board. The scale baud rate must match the setting on the scale.", "", True))
         equipment_layout.addWidget(_label("The Dashboard explains why Start run is unavailable and gives you the next action. ON and OFF are commands, not proof that equipment moved. Stop run is a software stop; use the lab's physical stop procedure in an emergency.", "", True))
         buttons = QHBoxLayout()
         buttons.addWidget(_button("Open connections", lambda: self.tabs.setCurrentIndex(2)))
@@ -1160,7 +1181,7 @@ class MainWindow(QMainWindow):
             previous_controller_default = self.controller.preferred_controller_port
             ports = self.controller.list_ports()
             for combo, preferred in ((self.controller_port, self.controller.preferred_controller_port),
-                                     (self.balance_port, LAB_BALANCE_PORT)):
+                                     (self.balance_port, LAB_BALANCE_PORT), (self.adc_port, LAB_ADC_PORT)):
                 previous = combo.currentData()
                 if combo is self.controller_port and previous == previous_controller_default:
                     previous = preferred
@@ -1187,6 +1208,16 @@ class MainWindow(QMainWindow):
             self._connect_controller(show_dialog=False)
         if self.balance_port.currentData() == LAB_BALANCE_PORT:
             self._connect_balance(show_dialog=False)
+        if self.adc_port.currentData() == LAB_ADC_PORT:
+            self._connect_adc_monitor(show_dialog=False)
+
+    def _connect_adc_monitor(self, *, show_dialog=True):
+        port = self.adc_port.currentData()
+        if port:
+            self._action(lambda: self.controller.connect_adc_monitor(port), "Sensor board connection requested",
+                         show_dialog=show_dialog)
+        else:
+            self.statusBar().showMessage("Select the sensor board USB port first", 6000)
 
     def _connect_controller(self, *, show_dialog=True):
         port = self.controller_port.currentData()
@@ -1221,6 +1252,10 @@ class MainWindow(QMainWindow):
 
     def _open_sensor_setup(self):
         if self._shutdown_started:
+            return
+        if adc_monitor_selected(self.controller.snapshot) and not self.controller.simulation:
+            self.tabs.setCurrentIndex(self.connections_tab_index)
+            self.adc_port.setFocus()
             return
         if self._sensor_setup_dialog is None:
             self._sensor_setup_dialog = SensorSetupDialog(self.controller, self)
@@ -1842,7 +1877,36 @@ class MainWindow(QMainWindow):
             sensor_zero = sensor_setup.zero_baselines() if sensor_setup is not None else snap.get("live_sensor_zero", {})
             adc_fresh = connected and fresh and not simulation
             sensor_inputs = snap.get("sensor_inputs", {})
+            adc_selected = not desktop_simulation and adc_monitor_selected(snap)
+            external_readings = adc_display_readings(snap) if adc_selected else {}
+            display_values = adc_display_values(snap, self.controller.settings["membrane_area_m2"]) if adc_selected else {}
+            monitor = snap.get("adc_monitor", {})
+            self.adc_detail.setText(str(monitor.get("status") or "Sensor board not connected"))
+            self.adc_connect.setEnabled(not desktop_simulation)
+            self.adc_disconnect.setEnabled(not desktop_simulation and bool(monitor.get("opened") or monitor.get("connected")))
+            self.sensor_setup_button.setText("Sensor connections" if adc_selected else "Sensor setup")
+            self.connections_sensor_setup_button.setText("Sensor connections" if adc_selected else "Sensor setup")
             for key, (_, unit, channel) in METRICS.items():
+                if adc_selected and key in display_values:
+                    value = _number(display_values[key], 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
+                    if channel:
+                        reading = external_readings[channel]
+                        volts = reading["volts"]
+                        if reading["value"] is not None:
+                            value = "≈" + value
+                            unit = f"{unit} · {volts:.4f} V at ADS1115 {reading['channel']} · {reading['note']}"
+                        elif volts is not None:
+                            value = _number(volts, 4)
+                            unit = f"V at ADS1115 {reading['channel']} · {reading['note']}"
+                        else:
+                            unit = f"{unit} · {reading['note']}"
+                    else:
+                        if display_values[key] is not None:
+                            value = "≈" + value
+                        unit += " · from external flow estimate"
+                    self._metric_labels[key].setText(value)
+                    self._metric_units[key].setText(unit)
+                    continue
                 value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
                 raw = live_mv.get(channel)
                 pin_mv = snap.get(f"{channel}_adc_mv") if adc_fresh and channel else None
@@ -1872,11 +1936,20 @@ class MainWindow(QMainWindow):
                         unit += " · observed zero saved"
                 self._metric_labels[key].setText(value)
                 self._metric_units[key].setText(unit)
-            self.live_sensor_detail.setVisible(bool(live_mv))
-            self.live_sensor_zero_controls.setVisible(bool(live_mv))
+            self.live_sensor_detail.setVisible(bool(live_mv) or adc_selected)
+            self.live_sensor_zero_controls.setVisible(bool(live_mv) and not adc_selected)
             self.zero_live_sensors_button.setEnabled(bool(live_mv) and not operating and not fault and state == "idle")
             self.clear_live_sensor_zero_button.setEnabled(any(key in sensor_zero for key in ("pressure", "flow")))
-            if live_mv:
+            if adc_selected:
+                details = []
+                for channel, reading in external_readings.items():
+                    volts = reading["volts"]
+                    details.append(f"{reading['channel']} {channel.replace('_', ' ')} "
+                                   + (f"{volts:.4f} V" if volts is not None else "Waiting"))
+                self.live_sensor_detail.setText(
+                    f"External ADC {monitor.get('port') or ''} · " + " · ".join(details)
+                    + f"\n{monitor.get('status') or 'Waiting for sensor board'}. Engineering values are display estimates.")
+            elif live_mv:
                 pressure, flow, feedback = (live_mv[key] for key in ("pressure", "flow", "pump_feedback"))
                 uptime_ms = self.controller.last_controller_uptime
                 sample = f" · ESP32 sample at {uptime_ms / 1000:.2f} s" if uptime_ms is not None else ""
@@ -1943,7 +2016,7 @@ class MainWindow(QMainWindow):
                 self._plot_time.append(now - self._plot_start)
                 for key, points in self._plot_data.items():
                     try:
-                        value = float(snap.get(key))
+                        value = float(display_values.get(key) if key in display_values else snap.get(key))
                     except (TypeError, ValueError):
                         value = float("nan")
                     points.append(value)

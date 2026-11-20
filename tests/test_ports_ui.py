@@ -107,21 +107,21 @@ def test_startup_connects_only_detected_lab_defaults(ports_screen, monkeypatch):
     monkeypatch.setattr(controller, 'connect_controller', lambda port: calls.append(('ESP32', port)))
     monkeypatch.setattr(controller, 'connect_balance',
                         lambda port, baud, **options: calls.append(('scale', port, baud, options)))
-    ports.extend([('COM6', 'Scale adapter'), ('COM8', 'ESP32 Bluetooth')])
+    ports.extend([('COM6', 'Scale adapter'), ('COM9', 'ESP32 Bluetooth')])
     window._refresh_ports()
     window.connect_lab_defaults()
     assert calls == []  # Demo never opens hardware ports.
 
     controller.set_simulation(False)
     window.connect_lab_defaults()
-    assert calls == [('ESP32', 'COM8'), ('scale', 'COM6', 9600,
+    assert calls == [('ESP32', 'COM9'), ('scale', 'COM6', 9600,
                                         {'serial_format': '8N1', 'polling': True})]
 
     calls.clear()
     ports.remove(('COM6', 'Scale adapter'))
     window._refresh_ports()
     window.connect_lab_defaults()
-    assert calls == [('ESP32', 'COM8')]
+    assert calls == [('ESP32', 'COM9')]
 
 
 def test_startup_follows_outgoing_membrane_controller_after_windows_renumbers_ports(

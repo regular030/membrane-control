@@ -36,22 +36,22 @@ def screen(qt_app, tmp_path):
 
 def test_hardware_launch_preselects_lab_ports_and_preserves_manual_selections(qt_app, tmp_path):
     controller = AppController(tmp_path, simulation=False)
-    ports = [("COM4", "Other adapter"), ("COM6", "Balance"), ("COM8", "ESP32")]
+    ports = [("COM4", "Other adapter"), ("COM6", "Balance"), ("COM9", "ESP32")]
     controller.list_ports = lambda: ports
     window = MainWindow(controller)
     try:
         assert controller.driver is None and controller.balance is None
         assert not controller.snapshot["simulation"]
-        assert window.controller_port.currentData() == "COM8"
+        assert window.controller_port.currentData() == "COM9"
         assert window.balance_port.currentData() == "COM6"
 
         window.controller_port.setCurrentIndex(window.controller_port.findData("COM4"))
         window._refresh_ports()
         assert window.controller_port.currentData() == "COM4"
 
-        ports[:] = [("COM8", "ESP32")]
+        ports[:] = [("COM9", "ESP32")]
         window._refresh_ports()
-        assert window.controller_port.currentData() == "COM8"
+        assert window.controller_port.currentData() == "COM9"
         assert window.balance_port.currentData() is None
     finally:
         window.close()

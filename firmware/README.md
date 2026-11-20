@@ -6,6 +6,14 @@ relay GPIO, sensor GPIO or I2C. Measurements are explicitly simulated and every
 hello/telemetry message reports `simulation: true` and `hardware_verified: false`.
 Nothing in this repository establishes that the physical rig is commissioned.
 
+## Separate ADS1115 USB sensor board
+
+Use `esp32-ads1115-usb-monitor` for the second ESP32 attached to the ADS1115.
+It reads A0 pressure, A1 flow and A2 pump feedback, with SDA on GPIO22 and SCL
+on GPIO21, and sends voltages plus a heartbeat over USB at 115200 baud. Only
+the serial and I2C interfaces initialize. This target is included in the
+firmware release archive; see the [wiring and connection guide](../docs/ads1115-usb-monitor.md).
+
 ## Normal manual control of the six confirmed valves
 
 Full-controller firmware **0.1.16**, target **esp32-physical**, supports the

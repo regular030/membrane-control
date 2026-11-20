@@ -9,6 +9,8 @@ from pathlib import Path
 import time
 
 from .balance import MassFlow, parse_mass
+from .ads1115_monitor import Ads1115Monitor
+from .adc_display import adc_display_values, adc_monitor_selected
 from .device_status import (
     MANUAL_VALVE_IDS, SENSOR_KEYS, checked_controller_diagnostics, checked_manual_pump_profile,
     checked_pressure_startup, checked_sensor_status, checked_valve_control,
@@ -23,7 +25,8 @@ DEFAULT_SETTINGS = {"membrane_area_m2": 0.01, "density_g_ml": 1.0,
                     "record_interval_s": 1.0, "require_balance": False,
                     "max_pressure_psi": 20.0}
 REQUEST_TIMEOUT_S = 3.0
-LAB_CONTROLLER_FALLBACK_PORT = "COM8"
+LAB_CONTROLLER_FALLBACK_PORT = "COM9"
+LAB_ADC_MONITOR_PORT = "COM5"
 LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF50204E"
 WINDOWS_SPP_ID_PREFIX = "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_"
 EMPTY_PUMP_MOTION = {"pump_rpm": None, "pump_tach_status": None, "pump_run_contact_commanded": None}
@@ -82,6 +85,7 @@ class AppController:
         self.recipe = copy.deepcopy(next(iter(self.presets.values())))
         self.driver = None
         self.balance = None
+        self.adc_monitor = Ads1115Monitor(clock=self.clock)
         self.preferred_controller_port = LAB_CONTROLLER_FALLBACK_PORT
         self.balance_polling = False
         self.balance_port_open = False
@@ -118,6 +122,7 @@ class AppController:
             "manual_pump_profile": None, "pressure_startup": None,
             **EMPTY_ADC_VOLTAGES,
             "live_sensor_voltages": {}, "live_sensor_zero": {},
+            "adc_monitor": self.adc_monitor.snapshot(),
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
             "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
@@ -248,6 +253,7 @@ class AppController:
             raise ValueError("Stop before switching connection modes")
         self.disconnect_controller()
         self.disconnect_balance()
+        self.disconnect_adc_monitor()
         self.simulation = bool(enabled)
         self.snapshot["simulation"] = self.simulation
         self.local_fault = None
@@ -291,6 +297,8 @@ class AppController:
             raise ValueError("Stop before reconnecting")
         if self.balance is not None and self.balance.port == port:
             raise ValueError("Controller and balance need different ports")
+        if self._adc_port_matches(port):
+            raise ValueError("Controller and ADC sensor board need different ports")
         self.disconnect_controller()
         self._esp32_port = port
         self._esp32_connection_id += 1
@@ -374,6 +382,8 @@ class AppController:
         port = port.strip()
         if self.driver is not None and self.driver.port == port:
             raise ValueError("Balance and controller need different ports")
+        if self._adc_port_matches(port):
+            raise ValueError("Balance and ADC sensor board need different ports")
         self.disconnect_balance()
         options = {"raw": True}
         # The lab Nimbus responds on COM6 with DTR inactive. Asserting DTR
@@ -387,6 +397,52 @@ class AppController:
         self.snapshot["balance_polling"] = polling
         self.snapshot["balance_status"] = "Waiting for a weight reading"
         self._log(f"Opening balance {port} at {baud} baud, {serial_format}")
+
+    def _adc_port_matches(self, port):
+        adc_port = self.adc_monitor.snapshot().get("port")
+        return (self.adc_monitor.transport is not None
+                and isinstance(port, str) and isinstance(adc_port, str)
+                and port.strip().casefold() == adc_port.strip().casefold())
+
+    def connect_adc_monitor(self, port=LAB_ADC_MONITOR_PORT):
+        if self.closed:
+            raise ValueError("The application is closed")
+        if self.simulation:
+            raise ValueError("Use hardware mode to connect the ADC sensor board")
+        if not isinstance(port, str) or not port.strip():
+            raise ValueError("Choose the ADC sensor board serial port")
+        port = port.strip()
+        for device in (self.driver, self.balance):
+            other_port = getattr(device, "port", None)
+            if isinstance(other_port, str) and port.casefold() == other_port.casefold():
+                raise ValueError("The ADC sensor board needs its own serial port")
+        self.disconnect_adc_monitor()
+        try:
+            if not self.adc_monitor.connect(port):
+                raise RuntimeError(self.adc_monitor.snapshot().get("status") or "Sensor board connection failed")
+        finally:
+            self.snapshot["adc_monitor"] = self.adc_monitor.snapshot()
+        self._log(f"Opening ADC sensor board {port}")
+
+    def disconnect_adc_monitor(self):
+        try:
+            self.adc_monitor.disconnect()
+        finally:
+            if hasattr(self, "snapshot"):
+                self.snapshot["adc_monitor"] = self.adc_monitor.snapshot()
+
+    def _poll_adc_monitor(self):
+        try:
+            self.adc_monitor.tick()
+        except Exception as error:
+            # This independent acquisition stream cannot affect the rig's
+            # command session or replace its pressure protection input.
+            self._log("ADC sensor board error: " + str(error))
+            try:
+                self.adc_monitor.disconnect()
+            except Exception as close_error:
+                self._log("ADC sensor board close failed: " + str(close_error))
+        self.snapshot["adc_monitor"] = self.adc_monitor.snapshot()
 
     def request_balance_reading(self):
         """Return True if queued, False if throttled; never tare or configure it."""
@@ -648,7 +704,18 @@ class AppController:
                 if sample["_sample_sequence"] > sequence]
 
     def _record_sample(self):
-        record = self.store.sample(self.run_id, self.snapshot)
+        recorded = dict(self.snapshot)
+        if not self.simulation and adc_monitor_selected(self.snapshot):
+            recorded["controller_readings"] = {key: self.snapshot.get(key) for key in
+                ("pressure_psi", "flow_ml_min", "pump_feedback_v", "flux_lmh")}
+            recorded.update(adc_display_values(self.snapshot, self.settings["membrane_area_m2"]))
+            recorded["sensor_source"] = "ads1115_usb"
+            recorded["sensor_estimated"] = True
+            for channel, key in (("A0", "pressure_adc_v"), ("A1", "flow_adc_v"),
+                                 ("A2", "pump_feedback_adc_v")):
+                reading = self.snapshot["adc_monitor"].get("channels", {}).get(channel, {})
+                recorded[key] = reading.get("volts") if self.snapshot["adc_monitor"].get("fresh") else None
+        record = self.store.sample(self.run_id, recorded)
         self._sample_sequence += 1
         record["_sample_sequence"] = self._sample_sequence
         self._recorded_samples.append(record)
@@ -1016,6 +1083,7 @@ class AppController:
         if self.closed:
             return
         now = self.clock()
+        self._poll_adc_monitor()
         if self.driver is not None and not self.device and self.connect_started is not None and now-self.connect_started < 8 and now-self.last_hello >= 1:
             try:
                 self._request("hello")
@@ -1141,7 +1209,8 @@ class AppController:
         try:
             for name, action in (("stop", self.stop_run),
                                  ("controller disconnect", self.disconnect_controller),
-                                 ("balance disconnect", self.disconnect_balance)):
+                                 ("balance disconnect", self.disconnect_balance),
+                                 ("ADC sensor board disconnect", self.disconnect_adc_monitor)):
                 try:
                     action()
                 except Exception as error:

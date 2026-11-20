@@ -20,6 +20,7 @@ SPEC.loader.exec_module(builder)
 EXPECTED_TARGETS = {
     "esp32-dry-run", "esp32-relay-bench", "esp32-valve-test", "esp32-physical",
     "esp32-bluetooth-physical", "esp32-pump-voltage-test", "esp32-pump-open-bucket-test",
+    "esp32-ads1115-usb-monitor",
 }
 
 
@@ -115,6 +116,8 @@ def test_complete_bundle_uses_metadata_addresses_and_matches_every_hash(bundle_p
         assert "firmware/native_compiler.py" in names
         assert "firmware/src/protected_spp.cpp" in names
         assert "firmware/src/pump_voltage_test_main.cpp" in names
+        assert "firmware/src/ads1115_usb_monitor_main.cpp" in names
+        assert "docs/ads1115-usb-monitor.md" in names
         assert not any(".pio" in name or "credentials" in name or ".env" in name for name in names)
         assert all(b"DO NOT SHIP CREDENTIALS" not in archive.read(name) for name in names)
         manifest = json.loads(archive.read("manifest.json"))
@@ -188,6 +191,9 @@ def test_rejects_mismatched_or_unsafe_build_metadata(bundle_project, mutation, e
     ("esp32-pump-open-bucket-test", "BASU_PUMP_OPEN_BUCKET_TEST=1", None),
     ("esp32-pump-open-bucket-test", "BASU_PUMP_OPEN_BUCKET_TEST=1", "BASU_PUMP_OPEN_BUCKET_TEST=0"),
     ("esp32-pump-voltage-test", None, "BASU_PUMP_OPEN_BUCKET_TEST=1"),
+    ("esp32-ads1115-usb-monitor", None, "BASU_BLUETOOTH_PHYSICAL=1"),
+    ("esp32-ads1115-usb-monitor", None, "BASU_BLUETOOTH_DRY_RUN=1"),
+    ("esp32-ads1115-usb-monitor", None, "BASU_PUMP_OPEN_BUCKET_TEST=1"),
 ])
 def test_rejects_binary_with_wrong_mode_for_its_archive_label(bundle_project, target, flag, value):
     _, metadata, _, _ = bundle_project
@@ -218,6 +224,16 @@ def test_local_commissioning_profile_is_not_in_factory_source_bundle(bundle_proj
     root, _, _, _ = bundle_project
     sources = builder.source_files(root)
     assert 'firmware/include/ValveTestProfile.local.h' not in sources
+
+
+@pytest.mark.parametrize("name", [
+    "firmware/src/ads1115_usb_monitor_main.cpp", "docs/ads1115-usb-monitor.md",
+])
+def test_adc_monitor_bundle_requires_source_and_wiring_guide(bundle_project, name):
+    root, _, _, _ = bundle_project
+    (root / name).unlink()
+    with pytest.raises(ValueError, match="Required firmware source is missing"):
+        builder.source_files(root)
 
 
 def test_rejects_merge_corruption(bundle_project, monkeypatch):

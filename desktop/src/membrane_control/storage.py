@@ -45,7 +45,9 @@ class RunStore:
         fields = {k: snapshot.get(k) for k in (
             "elapsed_s", "simulation", "state", "step_index", "cycle", "pressure_psi",
             "flow_ml_min", "desired_flow_ml_min", "balance_flow_ml_min", "flux_lmh", "mass_g", "pump_percent", "pump_feedback_v",
-            "valves", "fault", "controller_status", "balance_status", "step_name")}
+            "valves", "fault", "controller_status", "balance_status", "step_name",
+            "adc_monitor", "controller_readings", "sensor_source", "sensor_estimated",
+            "pressure_adc_v", "flow_adc_v", "pump_feedback_adc_v")}
         payload = json.dumps(fields, allow_nan=False)
         timestamp = utc_now()
         with self.connection:
@@ -81,7 +83,8 @@ class RunStore:
         path = Path(path)
         fields = ["time_utc", "elapsed_s", "simulation", "state", "step_index", "cycle", "pressure_psi",
                   "flow_ml_min", "desired_flow_ml_min", "balance_flow_ml_min", "flux_lmh", "mass_g", "pump_percent", "pump_feedback_v", "valves", "fault",
-                  "controller_status", "balance_status", "step_name"]
+                  "controller_status", "balance_status", "step_name",
+                  "sensor_source", "sensor_estimated", "pressure_adc_v", "flow_adc_v", "pump_feedback_adc_v"]
         with path.open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()

@@ -6,6 +6,7 @@ No status here treats a relay command as physical valve or pump feedback.
 from __future__ import annotations
 
 import math
+from .adc_display import adc_display_readings, adc_monitor_selected
 
 SENSOR_KEYS = ("pressure", "flow", "pump_feedback")
 SENSOR_STATUS_CODES = frozenset(("simulated", "not_configured", "profile_locked",
@@ -175,7 +176,17 @@ def device_statuses(snapshot: dict, desktop_simulation: bool) -> list[dict[str, 
     for key, label, field in (("pressure", "Pressure sensor", "pressure_psi"),
                               ("flow", "Flow sensor", "flow_ml_min"),
                               ("pump_feedback", "Pump voltage feedback", "pump_feedback_v")):
-        if dry_run:
+        if adc_monitor_selected(snapshot):
+            reading = adc_display_readings(snapshot)[key]
+            volts = reading["volts"]
+            monitor = snapshot["adc_monitor"]
+            if volts is not None:
+                add(key, label, "External ADC reading" if reading["value"] is not None else "Check input voltage",
+                    f"{volts:.4f} V at ADS1115 {reading['channel']} on {monitor.get('port')}. {reading['note']}.",
+                    "success" if reading["value"] is not None else "warning")
+            else:
+                add(key, label, "Waiting for external ADC", reading["note"], "warning")
+        elif dry_run:
             add(key, label, "Simulated", "The connected ESP32 is running dry-run firmware. This is a generated reading.", "warning")
         elif connected and _reading(snapshot.get(field)):
             add(key, label, "Reading received", "A valid reading is arriving from the controller. Wiring and calibration still need verification.", "success")

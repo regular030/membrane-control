@@ -45,6 +45,22 @@ range and 128 SPS single-shot conversions, with a bounded completion wait.
 Signed conversion counts use 0.000125 volts per count, as specified in the
 [TI ADS1115 datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf).
 
-This target has its own sensor-only protocol. The existing Membrane Control
-dashboard connects to one rig controller; it does not automatically merge a
-second USB board's readings into the original COM9 controller connection.
+The updated Membrane Control dashboard opens three independent connections at
+startup: the rig's outgoing Bluetooth COM9, the scale on COM6 and this sensor
+board on USB COM5. Use **Connections and settings > External sensor board** to
+choose another USB port or reconnect. The board must identify itself as
+`membrane-ads1115-monitor` before the app accepts measurements.
+
+The dashboard shows pressure in psi from the supplied certificate, flow in
+mL/min using 100 mL/min per ADC volt, and pump drive feedback in volts using
+the 5:1 divider. These are marked as estimates. The actual signed ADC voltage
+and A0/A1/A2 labels remain visible beside the engineering values. Small negative
+ADC offsets near zero display as approximately zero while preserving raw volts;
+a larger negative voltage displays directly with a ground-check note.
+
+The graphs and run records use this selected source. Recorded readings include
+its identity/status, raw voltages, estimate flag and the original controller
+measurements. CSV exports append the raw ADC voltages and source/estimate labels.
+Missing, failed or stale readings clear within two seconds instead of falling
+back to the relay board's sensor inputs. This independent measurement connection
+does not change the rig firmware's output permissions or pressure protection.
