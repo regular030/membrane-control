@@ -132,6 +132,81 @@ void restartAfterPairingMessage(const char* message) {
 }
 
 void handleUsbPairingLine(const char* command, std::size_t length) {
+#ifdef BASU_ADS1115_USB_SCAN
+  const bool scan = length == 7 && std::memcmp(command, "I2CSCAN", 7) == 0;
+  const bool slowScan = length == 7 && std::memcmp(command, "I2CSLOW", 7) == 0;
+  const bool fullScan = length == 7 && std::memcmp(command, "I2CFULL", 7) == 0;
+  if (scan || slowScan || fullScan) {
+    if (pairingOnlyBoot || !hardware.sensorMonitoringOnly() || controller.active() ||
+        std::strcmp(hardware.error(), "i2c_initialization_failed") == 0) {
+      Serial.printf("I2C scan unavailable: %s\n", hardware.error());
+      return;
+    }
+    const uint32_t originalClock = Wire.getClock();
+    if (fullScan) {
+      for (const uint32_t clock : {25000UL, 10000UL}) {
+        if (!Wire.setClock(clock)) {
+          Serial.printf("I2C scan could not set %lu Hz\n", static_cast<unsigned long>(clock));
+          continue;
+        }
+        Serial.printf("I2C full scan SDA IO%d, SCL IO%d at %lu Hz; line levels %d/%d\n",
+                      board.i2cSdaPin, board.i2cSclPin, static_cast<unsigned long>(Wire.getClock()),
+                      digitalRead(board.i2cSdaPin), digitalRead(board.i2cSclPin));
+        unsigned ack = 0, nack = 0, timeout = 0, errors = 0;
+        for (uint8_t address = 0x08; address <= 0x77; ++address) {
+          Wire.beginTransmission(address);
+          const unsigned result = Wire.endTransmission();
+          switch (result) {
+            case 0:
+              ++ack;
+              Serial.printf("0x%02X: ACK\n", static_cast<unsigned>(address));
+              break;
+            case 2: ++nack; break;
+            case 5: ++timeout; break;
+            default: ++errors; break;
+          }
+          delay(1);
+        }
+        Serial.printf("I2C scan summary at %lu Hz: %u ACK, %u NACK, %u timeout, %u other errors\n",
+                      static_cast<unsigned long>(Wire.getClock()), ack, nack, timeout, errors);
+      }
+      if (!Wire.setClock(originalClock)) Serial.println("I2C scan: could not restore clock");
+      Serial.println("I2C scan complete");
+      return;
+    }
+    if (slowScan && !Wire.setClock(25000)) {
+      Serial.println("I2C scan unavailable: could not set 25 kHz");
+      return;
+    }
+    Serial.printf("I2C scan SDA IO%d, SCL IO%d at %lu Hz; line levels %d/%d\n", board.i2cSdaPin, board.i2cSclPin,
+                  static_cast<unsigned long>(Wire.getClock()),
+                  digitalRead(board.i2cSdaPin), digitalRead(board.i2cSclPin));
+    for (uint8_t address = 0x48; address <= 0x4b; ++address) {
+      Wire.beginTransmission(address);
+      const unsigned result = Wire.endTransmission();
+      Serial.printf("0x%02X: %s (Wire %u)\n", address,
+                    result == 0 ? "ACK" : result == 2 ? "NACK" : result == 5 ? "timeout" : "error", result);
+      if (result != 0 && address != board.ads1115Address) continue;
+      Wire.beginTransmission(address);
+      Wire.write(static_cast<uint8_t>(1));  // ADS1115 configuration register.
+      const unsigned pointerResult = Wire.endTransmission();
+      if (pointerResult != 0) {
+        Serial.printf("ADS1115 0x%02X config pointer write failed (Wire %u)\n", address, pointerResult);
+        continue;
+      }
+      if (Wire.requestFrom(address, static_cast<uint8_t>(2)) != 2) {
+        Serial.printf("ADS1115 0x%02X config read failed\n", address);
+        continue;
+      }
+      const int high = Wire.read();
+      const int low = Wire.read();
+      if (high >= 0 && low >= 0) Serial.printf("ADS1115 config: 0x%04X\n", (high << 8) | low);
+    }
+    if (slowScan && !Wire.setClock(originalClock)) Serial.println("I2C scan: could not restore clock");
+    Serial.println("I2C scan complete");
+    return;
+  }
+#endif
   if (length == 4 && std::memcmp(command, "PAIR", 4) == 0 && !pairingOnlyBoot) {
     if (controller.state() != basu::State::Idle && controller.state() != basu::State::Fault) {
       Serial.println("Bluetooth: stop the controller before USB pairing");
@@ -272,6 +347,10 @@ void reply(uint32_t id, const char* error = nullptr, bool hello = false,
     document["controller_mode"] = kSimulation ? "dry_run" : "physical";
 #ifdef BASU_BLUETOOTH_PHYSICAL
     document["transport"] = "bluetooth_spp";
+    document["bluetooth_name"] = BASU_BLUETOOTH_DEVICE_NAME;
+#ifdef BASU_LAB_RIG_ADS1115
+    document["profile_id"] = "lab_rig_ads1115";
+#endif
 #endif
     if (kSimulation || hardware.ready()) document["hardware_status"] = nullptr;
     else document["hardware_status"] = std::string(hardware.error()).substr(0, 160);
@@ -484,6 +563,9 @@ void writeTelemetry(uint32_t now) {
     else document[name] = nullptr;
   };
   addReading("pressure_psi", controller.measurements().pressure);
+  if (const auto volts = hardware.pressureAdcVolts(now)) document["pressure_adc_v"] = *volts;
+  if (const auto volts = hardware.flowAdcVolts(now)) document["flow_adc_v"] = *volts;
+  if (const auto volts = hardware.pumpFeedbackAdcVolts(now)) document["pump_feedback_adc_v"] = *volts;
   if (const char* startup = controller.manualPressureStartupStatus(now)) document["pressure_startup"] = startup;
   if (controller.manualPressureStartupMs() || hardware.sensorMonitoringOnly()) {
     if (const auto millivolts = hardware.pressureAdcMillivolts(now)) document["pressure_adc_mv"] = *millivolts;
@@ -549,6 +631,7 @@ void setup() {
 #endif
 #ifdef BASU_BLUETOOTH_PHYSICAL
   if (pairingOnlyBoot) hardware.safeStop();
+  Serial.printf("Bluetooth controller name: %s\n", BASU_BLUETOOTH_DEVICE_NAME);
   if (const char* error = basu::protectedSpp::begin(pairingOnlyBoot)) {
     Serial.println(error);
     if (pairingOnlyBoot) restartAfterPairingMessage("Bluetooth: pairing failed; physical control locked");

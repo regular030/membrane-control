@@ -26,6 +26,7 @@ import pyqtgraph as pg
 
 from .models import MAX_STEPS, Recipe
 from .adc_display import adc_display_readings, adc_display_values, adc_monitor_selected
+from .bluetooth_pairing import BluetoothPairingWindow
 from .connection_diagnostics import connection_diagnostics
 from .device_status import (
     MANUAL_VALVE_BITS, MANUAL_VALVE_IDS, checked_manual_pump_profile, checked_pressure_startup,
@@ -172,6 +173,7 @@ class MainWindow(QMainWindow):
         self._pump_test_dialog = None
         self._balance_diagnostics_dialog = None
         self._sensor_setup_dialog = None
+        self._bluetooth_pairing_window = None
         self._shutdown_started = False
         self._updating = False
         self._last_log = ""
@@ -611,7 +613,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(18, 15, 18, 15)
-        layout.addWidget(_label("The app connects to the rig on outgoing Bluetooth COM9, the scale on COM6 and the sensor board on USB COM5 at startup. Use the controls below to reconnect or choose other ports.", "muted", True))
+        layout.addWidget(_label("The app finds the paired MembraneControl-Rig Bluetooth port and connects to the scale on COM6 at startup. The rig controller reads all three ADS1115 sensors. Windows assigns its Bluetooth COM number.", "muted", True))
         devices = QHBoxLayout()
         controller_box = QGroupBox("ESP32 controller")
         cform = QFormLayout(controller_box)
@@ -633,6 +635,9 @@ class MainWindow(QMainWindow):
         self.copy_connection_diagnostics_button = _button("Copy connection diagnostics", self._copy_connection_diagnostics)
         self.copy_connection_diagnostics_button.setToolTip("Copy the app version, COM port list, controller status and recent ESP32 events.")
         cform.addRow(self.copy_connection_diagnostics_button)
+        self.bluetooth_pair_button = _button("Pair MembraneControl-Rig over USB", self._open_bluetooth_pairing)
+        self.bluetooth_pair_button.setToolTip("Use the new rig's wired USB port to compare and confirm its Bluetooth code locally.")
+        cform.addRow(self.bluetooth_pair_button)
         self.sensor_test_button = _button("Read sensor inputs", self._read_sensor_inputs)
         self.connections_sensor_setup_button = _button("Sensor setup", self._open_sensor_setup)
         cform.addRow(self.connections_sensor_setup_button)
@@ -688,7 +693,7 @@ class MainWindow(QMainWindow):
         bform.addRow(self.balance_port_hint)
         devices.addWidget(balance_box)
         layout.addLayout(devices)
-        adc_box = QGroupBox("External sensor board · ADS1115")
+        adc_box = QGroupBox("Optional separate sensor board · manual connection")
         adc_form = QFormLayout(adc_box)
         self.adc_port = QComboBox()
         self.adc_port.setAccessibleName("External sensor board serial port")
@@ -704,7 +709,7 @@ class MainWindow(QMainWindow):
         self.adc_detail.setAccessibleName("External sensor board connection status")
         adc_form.addRow(self.adc_detail)
         adc_form.addRow(_label(
-            "A0 pressure · A1 flow · A2 pump feedback. SDA GPIO22, SCL GPIO21; all divider − terminals share ADC and ESP32 GND. Dashboard estimates use the certificates and 5:1 dividers.",
+            "Only use this connection with a separate USB sensor-only board. The full rig reads A0 pressure, A1 flow and A2 pump feedback through its controller connection above. This optional port does not connect automatically.",
             "muted", True))
         layout.addWidget(adc_box)
         refresh = QHBoxLayout()
@@ -804,7 +809,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(modes)
         equipment = QGroupBox("When you are ready to connect the rig")
         equipment_layout = QVBoxLayout(equipment)
-        equipment_layout.addWidget(_label("Open Connections and settings to connect the rig controller, scale and external sensor board. The lab ports are outgoing Bluetooth COM9 for the rig, COM6 for the scale and USB COM5 for the ADC board. The scale baud rate must match the setting on the scale.", "", True))
+        equipment_layout.addWidget(_label("Pair MembraneControl-Rig in Windows, then open Connections and settings. The app finds its outgoing Bluetooth port automatically and uses COM6 for the scale. All three sensors connect to the rig's ADS1115: A0 pressure, A1 flow and A2 pump feedback, with SDA GPIO22 and SCL GPIO21. The scale baud rate must match the setting on the scale.", "", True))
         equipment_layout.addWidget(_label("The Dashboard explains why Start run is unavailable and gives you the next action. ON and OFF are commands, not proof that equipment moved. Stop run is a software stop; use the lab's physical stop procedure in an emergency.", "", True))
         buttons = QHBoxLayout()
         buttons.addWidget(_button("Open connections", lambda: self.tabs.setCurrentIndex(2)))
@@ -1208,8 +1213,6 @@ class MainWindow(QMainWindow):
             self._connect_controller(show_dialog=False)
         if self.balance_port.currentData() == LAB_BALANCE_PORT:
             self._connect_balance(show_dialog=False)
-        if self.adc_port.currentData() == LAB_ADC_PORT:
-            self._connect_adc_monitor(show_dialog=False)
 
     def _connect_adc_monitor(self, *, show_dialog=True):
         port = self.adc_port.currentData()
@@ -1234,6 +1237,36 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("ESP32 log copied. Paste it into your troubleshooting message.", 6000)
         else:
             self.statusBar().showMessage("No ESP32 connection events have been logged yet.", 6000)
+
+    def _open_bluetooth_pairing(self):
+        if self._shutdown_started or self._operation_in_progress(self.controller.snapshot):
+            self.statusBar().showMessage("Stop the current operation before pairing Bluetooth.", 8000)
+            return
+        if self._bluetooth_pairing_window is not None and self._bluetooth_pairing_window.isVisible():
+            self._bluetooth_pairing_window.raise_()
+            self._bluetooth_pairing_window.activateWindow()
+            return
+        ports = [(port, description) for port, description in self.controller.list_ports()
+                 if "bluetooth" not in description.lower() and any(
+                     word in description.lower() for word in ("usb", "uart", "cp210", "ch340"))]
+        if not ports:
+            self.statusBar().showMessage("Connect the rig's wired USB cable, then try pairing again.", 8000)
+            return
+        labels = [f"{port} · {description}" for port, description in ports]
+        selected = next((index for index, (port, _) in enumerate(ports) if port == "COM5"), 0)
+        label, accepted = QInputDialog.getItem(self, "Pair MembraneControl-Rig",
+            "Choose the rig's wired USB port (COM5 on this PC).", labels, selected, False)
+        if not accepted:
+            return
+        port = ports[labels.index(label)][0]
+        if any(getattr(device, "port", None) == port for device in (self.controller.driver, self.controller.balance)):
+            self.statusBar().showMessage("Disconnect this USB port in Connections before opening the pairing helper.", 8000)
+            return
+        monitor = getattr(self.controller, "adc_monitor", None)
+        if monitor is not None and getattr(getattr(monitor, "transport", None), "port", None) == port:
+            self.controller.disconnect_adc_monitor()
+        self._bluetooth_pairing_window = BluetoothPairingWindow(port, self)
+        self._bluetooth_pairing_window.show()
 
     def _copy_connection_diagnostics(self):
         report = connection_diagnostics(
@@ -1910,8 +1943,11 @@ class MainWindow(QMainWindow):
                 value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
                 raw = live_mv.get(channel)
                 pin_mv = snap.get(f"{channel}_adc_mv") if adc_fresh and channel else None
-                if pin_mv is not None and (value == "Waiting" or not verified):
-                    value = _number(pin_mv / 1000, 3)
+                pin_volts = snap.get(f"{channel}_adc_v") if adc_fresh and channel else None
+                if type(pin_volts) not in (int, float) or not math.isfinite(pin_volts):
+                    pin_volts = pin_mv / 1000 if pin_mv is not None else None
+                if pin_volts is not None and (value == "Waiting" or not verified):
+                    value = _number(pin_volts, 3)
                     unit = "V at ESP32"
                     sensor_input = sensor_inputs.get(channel, {})
                     ads_channel = sensor_input.get("channel", -1)
@@ -1919,6 +1955,14 @@ class MainWindow(QMainWindow):
                         unit = f"V at ADS1115 A{ads_channel}"
                     if key == "pressure_psi" and pressure_startup:
                         unit += " · below calibrated ADC range"
+                    if pin_volts < -0.005:
+                        unit += " · below GND · check shared ground"
+                elif pin_volts is not None:
+                    sensor_input = sensor_inputs.get(channel, {})
+                    ads_channel = sensor_input.get("channel", -1)
+                    source = (f"ADS1115 A{ads_channel}" if sensor_input.get("source") == "ads1115"
+                              and 0 <= ads_channel <= 3 else "ESP32")
+                    unit += f" · {pin_volts:.4f} V at {source}"
                 elif value == "Waiting" and raw is not None:
                     reference = sensor_setup.reference_estimate(channel, raw) if sensor_setup is not None else (False, None)
                     zero_mv = sensor_zero.get(channel)
@@ -1980,6 +2024,7 @@ class MainWindow(QMainWindow):
                 hardware_text = "Equipment setup is unfinished. Ask the lab maintainer; this cannot be changed here."
             self.hardware_status.setText(hardware_text)
             self.controller_connect.setEnabled(not operating and not desktop_simulation)
+            self.bluetooth_pair_button.setEnabled(not operating and not desktop_simulation)
             self.relay_bench_button.setEnabled(not operating and not desktop_simulation)
             self.valve_test_button.setEnabled(not operating and not desktop_simulation)
             self.pump_test_button.setEnabled(not operating and not desktop_simulation)
@@ -2054,6 +2099,9 @@ class MainWindow(QMainWindow):
         if self._sensor_setup_dialog is not None:
             self._sensor_setup_dialog.close()
             self._sensor_setup_dialog = None
+        if self._bluetooth_pairing_window is not None:
+            self._bluetooth_pairing_window.close()
+            self._bluetooth_pairing_window = None
         try:
             self.timer.stop()
         except RuntimeError:

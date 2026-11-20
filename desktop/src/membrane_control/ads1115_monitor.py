@@ -93,6 +93,11 @@ class Ads1115Monitor:
 
     close = disconnect
 
+    def clear_selection(self):
+        """Release the optional sensor port when selecting the full controller."""
+        self.disconnect()
+        self.port = ''
+
     def _clear(self, channel_status, status):
         self.adc_ack = False
         self.channels = _empty_channels(channel_status)

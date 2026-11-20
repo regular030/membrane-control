@@ -27,10 +27,26 @@ DEFAULT_SETTINGS = {"membrane_area_m2": 0.01, "density_g_ml": 1.0,
 REQUEST_TIMEOUT_S = 3.0
 LAB_CONTROLLER_FALLBACK_PORT = "COM9"
 LAB_ADC_MONITOR_PORT = "COM5"
-LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF50204E"
+LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF4F8AEA"
+LAB_CONTROLLER_LEGACY_BLUETOOTH_ADDRESS = "8C94DF50204E"
+LAB_CONTROLLER_BLUETOOTH_ADDRESSES = (LAB_CONTROLLER_BLUETOOTH_ADDRESS,
+                                      LAB_CONTROLLER_LEGACY_BLUETOOTH_ADDRESS)
 WINDOWS_SPP_ID_PREFIX = "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_"
 EMPTY_PUMP_MOTION = {"pump_rpm": None, "pump_tach_status": None, "pump_run_contact_commanded": None}
 EMPTY_ADC_VOLTAGES = {"pressure_adc_mv": None, "flow_adc_mv": None, "pump_feedback_adc_mv": None}
+EMPTY_ADC_PIN_VOLTS = {"pressure_adc_v": None, "flow_adc_v": None, "pump_feedback_adc_v": None}
+
+
+def _adc_pin_volts(packet):
+    """Preserve actual signed ADS1115 voltages independently of calibration."""
+    result = dict(EMPTY_ADC_PIN_VOLTS)
+    if packet.get("simulation") is not False:
+        return result
+    for field in result:
+        value = packet.get(field)
+        if type(value) in (int, float) and -4.096 <= value <= 4.096 and math.isfinite(value):
+            result[field] = float(value)
+    return result
 
 
 def _adc_pin_mv(value):
@@ -120,7 +136,7 @@ class AppController:
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
             "manual_pump_profile": None, "pressure_startup": None,
-            **EMPTY_ADC_VOLTAGES,
+            **EMPTY_ADC_VOLTAGES, **EMPTY_ADC_PIN_VOLTS,
             "live_sensor_voltages": {}, "live_sensor_zero": {},
             "adc_monitor": self.adc_monitor.snapshot(),
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
@@ -272,7 +288,7 @@ class AppController:
 
         self.preferred_controller_port = None
         ports = list_ports.comports()
-        outgoing_ports = set()
+        outgoing_ports = {address: set() for address in LAB_CONTROLLER_BLUETOOTH_ADDRESSES}
         fallback = None
         for port in ports:
             hardware_id = (port.hwid or "").upper()
@@ -280,13 +296,17 @@ class AppController:
                 # Windows uses a zero peer for the incoming port and embeds the
                 # remote device address in the outgoing port's instance ID.
                 peer = hardware_id.rsplit("&", 1)[-1].partition("_")[0]
-                if peer == LAB_CONTROLLER_BLUETOOTH_ADDRESS:
-                    outgoing_ports.add(port.device)
+                if peer in outgoing_ports:
+                    outgoing_ports[peer].add(port.device)
             if port.device == LAB_CONTROLLER_FALLBACK_PORT and hardware_id in ("", "N/A"):
                 fallback = port.device
-        if len(outgoing_ports) == 1:
-            self.preferred_controller_port = next(iter(outgoing_ports))
-        elif not outgoing_ports:
+        for address in LAB_CONTROLLER_BLUETOOTH_ADDRESSES:
+            candidates = outgoing_ports[address]
+            if candidates:
+                if len(candidates) == 1:
+                    self.preferred_controller_port = next(iter(candidates))
+                break
+        else:
             self.preferred_controller_port = fallback
         return [(p.device, p.description) for p in ports]
 
@@ -297,8 +317,9 @@ class AppController:
             raise ValueError("Stop before reconnecting")
         if self.balance is not None and self.balance.port == port:
             raise ValueError("Controller and balance need different ports")
-        if self._adc_port_matches(port):
-            raise ValueError("Controller and ADC sensor board need different ports")
+        # Selecting the full rig transfers acquisition back to its own sensor
+        # telemetry. Release any previous USB-monitor lease before reusing it.
+        self.disconnect_adc_monitor(clear_selection=True)
         self.disconnect_controller()
         self._esp32_port = port
         self._esp32_connection_id += 1
@@ -358,7 +379,7 @@ class AppController:
 
     def _reset_diagnostics(self):
         self._reported_valve_control_ready = None
-        self.snapshot.update(EMPTY_PUMP_MOTION, **EMPTY_ADC_VOLTAGES)
+        self.snapshot.update(EMPTY_PUMP_MOTION, **EMPTY_ADC_VOLTAGES, **EMPTY_ADC_PIN_VOLTS)
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
             manual_pump_profile=None, pressure_startup=None,
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
@@ -424,9 +445,12 @@ class AppController:
             self.snapshot["adc_monitor"] = self.adc_monitor.snapshot()
         self._log(f"Opening ADC sensor board {port}")
 
-    def disconnect_adc_monitor(self):
+    def disconnect_adc_monitor(self, *, clear_selection=False):
         try:
-            self.adc_monitor.disconnect()
+            if clear_selection:
+                self.adc_monitor.clear_selection()
+            else:
+                self.adc_monitor.disconnect()
         finally:
             if hasattr(self, "snapshot"):
                 self.snapshot["adc_monitor"] = self.adc_monitor.snapshot()
@@ -866,9 +890,11 @@ class AppController:
                                       **reply_details)
                     return
                 diagnostics = checked_controller_diagnostics(packet)
+                diagnostics.update(_adc_pin_volts(packet))
                 self.device = {key: value for key, value in packet.items()
                                if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
                                               "manual_pump_profile", "pressure_startup", *EMPTY_ADC_VOLTAGES,
+                                              *EMPTY_ADC_PIN_VOLTS,
                                               "valve_control_ready", "manual_valve_count", "manual_valve_ids",
                                               "valve_bits", "valve_control_status", "sensor_test_available")}
                 self.device.update(diagnostics)
@@ -998,6 +1024,7 @@ class AppController:
             millivolts = packet.get(field)
             self.snapshot[field] = (millivolts if not packet["simulation"]
                 and type(millivolts) is int and 0 <= millivolts <= 3300 else None)
+        self.snapshot.update(_adc_pin_volts(packet))
         self.snapshot["live_sensor_voltages"] = (_adc_pin_mv(packet.get("adc_pin_mv"))
             if self.snapshot["sensor_test_available"] and not packet["simulation"] and not packet["hardware_verified"] else {})
         self.snapshot.update(valves=list(valves), pump_percent=pump, step_index=step, cycle=cycle,

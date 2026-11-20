@@ -120,7 +120,7 @@ def test_negative_feedback_shows_actual_adc_voltage_instead_of_fabricated_zero(s
     assert "below GND" in window._metric_units["pump_feedback_v"].text()
 
 
-def test_startup_selects_and_connects_three_lab_ports(screen, monkeypatch):
+def test_startup_connects_rig_and_scale_and_keeps_optional_sensor_board_manual(screen, monkeypatch):
     window, controller, _ = screen
     controller.preferred_controller_port = "COM9"
     controller.list_ports = lambda: [("COM5", "ADC USB"), ("COM6", "Scale"), ("COM9", "Rig Bluetooth")]
@@ -133,4 +133,30 @@ def test_startup_selects_and_connects_three_lab_ports(screen, monkeypatch):
     assert window.controller_port.currentData() == "COM9"
     assert window.balance_port.currentData() == "COM6"
     window.connect_lab_defaults()
-    assert calls == [("rig", "COM9"), ("scale", "COM6"), ("adc", "COM5")]
+    assert calls == [("rig", "COM9"), ("scale", "COM6")]
+    window._connect_adc_monitor()
+    assert calls[-1] == ("adc", "COM5")
+
+
+def test_full_rig_metrics_show_engineering_values_with_adc_pin_voltages(screen):
+    window, controller, now = screen
+    controller.last_telemetry = now[0]
+    controller.snapshot.update(controller_connected=True, hardware_verified=True,
+                               pressure_psi=20, flow_ml_min=40, pump_feedback_v=5,
+                               pressure_adc_mv=201, flow_adc_mv=400, pump_feedback_adc_mv=1000,
+                               sensor_inputs={name: {"source": "ads1115", "channel": channel}
+                                              for channel, name in enumerate(("pressure", "flow", "pump_feedback"))})
+    window._update_view(dict(controller.snapshot))
+    assert window._metric_labels["pressure_psi"].text() == "20.00"
+    assert window._metric_labels["flow_ml_min"].text() == "40.0"
+    assert window._metric_labels["pump_feedback_v"].text() == "5.00"
+    assert "0.2010 V at ADS1115 A0" in window._metric_units["pressure_psi"].text()
+    assert "0.4000 V at ADS1115 A1" in window._metric_units["flow_ml_min"].text()
+    assert "1.0000 V at ADS1115 A2" in window._metric_units["pump_feedback_v"].text()
+
+    controller.snapshot.update(pressure_adc_v=0.200875, flow_adc_v=0.399875,
+                               pump_feedback_adc_v=0.999875)
+    window._update_view(dict(controller.snapshot))
+    assert "0.2009 V at ADS1115 A0" in window._metric_units["pressure_psi"].text()
+    assert "0.3999 V at ADS1115 A1" in window._metric_units["flow_ml_min"].text()
+    assert "0.9999 V at ADS1115 A2" in window._metric_units["pump_feedback_v"].text()

@@ -404,6 +404,139 @@ void test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivit
       SensorReadState::OutOfRange, true, true, false, 100));
 }
 
+BoardConfig adsZeroFixture() {
+  auto config = adsMonitoringFixture();
+  config.i2cClockHz = 25000;
+  config.pressureLimitPsi = 80;
+  for (AnalogConfig* input : {&config.pressure, &config.flow, &config.pumpFeedback}) {
+    input->calibrationVerified = true;
+    input->minPinVolts = 0;
+    input->rejectRails = false;
+    input->minValue = 0;
+    input->adsZeroToleranceVolts = 0.002;
+  }
+  config.pressure.unitsPerVolt = 500.0 / 4.999;
+  config.pressure.offset = -0.001 * config.pressure.unitsPerVolt;
+  config.pressure.maxPinVolts = 1.01;
+  config.pressure.maxValue = 101;
+  config.flow.maxPinVolts = 1.01;
+  config.flow.maxValue = 101;
+  config.pumpFeedback.unitsPerVolt = 5;
+  config.pumpFeedback.maxPinVolts = 2.0;
+  config.pumpFeedback.maxValue = 10;
+  config.pumpFeedback.adsZeroToleranceVolts = 0.001;
+  return config;
+}
+
+void test_ads_zero_tolerance_preserves_certificate_and_80_psi_crossing() {
+  const auto config = adsZeroFixture();
+  TEST_ASSERT_NULL(validateBoardConfig(config));
+  for (double volts : {-0.002, -0.000125, 0.0, 0.0005, 0.001}) {
+    const auto reading = calibratedReading(config.pressure, volts, 100);
+    TEST_ASSERT_TRUE(reading.valid);
+    TEST_ASSERT_EQUAL_DOUBLE(0, reading.value);
+  }
+  const auto below = calibratedReading(config.pressure, 6406 * 0.000125, 100);
+  const auto above = calibratedReading(config.pressure, 6407 * 0.000125, 100);
+  TEST_ASSERT_TRUE(below.valid);
+  TEST_ASSERT_TRUE(above.valid);
+  TEST_ASSERT_TRUE(below.value < 80);
+  TEST_ASSERT_TRUE(above.value > 80);
+  TEST_ASSERT_DOUBLE_WITHIN(0.00000001, 80,
+      calibratedReading(config.pressure, 0.80084, 100).value);
+  TEST_ASSERT_DOUBLE_WITHIN(0.00000001, 100,
+      calibratedReading(config.pressure, 1.0008, 100).value);
+  TEST_ASSERT_FALSE(calibratedReading(config.pressure, -0.002125, 100).valid);
+  TEST_ASSERT_FALSE(calibratedReading(config.pressure, NAN, 100).valid);
+  const auto flowZero = calibratedReading(config.flow, -0.000375, 100);
+  TEST_ASSERT_TRUE(flowZero.valid);
+  TEST_ASSERT_EQUAL_DOUBLE(0, flowZero.value);
+  TEST_ASSERT_EQUAL_DOUBLE(50, calibratedReading(config.flow, 0.5, 100).value);
+  TEST_ASSERT_FALSE(calibratedReading(config.pumpFeedback, -0.104, 100).valid);
+  TEST_ASSERT_EQUAL_DOUBLE(5, calibratedReading(config.pumpFeedback, 1, 100).value);
+}
+
+void test_ads_zero_tolerance_is_explicit_bounded_and_cannot_change_native_inputs() {
+  const auto configured = adsZeroFixture().pressure;
+  auto input = configured;
+  input.adsZeroToleranceVolts = 0;
+  TEST_ASSERT_FALSE(calibratedReading(input, -0.000125, 100).valid);
+  input = configured; input.adsZeroToleranceVolts = 0.005001;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  input = configured; input.adsZeroToleranceVolts = -0.001;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  input = configured; input.adsZeroToleranceVolts = NAN;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  input = configured; input.source = AnalogSource::NativeAdc1;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  input = configured; input.minPinVolts = 0.1;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  input = configured; input.rejectRails = true;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  input = configured; input.offset = -10;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  input = configured; input.unitsPerVolt = -100;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  input = configured; input.minValue = 1;
+  TEST_ASSERT_FALSE(calibrationValid(input));
+  auto board = adsZeroFixture();
+  board.i2cClockHz = 9999;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(board));
+  board.i2cClockHz = 400001;
+  TEST_ASSERT_NOT_NULL(validateBoardConfig(board));
+  board.i2cClockHz = 25000;
+  TEST_ASSERT_NULL(validateBoardConfig(board));
+}
+
+void test_ads_signed_raw_values_survive_zero_handling_and_expire() {
+  const auto config = adsZeroFixture();
+  Wire.adsAddress = config.ads1115Address;
+  Wire.adsConversions[0] = -1;
+  Wire.adsConversions[1] = -3;
+  Wire.adsConversions[2] = -832;
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_FALSE(hardware.adsPinVolts(0, 0).has_value());
+  for (uint32_t now = 100; now <= 160; now += 10) hardware.sample(now);
+  TEST_ASSERT_TRUE(hardware.measurements().pressure.valid);
+  TEST_ASSERT_EQUAL_DOUBLE(0, hardware.measurements().pressure.value);
+  TEST_ASSERT_TRUE(hardware.measurements().flow.valid);
+  TEST_ASSERT_EQUAL_DOUBLE(0, hardware.measurements().flow.value);
+  TEST_ASSERT_FALSE(hardware.measurements().pumpFeedback.valid);
+  TEST_ASSERT_EQUAL_DOUBLE(-0.000125, *hardware.pressureAdcVolts(160));
+  TEST_ASSERT_EQUAL_DOUBLE(-0.000375, *hardware.flowAdcVolts(160));
+  TEST_ASSERT_EQUAL_DOUBLE(-0.104, *hardware.pumpFeedbackAdcVolts(160));
+  TEST_ASSERT_FALSE(hardware.adsPinVolts(3, 160).has_value());
+  TEST_ASSERT_FALSE(hardware.pressureAdcVolts(361).has_value());
+  TEST_ASSERT_FALSE(hardware.flowAdcVolts(361).has_value());
+  TEST_ASSERT_FALSE(hardware.pumpFeedbackAdcVolts(361).has_value());
+}
+
+void test_ads_zero_handling_never_preserves_values_after_read_failure_or_timeout() {
+  for (bool timeout : {false, true}) {
+    Wire.reset();
+    const auto config = adsZeroFixture();
+    Wire.adsAddress = config.ads1115Address;
+    Wire.adsConversions[0] = -1;
+    Wire.adsConversions[1] = -3;
+    Wire.adsConversions[2] = 8000;
+    Hardware hardware(config, false);
+    TEST_ASSERT_TRUE(hardware.begin());
+    for (uint32_t now = 100; now <= 160; now += 10) hardware.sample(now);
+    TEST_ASSERT_TRUE(hardware.pressureAdcVolts(160).has_value());
+    if (timeout) Wire.adsConversions.fill(std::nullopt);
+    else Wire.failingAddress = config.ads1115Address;
+    for (uint32_t now = 170; now <= 400; now += 10) hardware.sample(now);
+    TEST_ASSERT_FALSE(hardware.measurements().pressure.valid);
+    TEST_ASSERT_FALSE(hardware.measurements().flow.valid);
+    TEST_ASSERT_FALSE(hardware.measurements().pumpFeedback.valid);
+    TEST_ASSERT_FALSE(hardware.pressureAdcVolts(400).has_value());
+    TEST_ASSERT_FALSE(hardware.flowAdcVolts(400).has_value());
+    TEST_ASSERT_FALSE(hardware.pumpFeedbackAdcVolts(400).has_value());
+    TEST_ASSERT_EQUAL_STRING("hardware_unavailable", hardware.sensorStatus(0, 400));
+  }
+}
+
 void test_ads_read_failure_and_conversion_timeout_are_unavailable_not_zero() {
   for (bool readFailure : {false, true}) {
     Wire.reset();
@@ -574,6 +707,10 @@ int main() {
   RUN_TEST(test_native_low_attenuation_has_a_supported_per_pin_range);
   RUN_TEST(test_native_low_attenuation_validation_does_not_change_ads);
   RUN_TEST(test_real_zero_calibration_can_be_valid_without_claiming_sensor_connectivity);
+  RUN_TEST(test_ads_zero_tolerance_preserves_certificate_and_80_psi_crossing);
+  RUN_TEST(test_ads_zero_tolerance_is_explicit_bounded_and_cannot_change_native_inputs);
+  RUN_TEST(test_ads_signed_raw_values_survive_zero_handling_and_expire);
+  RUN_TEST(test_ads_zero_handling_never_preserves_values_after_read_failure_or_timeout);
   RUN_TEST(test_ads_read_failure_and_conversion_timeout_are_unavailable_not_zero);
   RUN_TEST(test_ads_conversion_command_failure_is_unavailable_and_never_validates_old_data);
   RUN_TEST(test_hardware_initialization_and_later_health_failure_override_configured_readings);

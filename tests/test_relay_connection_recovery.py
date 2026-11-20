@@ -144,10 +144,14 @@ def test_blocking_driver_close_is_owned_and_recovery_returns_on_its_deadline(mon
     try:
         wait_until(lambda: worker._opened)
         start = time.monotonic()
-        with pytest.raises(RuntimeError, match='still closing'):
+        # The caller's deadline may expire before the I/O worker has finished
+        # returning, even though the independent handle closer already owns it.
+        with pytest.raises(RuntimeError, match='still (closing|shutting down)'):
             worker.close(timeout=.03)
-        assert entered.is_set() and time.monotonic() - start < .3
+        assert time.monotonic() - start < .3
+        assert entered.wait(timeout=1)
         assert worker.cleanup_pending and device.close_count == 1
+        wait_until(lambda: not worker._thread.is_alive())
         start = time.monotonic()
         with pytest.raises(RuntimeError, match='still closing'):
             worker.close(timeout=.03)
@@ -423,7 +427,43 @@ def test_receive_overflow_preserves_terminal_reason_even_when_event_queue_is_ful
         errors = [p['error'] for p in packets if p.get('type') == 'disconnected']
         assert len(errors) == 1 and 'receive queue overflow' in errors[0]
         assert len(packets) == 1  # Old malformed/stale status cannot hide the reason.
-        assert not worker.cleanup_pending and worker.outgoing.empty()
+        assert worker.outgoing.empty()
+        # I/O termination and asynchronous handle cleanup are separate events.
+        wait_until(lambda: not worker.cleanup_pending)
         assert worker.poll() == []
     finally:
+        worker.close()
+
+
+def test_receive_overflow_keeps_cleanup_owner_while_handle_closer_is_blocked(monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+
+    class BlockingClose(RetryCloseInstrument):
+        def close(self):
+            self.close_count += 1
+            entered.set()
+            assert release.wait(timeout=4)
+            self.is_open = False
+
+    device = BlockingClose()
+    monkeypatch.setattr(serial, 'Serial', lambda **_kwargs: device)
+    worker = SerialTransport('FAKE-OVERFLOW-BLOCKED-CLOSE')
+    try:
+        wait_until(lambda: worker._opened)
+        device.input.put(b'{"v":1,"type":"bench_status"}\n' * 600)
+        assert entered.wait(timeout=1)
+        wait_until(lambda: worker._terminated.is_set())
+        assert worker.cleanup_pending and device.is_open
+        assert worker._connection is device and device.close_count == 1
+        packets = worker.poll()
+        assert len(packets) == 1
+        assert packets[0]['type'] == 'disconnected'
+        assert 'receive queue overflow' in packets[0]['error']
+        assert worker.outgoing.empty()
+        release.set()
+        wait_until(lambda: not worker.cleanup_pending)
+        assert not device.is_open and device.close_count == 1
+        assert worker.poll() == []
+    finally:
+        release.set()
         worker.close()

@@ -43,6 +43,10 @@ class Monitor:
         self.transport = None
         self.state.update(connected=False, opened=False, fresh=False, channels={})
 
+    def clear_selection(self):
+        self.disconnect()
+        self.state["port"] = ""
+
     def tick(self):
         if self.fail:
             raise RuntimeError("Sensor worker test failure")
@@ -83,14 +87,47 @@ def test_auxiliary_worker_failure_does_not_fault_the_rig(controller):
     assert "Sensor worker test failure" in "\n".join(controller.log)
 
 
-def test_sensor_port_cannot_be_reused_by_controller_or_scale(controller):
+def test_sensor_port_cannot_be_reused_by_scale(controller):
     controller.connect_adc_monitor()
-    with pytest.raises(ValueError, match="different ports"):
-        controller.connect_controller("com5")
     with pytest.raises(ValueError, match="different ports"):
         controller.connect_balance("COM5")
     controller.disconnect_adc_monitor()
     assert not controller._adc_port_matches("COM5")
+
+
+@pytest.mark.parametrize("port", ["COM5", "COM10"])
+def test_selecting_full_controller_releases_auxiliary_and_uses_controller_sensors(
+        controller, monkeypatch, port):
+    controller.connect_adc_monitor("COM5")
+    controller.tick()
+    old_monitor = controller.adc_monitor
+    assert adc_display_values(controller.snapshot, .01)["flow_ml_min"] == 25
+    opened = []
+
+    class Driver:
+        def __init__(self, selected):
+            assert old_monitor.transport is None
+            assert old_monitor.snapshot()["port"] == ""
+            self.port = selected
+            opened.append(selected)
+
+        def send(self, message):
+            pass
+
+        def close(self):
+            pass
+
+        def poll(self, now):
+            return []
+
+    monkeypatch.setattr("membrane_control.controller.SerialTransport", Driver)
+    controller.connect_controller(port)
+    controller.snapshot.update(pressure_psi=22, flow_ml_min=40, pump_feedback_v=5)
+    controller._poll_adc_monitor()
+    assert opened == [port]
+    assert not controller.snapshot["adc_monitor"]["port"]
+    assert adc_display_values(controller.snapshot, .01) == {}
+    assert controller.snapshot["flow_ml_min"] == 40
 
 
 @pytest.mark.parametrize("owner", ["driver", "balance"])

@@ -423,6 +423,60 @@ def telemetry_packet(**changes):
     return {**packet, **changes}
 
 
+def test_full_controller_preserves_signed_raw_pin_voltages_alongside_engineering_values(app):
+    controller, clock = app
+    controller.device.update(simulation=False, hardware_verified=True)
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=True,
+        pressure_psi=20, flow_ml_min=50, pump_feedback_v=None,
+        pressure_adc_v=.200875, flow_adc_v=.5, pump_feedback_adc_v=-.10425,
+        pressure_adc_mv=201, flow_adc_mv=500, pump_feedback_adc_mv=0), clock())
+    assert controller.snapshot["pressure_psi"] == 20
+    assert controller.snapshot["flow_ml_min"] == 50
+    assert controller.snapshot["pump_feedback_v"] is None
+    assert controller.snapshot["pressure_adc_v"] == .200875
+    assert controller.snapshot["flow_adc_v"] == .5
+    assert controller.snapshot["pump_feedback_adc_v"] == -.10425
+    assert controller.snapshot["pressure_adc_mv"] == 201
+
+
+@pytest.mark.parametrize("bad", [True, "0.5", float("nan"), float("inf"), -4.097, 4.097, 10**1000])
+def test_invalid_raw_pin_voltage_clears_independently_without_hiding_pressure(app, bad):
+    controller, clock = app
+    controller.device.update(simulation=False, hardware_verified=True)
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=True,
+        pressure_psi=20, pressure_adc_v=bad, flow_adc_v=.5, pump_feedback_adc_v=-.10425), clock())
+    assert controller.snapshot["pressure_psi"] == 20
+    assert controller.snapshot["pressure_adc_v"] is None
+    assert controller.snapshot["flow_adc_v"] == .5
+    assert controller.snapshot["pump_feedback_adc_v"] == -.10425
+
+
+def test_missing_and_disconnected_raw_pin_voltages_do_not_keep_old_readings(app):
+    controller, clock = app
+    controller.device.update(simulation=False, hardware_verified=True)
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=True,
+        pressure_adc_v=.2, flow_adc_v=.5, pump_feedback_adc_v=-.10425), clock())
+    assert controller.snapshot["flow_adc_v"] == .5
+    clock.advance(.25)
+    controller._handle_packet(telemetry_packet(simulation=False, hardware_verified=True,
+        uptime_ms=250), clock())
+    for field in ("pressure_adc_v", "flow_adc_v", "pump_feedback_adc_v"):
+        assert controller.snapshot[field] is None
+    controller.snapshot.update(pressure_adc_v=.2, flow_adc_v=.5, pump_feedback_adc_v=-.10425)
+    controller.disconnect_controller()
+    for field in ("pressure_adc_v", "flow_adc_v", "pump_feedback_adc_v"):
+        assert controller.snapshot[field] is None
+
+
+def test_simulated_controller_cannot_report_raw_hardware_voltages(app):
+    controller, clock = app
+    controller._handle_packet(telemetry_packet(pressure_adc_v=.2, flow_adc_v=.5,
+                                              pump_feedback_adc_v=1), clock())
+    assert controller.snapshot["pressure_adc_v"] is None
+    assert controller.snapshot["flow_adc_v"] is None
+    assert controller.snapshot["pump_feedback_adc_v"] is None
+
+
 def test_pump_motion_telemetry_accepts_measured_rpm_and_clears_old_values(app):
     controller, clock = app
     controller.device.update(simulation=False, hardware_verified=True)

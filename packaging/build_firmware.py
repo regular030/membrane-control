@@ -86,7 +86,7 @@ def source_files(root: Path) -> dict[str, bytes]:
         result[name] = checked_file(source, root / "firmware").read_bytes()
     for name in ("protocol/v1.md", "protocol/relay-bench.md", "docs/relay-board-test.md",
                  "protocol/valve-test.md", "docs/valve-test.md",
-                 "docs/ads1115-usb-monitor.md",
+                 "docs/ads1115-usb-monitor.md", "docs/lab-rig-ads1115.md",
                  "docs/flow-sensor-troubleshooting.md",
                  "docs/normal-valves.md", "docs/scale-connection.md",
                  "docs/serial-recovery.md",

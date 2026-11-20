@@ -28,7 +28,7 @@ extern "C" void BTA_DmSetVisibility(uint16_t discoverability, uint16_t connectab
 namespace basu::protectedSpp {
 namespace {
 // Windows provisions the outgoing port against the bench's Classic SPP service.
-constexpr char kDeviceName[] = "MembraneControl-Bench";
+constexpr char kDeviceName[] = BASU_BLUETOOTH_DEVICE_NAME;
 constexpr char kServiceName[] = "ESP32SPP";
 // Match the Class of Device set by the pinned Arduino BluetoothSerial library.
 constexpr esp_bt_cod_t kSerialDeviceClass{0, 4, 1, 0x16};

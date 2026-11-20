@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef BASU_BLUETOOTH_DEVICE_NAME
+#define BASU_BLUETOOTH_DEVICE_NAME "MembraneControl-Bench"
+#endif
+
 #include <cstddef>
 #include <cstdint>
 #include "BluetoothControlSession.h"

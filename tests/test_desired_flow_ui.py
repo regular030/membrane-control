@@ -242,7 +242,7 @@ def test_manual_pump_pressure_startup_displays_voltage_and_keeps_stop_available(
     window._update_view(snapshot)
     assert window.manual_apply.isEnabled()
     assert window._metric_labels["pressure_psi"].text() == "12.00"
-    assert window._metric_units["pressure_psi"].text() == "psi"
+    assert window._metric_units["pressure_psi"].text() == "psi · 0.1210 V at ESP32"
 
 
 def test_uncalibrated_pressure_card_displays_fresh_voltage_without_pump_approval(screen):
@@ -276,7 +276,7 @@ def test_flow_card_shows_fresh_pin_voltage_in_monitor_mode(screen):
 
     window._update_view(dict(snapshot, hardware_verified=True, flow_ml_min=21.5))
     assert window._metric_labels["flow_ml_min"].text() == "21.5"
-    assert window._metric_units["flow_ml_min"].text() == "mL/min"
+    assert window._metric_units["flow_ml_min"].text() == "mL/min · 0.1260 V at ESP32"
 
     now[0] += 3
     window._update_view(snapshot)
@@ -306,7 +306,7 @@ def test_voltage_cards_identify_ads1115_channels(screen):
 
     window._update_view(dict(snapshot, hardware_verified=True))
     assert window._metric_labels["pump_feedback_v"].text() == "7.50"
-    assert window._metric_units["pump_feedback_v"].text() == "V"
+    assert window._metric_units["pump_feedback_v"].text() == "V · 1.5000 V at ADS1115 A2"
     assert "Drive command feedback 7.50 V" in window.manual_pump_feedback.text()
 
 

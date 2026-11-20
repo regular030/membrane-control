@@ -124,14 +124,15 @@ def test_startup_connects_only_detected_lab_defaults(ports_screen, monkeypatch):
     assert calls == [('ESP32', 'COM9')]
 
 
+@pytest.mark.parametrize('peer', ['8C94DF4F8AEA', '8C94DF50204E'])
 def test_startup_follows_outgoing_membrane_controller_after_windows_renumbers_ports(
-        ports_screen, monkeypatch):
+        ports_screen, monkeypatch, peer):
     window, controller, ports, _ = ports_screen
     calls = []
     monkeypatch.setattr(controller, 'connect_controller', calls.append)
     controller.set_simulation(False)
     outgoing = (r'BTHENUM\{00001101-0000-1000-8000-00805f9b34fb}_LOCALMFG&0002'
-                r'\7&33c6b4b6&0&8C94DF50204E_C00000000')
+                rf'\7&33c6b4b6&0&{peer}_C00000000')
     incoming = (r'BTHENUM\{00001101-0000-1000-8000-00805f9b34fb}_LOCALMFG&0000'
                 r'\7&33c6b4b6&0&000000000000_0000000A')
     ports.append(('COM8', 'Standard Serial over Bluetooth link', outgoing))
@@ -144,6 +145,38 @@ def test_startup_follows_outgoing_membrane_controller_after_windows_renumbers_po
     assert window.controller_port.currentData() == 'COM7'
     window.connect_lab_defaults()
     assert calls == ['COM7']
+
+
+def test_new_full_rig_board_is_preferred_over_cached_old_controller(ports_screen, monkeypatch):
+    window, controller, ports, _ = ports_screen
+    calls = []
+    monkeypatch.setattr(controller, 'connect_controller', calls.append)
+    controller.set_simulation(False)
+    prefix = (r'BTHENUM\{00001101-0000-1000-8000-00805F9B34FB}_LOCALMFG&0002'
+              r'\7&33c6b4b6&0&')
+    ports.extend([('COM9', 'MembraneControl-Bench', prefix + '8C94DF50204E_C00000000'),
+                  ('COM10', 'Renamed full rig', prefix + '8C94DF4F8AEA_C00000000')])
+    window._refresh_ports()
+    assert controller.preferred_controller_port == 'COM10'
+    assert window.controller_port.currentData() == 'COM10'
+    window.connect_lab_defaults()
+    assert calls == ['COM10']
+
+
+def test_ambiguous_new_controller_ports_do_not_fall_back_to_old_board(ports_screen, monkeypatch):
+    window, controller, ports, _ = ports_screen
+    calls = []
+    monkeypatch.setattr(controller, 'connect_controller', calls.append)
+    controller.set_simulation(False)
+    prefix = (r'BTHENUM\{00001101-0000-1000-8000-00805F9B34FB}_LOCALMFG&0002'
+              r'\7&33c6b4b6&0&')
+    ports.extend([('COM9', 'Old controller', prefix + '8C94DF50204E_C00000000'),
+                  ('COM10', 'New controller', prefix + '8C94DF4F8AEA_C00000000'),
+                  ('COM11', 'Duplicate outgoing port', prefix + '8C94DF4F8AEA_C00000000')])
+    window._refresh_ports()
+    assert controller.preferred_controller_port is None
+    window.connect_lab_defaults()
+    assert calls == []
 
 
 @pytest.mark.parametrize('peer', ['000000000000', 'AABBCCDDEEFF'])

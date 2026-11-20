@@ -329,6 +329,15 @@ class Hardware {
       return std::nullopt;
     return pumpFeedbackAdcMillivolts_;
   }
+  std::optional<double> adsPinVolts(std::size_t index, uint32_t now) const {
+    if (index >= adsPinVolts_.size() || (!ready_ && !sensorMonitoringOnly_) ||
+        static_cast<uint32_t>(now - adsPinAcquiredMs_[index]) > 2 * kNativeAdcSampleIntervalMs)
+      return std::nullopt;
+    return adsPinVolts_[index];
+  }
+  std::optional<double> pressureAdcVolts(uint32_t now) const { return adsPinVolts(0, now); }
+  std::optional<double> flowAdcVolts(uint32_t now) const { return adsPinVolts(1, now); }
+  std::optional<double> pumpFeedbackAdcVolts(uint32_t now) const { return adsPinVolts(2, now); }
   bool pumpContactCommandAvailable() const { return pumpContactCommandAvailable_; }
   bool pumpRunContactCommanded() const { return pumpRunContactCommanded_; }
   const char* pumpTachStatus(uint32_t now) const { return simulation_ ? nullptr : pumpTach_.status(now); }
@@ -347,7 +356,8 @@ class Hardware {
 
  private:
   bool beginI2c() {
-    if (!Wire.begin(config_.i2cSdaPin, config_.i2cSclPin, 100000)) return false;
+    if (config_.i2cClockHz < 10000 || config_.i2cClockHz > 400000 ||
+        !Wire.begin(config_.i2cSdaPin, config_.i2cSclPin, config_.i2cClockHz)) return false;
     Wire.setTimeOut(20);
     i2cInitialized_ = true;
     return true;
@@ -576,6 +586,9 @@ class Hardware {
     reading = calibratedReading(*configured[index], volts.value_or(NAN), now);
     sensorReadState_[index] = !volts ? SensorReadState::Unavailable :
         (reading.valid ? SensorReadState::Reading : SensorReadState::OutOfRange);
+    adsPinVolts_[index] = volts && std::isfinite(*volts) && *volts >= -4.096 && *volts <= 3.3
+        ? volts : std::nullopt;
+    adsPinAcquiredMs_[index] = now;
     const std::array<std::optional<uint32_t>*, 3> adcMillivolts{{
         &pressureAdcMillivolts_, &flowAdcMillivolts_, &pumpFeedbackAdcMillivolts_}};
     auto& millivolts = *adcMillivolts[index];
@@ -652,6 +665,8 @@ class Hardware {
   std::optional<uint32_t> pressureAdcMillivolts_;
   std::optional<uint32_t> flowAdcMillivolts_;
   std::optional<uint32_t> pumpFeedbackAdcMillivolts_;
+  std::array<std::optional<double>, 3> adsPinVolts_;
+  std::array<uint32_t, 3> adsPinAcquiredMs_{};
   std::array<SensorReadState, 3> sensorReadState_{{SensorReadState::Never, SensorReadState::Never, SensorReadState::Never}};
   uint32_t lastNativeSampleMs_ = 0;
   uint32_t lastHealthMs_ = 0;

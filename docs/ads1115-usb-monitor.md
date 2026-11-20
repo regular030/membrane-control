@@ -1,5 +1,9 @@
 # Separate ADS1115 USB sensor board
 
+The current lab replacement ESP32 also owns the valves and pump. For that
+single-board setup use the [full lab rig firmware](lab-rig-ads1115.md), rather
+than this optional sensor-only target.
+
 The `esp32-ads1115-usb-monitor` target runs on a second ESP32. It reports real
 ADS1115 conversions over USB at 115200 baud and initializes only UART0 and I2C.
 
@@ -45,10 +49,10 @@ range and 128 SPS single-shot conversions, with a bounded completion wait.
 Signed conversion counts use 0.000125 volts per count, as specified in the
 [TI ADS1115 datasheet](https://www.ti.com/lit/ds/symlink/ads1115.pdf).
 
-The updated Membrane Control dashboard opens three independent connections at
-startup: the rig's outgoing Bluetooth COM9, the scale on COM6 and this sensor
-board on USB COM5. Use **Connections and settings > External sensor board** to
-choose another USB port or reconnect. The board must identify itself as
+The dashboard automatically opens the paired rig's outgoing Bluetooth port and
+the scale on COM6. Connect this optional separate sensor board manually under
+**Connections and settings > Optional separate sensor board**. Choose its USB
+port, such as COM5, and connect. The board must identify itself as
 `membrane-ads1115-monitor` before the app accepts measurements.
 
 The dashboard shows pressure in psi from the supplied certificate, flow in

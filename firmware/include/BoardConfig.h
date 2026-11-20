@@ -21,6 +21,7 @@ struct AnalogConfig {
   double minValue = -1000000;
   double maxValue = 1000000;
   bool rejectRails = true;
+  double adsZeroToleranceVolts = 0;  // Explicit ADS-only tolerance for measured near-zero codes.
   NativeAdcAttenuation nativeAdcAttenuation = NativeAdcAttenuation::Db11;
   bool nativeAdc2Pulldown = false;  // Calibration must include the enabled pull-down's loading.
 };
@@ -46,6 +47,7 @@ struct BoardConfig {
   bool pumpContactActiveHigh = true;
   int i2cSdaPin = -1;
   int i2cSclPin = -1;
+  uint32_t i2cClockHz = 100000;
   uint8_t gp8403Address = 0x58;
   uint8_t gp8403Channel = 0;
   bool gp8403InterfaceVerified = false;
@@ -85,7 +87,14 @@ inline bool calibrationValid(const AnalogConfig& input) {
       input.nativeAdcAttenuation == NativeAdcAttenuation::Db11 ||
       (input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 &&
        input.minPinVolts >= 0.100 && input.maxPinVolts <= 1.250);
-  return nativeRangeValid && input.calibrationVerified && std::isfinite(input.unitsPerVolt) && input.unitsPerVolt != 0 &&
+  const double zeroTolerance = input.adsZeroToleranceVolts;
+  const bool adsZeroValid = std::isfinite(zeroTolerance) && zeroTolerance >= 0 && zeroTolerance <= 0.005 &&
+      (zeroTolerance == 0 ||
+       (input.source == AnalogSource::Ads1115 && input.minPinVolts == 0 &&
+        input.unitsPerVolt > 0 && std::isfinite(input.offset) && input.offset <= 0 &&
+        -input.offset / input.unitsPerVolt <= zeroTolerance && !input.rejectRails &&
+        input.minValue <= 0 && input.maxValue > 0));
+  return nativeRangeValid && adsZeroValid && input.calibrationVerified && std::isfinite(input.unitsPerVolt) && input.unitsPerVolt != 0 &&
          std::isfinite(input.offset) && std::isfinite(input.minPinVolts) &&
          std::isfinite(input.maxPinVolts) && input.minPinVolts >= 0 &&
          input.maxPinVolts <= 3.3 && input.maxPinVolts > input.minPinVolts &&
@@ -170,6 +179,8 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
     return "pump RUN bit requires a 595 relay chain, active-high RUN and no contact GPIO";
   }
   if (boardUsesI2c(config) || config.i2cSdaPin != -1 || config.i2cSclPin != -1) {
+    if (config.i2cClockHz < 10000 || config.i2cClockHz > 400000)
+      return "I2C clock must be 10000-400000 Hz";
     if (!reserve(config.i2cSdaPin) || !reserve(config.i2cSclPin))
       return "I2C pins invalid or conflicting";
   }
@@ -251,8 +262,15 @@ inline Reading calibratedReading(const AnalogConfig& config, double pinVolts, ui
   Reading reading;
   reading.acquiredMs = now;
   reading.value = pinVolts * config.unitsPerVolt + config.offset;
-  reading.valid = calibrationValid(config) && std::isfinite(pinVolts) &&
-                  pinVolts >= config.minPinVolts && pinVolts <= config.maxPinVolts &&
+  const bool validCalibration = calibrationValid(config);
+  const bool adsZero = validCalibration && config.adsZeroToleranceVolts > 0;
+  const double minimumPinVolts = adsZero ? -config.adsZeroToleranceVolts : config.minPinVolts;
+  // A real completed ADS conversion can have a slightly negative ground code.
+  // Preserve the raw voltage elsewhere; this only normalizes its engineering zero.
+  if (adsZero && std::isfinite(pinVolts) && pinVolts >= minimumPinVolts &&
+      pinVolts <= -config.offset / config.unitsPerVolt) reading.value = 0;
+  reading.valid = validCalibration && std::isfinite(pinVolts) &&
+                  pinVolts >= minimumPinVolts && pinVolts <= config.maxPinVolts &&
                   reading.value >= config.minValue && reading.value <= config.maxValue;
   if (config.rejectRails && (pinVolts <= 0.001 || pinVolts >= 3.299)) reading.valid = false;
   return reading;
