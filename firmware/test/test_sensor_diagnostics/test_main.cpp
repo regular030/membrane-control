@@ -463,7 +463,7 @@ void test_lab_profile_reads_pressure_on_A3_with_calibration_and_cutoff_unchanged
   TEST_ASSERT_EQUAL(3, config.pressure.adsChannel);
   TEST_ASSERT_EQUAL(1, config.flow.adsChannel);
   TEST_ASSERT_EQUAL(2, config.pumpFeedback.adsChannel);
-  TEST_ASSERT_EQUAL(33, config.pumpPwmPin);
+  TEST_ASSERT_EQUAL(25, config.pumpPwmPin);
   TEST_ASSERT_EQUAL(22, config.i2cSdaPin);
   TEST_ASSERT_EQUAL(21, config.i2cSclPin);
   TEST_ASSERT_EQUAL(14, config.shiftDataPin);
@@ -484,7 +484,7 @@ void test_lab_profile_reads_pressure_on_A3_with_calibration_and_cutoff_unchanged
   Wire.adsConversions[3] = 6407;   // A3 is just above the 80 psi threshold.
   Hardware hardware(config, false);
   TEST_ASSERT_TRUE(hardware.begin());
-  TEST_ASSERT_EQUAL(33, fake::ledcPins.at(config.pumpPwmChannel));
+  TEST_ASSERT_EQUAL(25, fake::ledcPins.at(config.pumpPwmChannel));
   for (uint32_t now = 100; now <= 230; now += 10) hardware.sample(now);
   TEST_ASSERT_TRUE(hardware.measurements().pressure.valid);
   TEST_ASSERT_TRUE(hardware.measurements().pressure.value > 80);
