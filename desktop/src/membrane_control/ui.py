@@ -28,6 +28,7 @@ from .models import MAX_STEPS, Recipe
 from .adc_display import adc_display_readings, adc_display_values, adc_monitor_selected
 from .bluetooth_pairing import BluetoothPairingWindow
 from .connection_diagnostics import connection_diagnostics
+from .controller import _checked_pump_pwm
 from .device_status import (
     MANUAL_VALVE_BITS, MANUAL_VALVE_IDS, checked_manual_pump_profile, checked_pressure_startup,
     device_statuses,
@@ -1145,6 +1146,13 @@ class MainWindow(QMainWindow):
         feedback_percent = _drive_feedback_percent(feedback)
         if feedback_percent is not None:
             drive_text += f" · Reported drive level {feedback_percent:.1f}%"
+        pwm = _checked_pump_pwm(snapshot)
+        if pwm is None:
+            pwm_text = "Controller PWM readback unavailable"
+        else:
+            pwm_percent = pwm["duty_code"] * 100 / (1 << pwm["resolution_bits"])
+            pwm_text = (f"Controller PWM: {pwm_percent:.1f}% · IO{pwm['pin']} · "
+                        f"{pwm['frequency_hz']} Hz (register readback)")
         rpm = snapshot.get("pump_rpm")
         if snapshot.get("pump_tach_status") == "waiting":
             tach_text = "Waiting for a tachometer sample"
@@ -1155,7 +1163,7 @@ class MainWindow(QMainWindow):
         else:
             rpm_text = "under 0.1" if rpm < 0.05 else _number(rpm, 1)
             tach_text = f"Motor tachometer {rpm_text} RPM · rotation detected"
-        self.manual_pump_feedback.setText(f"{contact_text} · {drive_text}\n{tach_text}")
+        self.manual_pump_feedback.setText(f"{contact_text} · {drive_text}\n{pwm_text}\n{tach_text}")
 
     def _manual_command(self, *_):
         pump_percent = self.manual_pump.value()

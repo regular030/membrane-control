@@ -28,6 +28,7 @@ inline bool ledcSetFails = false;
 inline bool ledcUpdateFails = false;
 inline bool ledcStopFails = false;
 inline std::array<uint32_t, 16> ledcDuties{};
+inline std::array<uint32_t, 8> ledcFrequencies{};
 inline std::array<int, 16> ledcPins{};
 inline std::vector<LedcEvent> ledcEvents;
 inline void resetGpio() {
@@ -42,7 +43,7 @@ inline void resetGpio() {
 inline void resetLedc() {
   ledcCalls = 0; ledcSetupSucceeds = true; ledcActualFrequency = 0;
   ledcAttachFails = ledcSetFails = ledcUpdateFails = ledcStopFails = false;
-  ledcDuties.fill(0); ledcPins.fill(-1); ledcEvents.clear();
+  ledcDuties.fill(0); ledcFrequencies.fill(0); ledcPins.fill(-1); ledcEvents.clear();
 }
 inline void recordLedc(const char* operation, int channel, int pin, uint32_t value) {
   ++ledcCalls;
@@ -67,5 +68,7 @@ inline uint32_t analogReadMilliVolts(int pin) {
 }
 inline uint32_t ledcSetup(uint8_t channel, uint32_t frequency, uint8_t resolution) {
   fake::recordLedc("setup", channel, -1, resolution);
-  return fake::ledcSetupSucceeds ? (fake::ledcActualFrequency ? fake::ledcActualFrequency : frequency) : 0;
+  const uint32_t actual = fake::ledcSetupSucceeds ? (fake::ledcActualFrequency ? fake::ledcActualFrequency : frequency) : 0;
+  if (actual) fake::ledcFrequencies.at((channel / 8) * 4 + (channel / 2) % 4) = actual;
+  return actual;
 }

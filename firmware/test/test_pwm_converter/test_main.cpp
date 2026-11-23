@@ -761,6 +761,116 @@ void test_tach_errors_and_missed_windows_omit_rpm_without_blocking_control() {
   TEST_ASSERT_DOUBLE_WITHIN(0.001, 600, rpm);
 }
 
+void test_pwm_readback_queries_actual_registers_without_writing_outputs() {
+  const auto config = pwmFixture();
+  Hardware hardware(config, false);
+  TEST_ASSERT_FALSE(hardware.pumpPwmReadback().has_value());
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.apply(pump(24), 100, false));
+  auto reading = hardware.pumpPwmReadback();
+  TEST_ASSERT_TRUE(reading.has_value());
+  TEST_ASSERT_EQUAL(25, reading->pin);
+  TEST_ASSERT_EQUAL_UINT32(1000, reading->frequencyHz);
+  TEST_ASSERT_EQUAL_UINT32(983, reading->dutyCode);
+  TEST_ASSERT_EQUAL(12, reading->resolutionBits);
+
+  // Model a peripheral value different from the driver's cached 24% command.
+  fake::ledcDuties[0] = 614;
+  fake::ledcFrequencies[0] = 1001;
+  const auto gpioCalls = fake::gpioCalls;
+  const auto ledcCalls = fake::ledcCalls;
+  const auto i2cCalls = Wire.transactionCount;
+  for (unsigned repeat = 0; repeat < 10; ++repeat) {
+    reading = hardware.pumpPwmReadback();
+    TEST_ASSERT_TRUE(reading.has_value());
+    TEST_ASSERT_EQUAL_UINT32(614, reading->dutyCode);
+    TEST_ASSERT_EQUAL_UINT32(1001, reading->frequencyHz);
+  }
+  TEST_ASSERT_EQUAL(gpioCalls, fake::gpioCalls);
+  TEST_ASSERT_EQUAL(ledcCalls, fake::ledcCalls);
+  TEST_ASSERT_EQUAL(i2cCalls, Wire.transactionCount);
+}
+
+void test_pwm_readback_uses_the_correct_speed_group_channel_and_timer() {
+  for (int channel : {0, 1, 2, 7, 8, 9, 15}) {
+    fake::resetGpio(); fake::resetLedc(); Wire.reset();
+    auto config = pwmFixture();
+    config.pumpPwmChannel = channel;
+    Hardware hardware(config, false);
+    TEST_ASSERT_TRUE(hardware.begin());
+    fake::ledcDuties[channel] = 100 + channel;
+    fake::ledcFrequencies[(channel / 8) * 4 + (channel / 2) % 4] = 1000 + channel;
+    const auto reading = hardware.pumpPwmReadback();
+    TEST_ASSERT_TRUE(reading.has_value());
+    TEST_ASSERT_EQUAL_UINT32(100 + channel, reading->dutyCode);
+    TEST_ASSERT_EQUAL_UINT32(1000 + channel, reading->frequencyHz);
+  }
+}
+
+void test_pwm_readback_omits_uninitialized_simulated_non_pwm_or_failed_initialization() {
+  const auto config = pwmFixture();
+  Hardware simulated(config, true);
+  TEST_ASSERT_TRUE(simulated.begin());
+  TEST_ASSERT_FALSE(simulated.pumpPwmReadback().has_value());
+  Hardware factory(BoardConfig{}, false);
+  TEST_ASSERT_FALSE(factory.begin());
+  TEST_ASSERT_FALSE(factory.pumpPwmReadback().has_value());
+  auto gp = config;
+  gp.pumpCommandSource = PumpCommandSource::Gp8403;
+  gp.gp8403InterfaceVerified = true;
+  gp.i2cSdaPin = 21; gp.i2cSclPin = 22;
+  Hardware nonPwm(gp, false);
+  TEST_ASSERT_TRUE(nonPwm.begin());
+  TEST_ASSERT_FALSE(nonPwm.pumpPwmReadback().has_value());
+  for (bool attachFailure : {false, true}) {
+    fake::resetGpio(); fake::resetLedc(); Wire.reset();
+    fake::ledcSetupSucceeds = attachFailure;
+    fake::ledcAttachFails = attachFailure;
+    Hardware unavailable(config, false);
+    TEST_ASSERT_FALSE(unavailable.begin());
+    TEST_ASSERT_FALSE(unavailable.pumpPwmReadback().has_value());
+  }
+}
+
+void test_pwm_readback_rejects_invalid_frequency_and_out_of_register_range_duty() {
+  const auto config = pwmFixture();
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  for (uint32_t frequency : {0U, 21U, 20001U}) {
+    fake::ledcFrequencies[0] = frequency;
+    TEST_ASSERT_FALSE(hardware.pumpPwmReadback().has_value());
+  }
+  fake::ledcFrequencies[0] = 1000;
+  fake::ledcDuties[0] = 4097;
+  TEST_ASSERT_FALSE(hardware.pumpPwmReadback().has_value());
+  fake::ledcDuties[0] = 4096;
+  TEST_ASSERT_EQUAL_UINT32(4096, hardware.pumpPwmReadback()->dutyCode);
+}
+
+void test_pwm_readback_remains_actual_after_stop_or_runtime_fault() {
+  const auto config = pwmFixture();
+  Hardware hardware(config, false);
+  TEST_ASSERT_TRUE(hardware.begin());
+  TEST_ASSERT_TRUE(hardware.apply(pump(50), 100, false));
+  TEST_ASSERT_EQUAL_UINT32(2048, hardware.pumpPwmReadback()->dutyCode);
+  hardware.safeStop();
+  TEST_ASSERT_EQUAL_UINT32(0, hardware.pumpPwmReadback()->dutyCode);
+  TEST_ASSERT_TRUE(hardware.apply(pump(50), 200, false));
+  TEST_ASSERT_FALSE(hardware.apply(pump(-1), 201, false));
+  TEST_ASSERT_FALSE(hardware.ready());
+  TEST_ASSERT_EQUAL_UINT32(0, hardware.pumpPwmReadback()->dutyCode);
+
+  // A failed stop must report the retained register value, never invent zero.
+  fake::resetGpio(); fake::resetLedc(); Wire.reset();
+  Hardware failedStop(config, false);
+  TEST_ASSERT_TRUE(failedStop.begin());
+  TEST_ASSERT_TRUE(failedStop.apply(pump(50), 100, false));
+  fake::ledcSetFails = fake::ledcStopFails = true;
+  failedStop.safeStop();
+  TEST_ASSERT_FALSE(failedStop.ready());
+  TEST_ASSERT_EQUAL_UINT32(2048, failedStop.pumpPwmReadback()->dutyCode);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_default_and_unreviewed_pwm_never_touch_any_gpio_i2c_or_ledc);
@@ -794,5 +904,10 @@ int main() {
   RUN_TEST(test_tach_is_optional_and_requires_a_free_pin_and_positive_pulses_per_revolution);
   RUN_TEST(test_tach_counts_across_counter_and_clock_wraps_and_reports_zero_pulses);
   RUN_TEST(test_tach_errors_and_missed_windows_omit_rpm_without_blocking_control);
+  RUN_TEST(test_pwm_readback_queries_actual_registers_without_writing_outputs);
+  RUN_TEST(test_pwm_readback_uses_the_correct_speed_group_channel_and_timer);
+  RUN_TEST(test_pwm_readback_omits_uninitialized_simulated_non_pwm_or_failed_initialization);
+  RUN_TEST(test_pwm_readback_rejects_invalid_frequency_and_out_of_register_range_duty);
+  RUN_TEST(test_pwm_readback_remains_actual_after_stop_or_runtime_fault);
   return UNITY_END();
 }

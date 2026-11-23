@@ -32,7 +32,8 @@ LAB_CONTROLLER_LEGACY_BLUETOOTH_ADDRESS = "8C94DF50204E"
 LAB_CONTROLLER_BLUETOOTH_ADDRESSES = (LAB_CONTROLLER_BLUETOOTH_ADDRESS,
                                       LAB_CONTROLLER_LEGACY_BLUETOOTH_ADDRESS)
 WINDOWS_SPP_ID_PREFIX = "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_"
-EMPTY_PUMP_MOTION = {"pump_rpm": None, "pump_tach_status": None, "pump_run_contact_commanded": None}
+EMPTY_PUMP_MOTION = {"pump_rpm": None, "pump_tach_status": None, "pump_run_contact_commanded": None,
+                     "pump_pwm": None}
 EMPTY_ADC_VOLTAGES = {"pressure_adc_mv": None, "flow_adc_mv": None, "pump_feedback_adc_mv": None}
 EMPTY_ADC_PIN_VOLTS = {"pressure_adc_v": None, "flow_adc_v": None, "pump_feedback_adc_v": None}
 
@@ -47,6 +48,22 @@ def _adc_pin_volts(packet):
         if type(value) in (int, float) and -4.096 <= value <= 4.096 and math.isfinite(value):
             result[field] = float(value)
     return result
+
+
+def _checked_pump_pwm(packet):
+    """Validate physical PWM register readback without granting output authority."""
+    if packet.get("simulation") is not False or packet.get("hardware_verified") is not True:
+        return None
+    value = packet.get("pump_pwm")
+    fields = ("pin", "frequency_hz", "duty_code", "resolution_bits")
+    if type(value) is not dict or any(type(value.get(field)) is not int for field in fields):
+        return None
+    pin, frequency, duty, bits = (value[field] for field in fields)
+    if (not 0 <= pin <= 33 or pin in (1, 3, 20, 24) or 6 <= pin <= 11 or 28 <= pin <= 31
+            or not 22 <= frequency <= 20000 or not 8 <= bits <= 16
+            or not 0 <= duty <= (1 << bits)):
+        return None
+    return {field: value[field] for field in fields}
 
 
 def _adc_pin_mv(value):
@@ -204,6 +221,9 @@ class AppController:
         if command in ("manual", "manual_valves") and type(valves) in (list, tuple) and len(valves) == 7:
             details["commanded_valves"] = {f"V{valve}": "ON" if valves[valve - 1] else "OFF"
                                            for valve in MANUAL_VALVE_IDS}
+        pump = values.get("pump_percent")
+        if command == "manual" and type(pump) in (int, float) and 0 <= pump <= 100 and math.isfinite(pump):
+            details["pump_percent"] = float(pump)
         try:
             self.driver.send(packet)
         except Exception as error:
@@ -893,7 +913,7 @@ class AppController:
                 diagnostics.update(_adc_pin_volts(packet))
                 self.device = {key: value for key, value in packet.items()
                                if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
-                                              "manual_pump_profile", "pressure_startup", *EMPTY_ADC_VOLTAGES,
+                                              "manual_pump_profile", "pressure_startup", "pump_pwm", *EMPTY_ADC_VOLTAGES,
                                               *EMPTY_ADC_PIN_VOLTS,
                                               "valve_control_ready", "manual_valve_count", "manual_valve_ids",
                                               "valve_bits", "valve_control_status", "sensor_test_available")}
@@ -1016,6 +1036,7 @@ class AppController:
         self.last_controller_uptime = uptime
         self.snapshot.update(values)
         self.snapshot.update(_pump_motion_fields(packet))
+        self.snapshot["pump_pwm"] = _checked_pump_pwm(packet)
         self.snapshot["sensor_status"] = checked_sensor_status(packet.get("sensor_status"))
         pump_profile = self.device.get("manual_pump_profile")
         pressure_startup = checked_pressure_startup(packet, pump_profile)

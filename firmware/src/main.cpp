@@ -551,6 +551,13 @@ void writeTelemetry(uint32_t now) {
   JsonArray valves = document["valves"].to<JsonArray>();
   for (bool state : controller.outputs().valves) valves.add(state);
   document["pump_percent"] = controller.outputs().pumpPercent;
+  if (const auto pwm = hardware.pumpPwmReadback()) {
+    JsonObject readback = document["pump_pwm"].to<JsonObject>();
+    readback["pin"] = pwm->pin;
+    readback["frequency_hz"] = pwm->frequencyHz;
+    readback["duty_code"] = pwm->dutyCode;
+    readback["resolution_bits"] = pwm->resolutionBits;
+  }
   if (hardware.pumpContactCommandAvailable())
     document["pump_run_contact_commanded"] = hardware.pumpRunContactCommanded();
   if (const char* status = hardware.pumpTachStatus(now)) {

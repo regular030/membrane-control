@@ -112,13 +112,16 @@ turns all six off. These are coil commands, not measured valve positions.
 With a commissioned controller, a current pressure reading and the approved
 sequence applied, enter a positive percentage in **New pump setting** and
 click **Start pump**. Use **Apply speed** to change that setting during manual
-pump operation. **Sent** shows the commanded percentage. **Stop pump** sends
+pump operation. **Commanded** shows the controller-confirmed percentage. **Stop pump** sends
 the controller's stop command, which sets the pump to zero and restores the
 configured safe valve positions. Stop the current manual mode before starting
 a sequence or switching between valve-only and pump operation.
 
 Pump settings reports the last commanded percentage, the controller's RUN
-contact command and the drive's returned command voltage separately. A
+contact command and the drive's returned command voltage separately.
+**Controller PWM** shows duty and frequency read from the ESP32 timer registers,
+along with its configured output pin. It checks controller programming; it does
+not measure the pin waveform, converter voltage or pump rotation. A
 commissioned tach input supplies measured RPM. After Stop, a working tach
 should report no pulses as the motor comes to rest. See the
 [pump feedback wiring](../hardware/pump-interface.md#measure-motor-rotation).

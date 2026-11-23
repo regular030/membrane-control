@@ -21,6 +21,13 @@ struct SensorTestMillivolts {
   uint32_t pumpFeedback = 0;
 };
 
+struct PumpPwmReadback {
+  int pin;
+  uint32_t frequencyHz;
+  uint32_t dutyCode;
+  int resolutionBits;
+};
+
 inline const char* analogSourceName(AnalogSource source) {
   switch (source) {
     case AnalogSource::NativeAdc1: return "native_adc1";
@@ -340,6 +347,22 @@ class Hardware {
   std::optional<double> pumpFeedbackAdcVolts(uint32_t now) const { return adsPinVolts(2, now); }
   bool pumpContactCommandAvailable() const { return pumpContactCommandAvailable_; }
   bool pumpRunContactCommanded() const { return pumpRunContactCommanded_; }
+  std::optional<PumpPwmReadback> pumpPwmReadback() const {
+    if (simulation_ || !pwmInitialized_ || config_.pumpCommandSource != PumpCommandSource::PwmConverter ||
+        !outputCapablePin(config_.pumpPwmPin) || config_.pumpPwmResolutionBits < 8 ||
+        config_.pumpPwmResolutionBits > 16) return std::nullopt;
+    const auto mode = static_cast<ledc_mode_t>(config_.pumpPwmChannel / 8);
+    const auto channel = static_cast<ledc_channel_t>(config_.pumpPwmChannel % 8);
+    const auto timer = static_cast<ledc_timer_t>((config_.pumpPwmChannel / 2) % 4);
+    // Query the peripheral registers every time, including after Stop/fault.
+    // Pin and bit width describe this driver's initialized channel mapping;
+    // frequency/duty are independent of the requested pump percentage.
+    const uint32_t frequency = ledc_get_freq(mode, timer);
+    const uint32_t duty = ledc_get_duty(mode, channel);
+    if (frequency < 22 || frequency > 20000 || duty > (1UL << config_.pumpPwmResolutionBits))
+      return std::nullopt;
+    return PumpPwmReadback{config_.pumpPwmPin, frequency, duty, config_.pumpPwmResolutionBits};
+  }
   const char* pumpTachStatus(uint32_t now) const { return simulation_ ? nullptr : pumpTach_.status(now); }
   bool readPumpRpm(uint32_t now, double& rpm) const { return pumpTach_.readRpm(now, rpm); }
   const char* sensorStatus(std::size_t index, uint32_t now) const {

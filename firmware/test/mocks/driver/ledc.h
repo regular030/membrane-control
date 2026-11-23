@@ -19,6 +19,12 @@ struct ledc_channel_config_t {
   int hpoint;
 };
 inline int fakeChannel(ledc_mode_t mode, ledc_channel_t channel) { return int(mode) * 8 + int(channel); }
+inline uint32_t ledc_get_duty(ledc_mode_t mode, ledc_channel_t channel) {
+  return fake::ledcDuties.at(fakeChannel(mode, channel));
+}
+inline uint32_t ledc_get_freq(ledc_mode_t mode, ledc_timer_t timer) {
+  return fake::ledcFrequencies.at(int(mode) * 4 + int(timer));
+}
 inline esp_err_t ledc_channel_config(const ledc_channel_config_t* config) {
   const int channel = fakeChannel(config->speed_mode, config->channel);
   fake::recordLedc("attach", channel, config->gpio_num, config->duty);
