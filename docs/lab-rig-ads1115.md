@@ -18,8 +18,11 @@ Classic serial (SPP), which Windows exposes as an outgoing COM port.
 | Divider negative terminals | Common ADC/ESP32/sensor return |
 | Relay data / clock / latch / OE | GPIO14 / 13 / 12 / 5 |
 | V1,V2,V3,V4,V5,V7 | Register bits 0,1,2,3,5,6; no V6 |
-| Pump speed converter PWM | GPIO25, 1 kHz |
+| Pump speed converter PWM | GPIO26, 1 kHz |
 | Pump RUN contact | Register bit 15, DB25 15/17 |
+
+Connect Garosa PWM+ to IO26 and PWM− to ESP32 GND. The full-rig target
+uses IO26; the separate converter bench example still uses IO25.
 
 The profile uses the reported 5:1 dividers and pressure certificate endpoints
 0 psi at 0.005 V and 100 psi at 5.004 V before division. Pressure is
