@@ -6,6 +6,14 @@ relay GPIO, sensor GPIO or I2C. Measurements are explicitly simulated and every
 hello/telemetry message reports `simulation: true` and `hardware_verified: false`.
 Nothing in this repository establishes that the physical rig is commissioned.
 
+## Separate ADS1115 USB sensor board
+
+Use `esp32-ads1115-usb-monitor` for the second ESP32 attached to the ADS1115.
+It reads A0 pressure, A1 flow and A2 pump feedback, with SDA on GPIO22 and SCL
+on GPIO21, and sends voltages plus a heartbeat over USB at 115200 baud. Only
+the serial and I2C interfaces initialize. This target is included in the
+firmware release archive; see the [wiring and connection guide](../docs/ads1115-usb-monitor.md).
+
 ## Normal manual control of the six confirmed valves
 
 Full-controller firmware **0.1.16**, target **esp32-physical**, supports the
@@ -49,6 +57,21 @@ firmware operates real 74HC595 outputs in bounded test pulses. Use the app's
 [relay test guide](../docs/relay-board-test.md) to establish the off pattern and
 record the physical channel mapping. No pump or sensor interface is needed for
 this unloaded test, and it cannot run experiments.
+
+## USB pump commissioning targets
+
+The 0.1.28 firmware archive includes prebuilt `esp32-pump-voltage-test` and
+`esp32-pump-open-bucket-test` images. The first stages the 50% command with all
+relay outputs held off. The second can close the RUN contact for up to ten
+seconds at 50%. Use it only with a primed pump and an unrestricted discharge
+to an open bucket, isolated from the rig valves. The tests use the wired USB
+port and their own app screens. See the [pump interface](../hardware/pump-interface.md)
+and [firmware upload guide](../docs/full-firmware.md#run-the-usb-pump-tests).
+
+After testing, return to the normal Bluetooth controller with
+`esp32-bluetooth-physical` or the wired controller with `esp32-physical`. The
+normal firmware still requires a reviewed profile and a valid pressure reading
+for pump operation on the rig.
 
 ## Legacy separate solenoid valve commissioning
 

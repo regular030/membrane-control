@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "CWF water test",
+  "description": "The user-confirmed V1 and V3 water path on the lab ADS1115 rig. Pump command is 25 percent; the firmware retains its 80 psi cutoff and all-off Stop state.",
+  "hardware_approved": true,
+  "repeat": 1,
+  "sample_interval_s": 1,
+  "require_balance": false,
+  "desired_flow_ml_min": 80,
+  "steps": [
+    {"name": "Open V1 and V3", "duration_s": 2, "valves": [true, false, true, false, false, false, false], "pump_percent": 0},
+    {"name": "Measure clean water flow", "duration_s": 60, "valves": [true, false, true, false, false, false, false], "pump_percent": 25},
+    {"name": "Stop pump", "duration_s": 2, "valves": [true, false, true, false, false, false, false], "pump_percent": 0},
+    {"name": "All valves off", "duration_s": 2, "valves": [false, false, false, false, false, false, false], "pump_percent": 0}
+  ]
+}

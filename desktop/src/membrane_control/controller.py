@@ -9,7 +9,12 @@ from pathlib import Path
 import time
 
 from .balance import MassFlow, parse_mass
-from .device_status import MANUAL_VALVE_IDS, SENSOR_KEYS, checked_controller_diagnostics, checked_sensor_status, checked_valve_control
+from .ads1115_monitor import Ads1115Monitor
+from .adc_display import adc_display_values, adc_monitor_selected
+from .device_status import (
+    MANUAL_VALVE_IDS, SENSOR_KEYS, checked_controller_diagnostics, checked_manual_pump_profile,
+    checked_pressure_startup, checked_sensor_status, checked_valve_control,
+)
 from .esp32_link_log import Esp32LinkLog
 from .models import Recipe, number, valve_states
 from .recipes import built_in_recipes, read_recipe, write_recipe
@@ -20,9 +25,45 @@ DEFAULT_SETTINGS = {"membrane_area_m2": 0.01, "density_g_ml": 1.0,
                     "record_interval_s": 1.0, "require_balance": False,
                     "max_pressure_psi": 20.0}
 REQUEST_TIMEOUT_S = 3.0
-LAB_CONTROLLER_FALLBACK_PORT = "COM8"
-LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF50204E"
+LAB_CONTROLLER_FALLBACK_PORT = "COM9"
+LAB_ADC_MONITOR_PORT = "COM5"
+LAB_CONTROLLER_BLUETOOTH_ADDRESS = "8C94DF4F8AEA"
+LAB_CONTROLLER_LEGACY_BLUETOOTH_ADDRESS = "8C94DF50204E"
+LAB_CONTROLLER_BLUETOOTH_ADDRESSES = (LAB_CONTROLLER_BLUETOOTH_ADDRESS,
+                                      LAB_CONTROLLER_LEGACY_BLUETOOTH_ADDRESS)
 WINDOWS_SPP_ID_PREFIX = "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_"
+EMPTY_PUMP_MOTION = {"pump_rpm": None, "pump_tach_status": None, "pump_run_contact_commanded": None,
+                     "pump_pwm": None}
+EMPTY_ADC_VOLTAGES = {"pressure_adc_mv": None, "flow_adc_mv": None, "pump_feedback_adc_mv": None}
+EMPTY_ADC_PIN_VOLTS = {"pressure_adc_v": None, "flow_adc_v": None, "pump_feedback_adc_v": None}
+
+
+def _adc_pin_volts(packet):
+    """Preserve actual signed ADS1115 voltages independently of calibration."""
+    result = dict(EMPTY_ADC_PIN_VOLTS)
+    if packet.get("simulation") is not False:
+        return result
+    for field in result:
+        value = packet.get(field)
+        if type(value) in (int, float) and -4.096 <= value <= 4.096 and math.isfinite(value):
+            result[field] = float(value)
+    return result
+
+
+def _checked_pump_pwm(packet):
+    """Validate physical PWM register readback without granting output authority."""
+    if packet.get("simulation") is not False or packet.get("hardware_verified") is not True:
+        return None
+    value = packet.get("pump_pwm")
+    fields = ("pin", "frequency_hz", "duty_code", "resolution_bits")
+    if type(value) is not dict or any(type(value.get(field)) is not int for field in fields):
+        return None
+    pin, frequency, duty, bits = (value[field] for field in fields)
+    if (not 0 <= pin <= 33 or pin in (1, 3, 20, 24) or 6 <= pin <= 11 or 28 <= pin <= 31
+            or not 22 <= frequency <= 20000 or not 8 <= bits <= 16
+            or not 0 <= duty <= (1 << bits)):
+        return None
+    return {field: value[field] for field in fields}
 
 
 def _adc_pin_mv(value):
@@ -31,6 +72,27 @@ def _adc_pin_mv(value):
                                    for key in SENSOR_KEYS):
         return {key: value[key] for key in SENSOR_KEYS}
     return {}
+
+
+def _pump_motion_fields(packet):
+    """Read optional, commissioned motion diagnostics without dropping pressure telemetry."""
+    if packet["simulation"] or not packet["hardware_verified"]:
+        return EMPTY_PUMP_MOTION
+    contact = packet.get("pump_run_contact_commanded")
+    status = packet.get("pump_tach_status")
+    rpm = None
+    if status in ("reading_received", "no_pulses"):
+        try:
+            rpm = number(packet.get("pump_rpm"), "Pump tachometer", 0, 10000)
+        except ValueError:
+            status = "unavailable"
+        else:
+            if (status == "no_pulses") != (rpm == 0):
+                status, rpm = "unavailable", None
+    elif status not in ("waiting", "unavailable"):
+        status = None
+    return {"pump_rpm": rpm, "pump_tach_status": status,
+            "pump_run_contact_commanded": contact if type(contact) is bool else None}
 
 
 class AppController:
@@ -56,6 +118,7 @@ class AppController:
         self.recipe = copy.deepcopy(next(iter(self.presets.values())))
         self.driver = None
         self.balance = None
+        self.adc_monitor = Ads1115Monitor(clock=self.clock)
         self.preferred_controller_port = LAB_CONTROLLER_FALLBACK_PORT
         self.balance_polling = False
         self.balance_port_open = False
@@ -89,10 +152,14 @@ class AppController:
             "balance_polling": False,
             "balance_status": "Not connected", "hardware_verified": False,
             "controller_mode": None, "hardware_status": None, "sensor_inputs": {}, "sensor_status": {},
+            "manual_pump_profile": None, "pressure_startup": None,
+            **EMPTY_ADC_VOLTAGES, **EMPTY_ADC_PIN_VOLTS,
             "live_sensor_voltages": {}, "live_sensor_zero": {},
+            "adc_monitor": self.adc_monitor.snapshot(),
             "valve_control_ready": False, "manual_valve_count": 0, "manual_valve_ids": [],
             "valve_bits": [], "valve_control_status": "Valve-only controls unavailable",
             "pressure_psi": None, "flow_ml_min": None, "pump_feedback_v": None, "flux_lmh": None, "mass_g": None,
+            **EMPTY_PUMP_MOTION,
             "balance_flow_ml_min": None, "pump_percent": 0.0, "valves": [False]*7,
             "step_index": -1, "cycle": 0, "remaining_s": 0.0, "fault": None,
             "elapsed_s": 0.0, "run_id": None, "log": [], "recipe_name": self.recipe.name,
@@ -154,6 +221,9 @@ class AppController:
         if command in ("manual", "manual_valves") and type(valves) in (list, tuple) and len(valves) == 7:
             details["commanded_valves"] = {f"V{valve}": "ON" if valves[valve - 1] else "OFF"
                                            for valve in MANUAL_VALVE_IDS}
+        pump = values.get("pump_percent")
+        if command == "manual" and type(pump) in (int, float) and 0 <= pump <= 100 and math.isfinite(pump):
+            details["pump_percent"] = float(pump)
         try:
             self.driver.send(packet)
         except Exception as error:
@@ -219,6 +289,7 @@ class AppController:
             raise ValueError("Stop before switching connection modes")
         self.disconnect_controller()
         self.disconnect_balance()
+        self.disconnect_adc_monitor()
         self.simulation = bool(enabled)
         self.snapshot["simulation"] = self.simulation
         self.local_fault = None
@@ -237,7 +308,7 @@ class AppController:
 
         self.preferred_controller_port = None
         ports = list_ports.comports()
-        outgoing_ports = set()
+        outgoing_ports = {address: set() for address in LAB_CONTROLLER_BLUETOOTH_ADDRESSES}
         fallback = None
         for port in ports:
             hardware_id = (port.hwid or "").upper()
@@ -245,13 +316,17 @@ class AppController:
                 # Windows uses a zero peer for the incoming port and embeds the
                 # remote device address in the outgoing port's instance ID.
                 peer = hardware_id.rsplit("&", 1)[-1].partition("_")[0]
-                if peer == LAB_CONTROLLER_BLUETOOTH_ADDRESS:
-                    outgoing_ports.add(port.device)
+                if peer in outgoing_ports:
+                    outgoing_ports[peer].add(port.device)
             if port.device == LAB_CONTROLLER_FALLBACK_PORT and hardware_id in ("", "N/A"):
                 fallback = port.device
-        if len(outgoing_ports) == 1:
-            self.preferred_controller_port = next(iter(outgoing_ports))
-        elif not outgoing_ports:
+        for address in LAB_CONTROLLER_BLUETOOTH_ADDRESSES:
+            candidates = outgoing_ports[address]
+            if candidates:
+                if len(candidates) == 1:
+                    self.preferred_controller_port = next(iter(candidates))
+                break
+        else:
             self.preferred_controller_port = fallback
         return [(p.device, p.description) for p in ports]
 
@@ -262,6 +337,9 @@ class AppController:
             raise ValueError("Stop before reconnecting")
         if self.balance is not None and self.balance.port == port:
             raise ValueError("Controller and balance need different ports")
+        # Selecting the full rig transfers acquisition back to its own sensor
+        # telemetry. Release any previous USB-monitor lease before reusing it.
+        self.disconnect_adc_monitor(clear_selection=True)
         self.disconnect_controller()
         self._esp32_port = port
         self._esp32_connection_id += 1
@@ -321,7 +399,9 @@ class AppController:
 
     def _reset_diagnostics(self):
         self._reported_valve_control_ready = None
+        self.snapshot.update(EMPTY_PUMP_MOTION, **EMPTY_ADC_VOLTAGES, **EMPTY_ADC_PIN_VOLTS)
         self.snapshot.update(controller_mode=None, hardware_status=None, sensor_inputs={}, sensor_status={},
+            manual_pump_profile=None, pressure_startup=None,
             valve_control_ready=False, manual_valve_count=0, manual_valve_ids=[], valve_bits=[],
             valve_control_status="Valve-only controls unavailable", sensor_test_available=False,
             sensor_test_voltages={}, sensor_test_status="", live_sensor_voltages={}, live_sensor_zero={})
@@ -343,6 +423,8 @@ class AppController:
         port = port.strip()
         if self.driver is not None and self.driver.port == port:
             raise ValueError("Balance and controller need different ports")
+        if self._adc_port_matches(port):
+            raise ValueError("Balance and ADC sensor board need different ports")
         self.disconnect_balance()
         options = {"raw": True}
         # The lab Nimbus responds on COM6 with DTR inactive. Asserting DTR
@@ -356,6 +438,55 @@ class AppController:
         self.snapshot["balance_polling"] = polling
         self.snapshot["balance_status"] = "Waiting for a weight reading"
         self._log(f"Opening balance {port} at {baud} baud, {serial_format}")
+
+    def _adc_port_matches(self, port):
+        adc_port = self.adc_monitor.snapshot().get("port")
+        return (self.adc_monitor.transport is not None
+                and isinstance(port, str) and isinstance(adc_port, str)
+                and port.strip().casefold() == adc_port.strip().casefold())
+
+    def connect_adc_monitor(self, port=LAB_ADC_MONITOR_PORT):
+        if self.closed:
+            raise ValueError("The application is closed")
+        if self.simulation:
+            raise ValueError("Use hardware mode to connect the ADC sensor board")
+        if not isinstance(port, str) or not port.strip():
+            raise ValueError("Choose the ADC sensor board serial port")
+        port = port.strip()
+        for device in (self.driver, self.balance):
+            other_port = getattr(device, "port", None)
+            if isinstance(other_port, str) and port.casefold() == other_port.casefold():
+                raise ValueError("The ADC sensor board needs its own serial port")
+        self.disconnect_adc_monitor()
+        try:
+            if not self.adc_monitor.connect(port):
+                raise RuntimeError(self.adc_monitor.snapshot().get("status") or "Sensor board connection failed")
+        finally:
+            self.snapshot["adc_monitor"] = self.adc_monitor.snapshot()
+        self._log(f"Opening ADC sensor board {port}")
+
+    def disconnect_adc_monitor(self, *, clear_selection=False):
+        try:
+            if clear_selection:
+                self.adc_monitor.clear_selection()
+            else:
+                self.adc_monitor.disconnect()
+        finally:
+            if hasattr(self, "snapshot"):
+                self.snapshot["adc_monitor"] = self.adc_monitor.snapshot()
+
+    def _poll_adc_monitor(self):
+        try:
+            self.adc_monitor.tick()
+        except Exception as error:
+            # This independent acquisition stream cannot affect the rig's
+            # command session or replace its pressure protection input.
+            self._log("ADC sensor board error: " + str(error))
+            try:
+                self.adc_monitor.disconnect()
+            except Exception as close_error:
+                self._log("ADC sensor board close failed: " + str(close_error))
+        self.snapshot["adc_monitor"] = self.adc_monitor.snapshot()
 
     def request_balance_reading(self):
         """Return True if queued, False if throttled; never tare or configure it."""
@@ -453,23 +584,43 @@ class AppController:
         self._log("Stop requested")
 
     def set_manual(self, valves, pump_percent):
-        if self.start_phase or self.manual_pending or self.stop_pending or self.snapshot["state"] not in ("idle", "manual") or self.local_fault:
+        profile = checked_manual_pump_profile(self.snapshot)
+        state = self.snapshot["state"]
+        takeover = state == "manual_valves" and profile and self.snapshot["valves"] == profile["valves"]
+        if (self.start_phase or self.manual_pending or self.stop_pending or self.local_fault
+                or (state not in ("idle", "manual") and not takeover)):
+            if state == "manual_valves" and profile and not takeover:
+                raise ValueError("Stop manual valves before starting the pump with V1 and V3")
             raise ValueError("Stop the sequence or clear the fault first")
         if not self.snapshot["controller_connected"]:
             raise ValueError("Controller is not responding")
         if self.last_telemetry is None or self.clock() - self.last_telemetry > 2:
             raise ValueError("Controller telemetry is stale; wait for a fresh reading")
         valves, pump_percent = valve_states(valves), number(pump_percent, "Pump setting", 0, 100)
+        allow_pressure_startup = False
         if not self.snapshot["simulation"]:
-            if not self.snapshot["hardware_verified"] or not self.recipe.hardware_approved:
+            if not self.snapshot["hardware_verified"] or (not profile and not self.recipe.hardware_approved):
                 raise ValueError("Physical controls are locked until hardware and recipe are approved")
-            if self.snapshot["pressure_psi"] is None:
+            pressure_startup = checked_pressure_startup(self.snapshot, profile)
+            if pressure_startup == "active":
+                raise ValueError("Wait for a pressure reading before changing pump speed")
+            allow_pressure_startup = pressure_startup == "available" and pump_percent > 0
+            pressure = self.snapshot["pressure_psi"]
+            if pressure is None and not allow_pressure_startup:
                 raise ValueError("Physical controls require a valid pressure reading")
+            if profile:
+                if pressure is not None and pressure > self.settings["max_pressure_psi"]:
+                    raise ValueError("Pressure is above the desktop stop threshold")
+                if pump_percent > profile["max_percent"]:
+                    raise ValueError(f"Pump setting must be at most {profile['max_percent']:g}%")
+                if pump_percent > 0 and list(valves) != profile["valves"]:
+                    raise ValueError("The pump requires V1 and V3 open and all other valves off")
         self.manual_requested = (list(valves), pump_percent)
         self.manual_pending = True
         self.snapshot["manual_pending"] = True
         try:
-            self._request("manual", valves=list(valves), pump_percent=pump_percent)
+            options = {"allow_pressure_startup": True} if allow_pressure_startup else {}
+            self._request("manual", valves=list(valves), pump_percent=pump_percent, **options)
         except Exception:
             self.manual_requested = None
             self.manual_pending = False
@@ -597,7 +748,18 @@ class AppController:
                 if sample["_sample_sequence"] > sequence]
 
     def _record_sample(self):
-        record = self.store.sample(self.run_id, self.snapshot)
+        recorded = dict(self.snapshot)
+        if not self.simulation and adc_monitor_selected(self.snapshot):
+            recorded["controller_readings"] = {key: self.snapshot.get(key) for key in
+                ("pressure_psi", "flow_ml_min", "pump_feedback_v", "flux_lmh")}
+            recorded.update(adc_display_values(self.snapshot, self.settings["membrane_area_m2"]))
+            recorded["sensor_source"] = "ads1115_usb"
+            recorded["sensor_estimated"] = True
+            for channel, key in (("A0", "pressure_adc_v"), ("A1", "flow_adc_v"),
+                                 ("A2", "pump_feedback_adc_v")):
+                reading = self.snapshot["adc_monitor"].get("channels", {}).get(channel, {})
+                recorded[key] = reading.get("volts") if self.snapshot["adc_monitor"].get("fresh") else None
+        record = self.store.sample(self.run_id, recorded)
         self._sample_sequence += 1
         record["_sample_sequence"] = self._sample_sequence
         self._recorded_samples.append(record)
@@ -622,7 +784,8 @@ class AppController:
         self.start_phase = None
         self.manual_pending = False
         self.manual_requested = None
-        self.snapshot.update(fault=self.local_fault, state="fault", start_pending=False, manual_pending=False)
+        self.snapshot.update(fault=self.local_fault, state="fault", start_pending=False, manual_pending=False,
+                             pressure_startup=None)
         if self.stop_pending:
             # A second fault must not replace an outstanding stop or extend
             # its deadline. Otherwise two alternating faults defeat the watchdog.
@@ -648,6 +811,10 @@ class AppController:
         self.snapshot.update(manual_pending=False,
             state="manual_valves" if command == "manual_valves" else "manual", valves=valves,
             pump_percent=pump, step_index=-1, cycle=0, remaining_s=0)
+        if command == "manual":
+            self.snapshot["pump_run_contact_commanded"] = None
+            if self.snapshot["pressure_startup"] == "available":
+                self.snapshot["pressure_startup"] = None
 
     def _accept_manual_valves_receipt(self, receipt_id, valves, now):
         if (not self.manual_pending or self.stop_pending or self.local_fault is not None
@@ -743,8 +910,11 @@ class AppController:
                                       **reply_details)
                     return
                 diagnostics = checked_controller_diagnostics(packet)
+                diagnostics.update(_adc_pin_volts(packet))
                 self.device = {key: value for key, value in packet.items()
                                if key not in ("controller_mode", "hardware_status", "sensor_inputs", "sensor_status",
+                                              "manual_pump_profile", "pressure_startup", "pump_pwm", *EMPTY_ADC_VOLTAGES,
+                                              *EMPTY_ADC_PIN_VOLTS,
                                               "valve_control_ready", "manual_valve_count", "manual_valve_ids",
                                               "valve_bits", "valve_control_status", "sensor_test_available")}
                 self.device.update(diagnostics)
@@ -793,7 +963,7 @@ class AppController:
             elif command == "stop":
                 self.stop_pending = False
                 self.snapshot.update(stop_pending=False, state="fault" if self.local_fault else "idle",
-                    pump_percent=0, step_index=-1, cycle=0, remaining_s=0)
+                    pump_percent=0, step_index=-1, cycle=0, remaining_s=0, pressure_startup=None)
                 if self.stop_valves_only:
                     self.snapshot["valves"] = [False] * 7
                 self.stop_valves_only = False
@@ -865,7 +1035,17 @@ class AppController:
         self.connect_started = None
         self.last_controller_uptime = uptime
         self.snapshot.update(values)
+        self.snapshot.update(_pump_motion_fields(packet))
+        self.snapshot["pump_pwm"] = _checked_pump_pwm(packet)
         self.snapshot["sensor_status"] = checked_sensor_status(packet.get("sensor_status"))
+        pump_profile = self.device.get("manual_pump_profile")
+        pressure_startup = checked_pressure_startup(packet, pump_profile)
+        self.snapshot["pressure_startup"] = pressure_startup if not self.local_fault else None
+        for field in EMPTY_ADC_VOLTAGES:
+            millivolts = packet.get(field)
+            self.snapshot[field] = (millivolts if not packet["simulation"]
+                and type(millivolts) is int and 0 <= millivolts <= 3300 else None)
+        self.snapshot.update(_adc_pin_volts(packet))
         self.snapshot["live_sensor_voltages"] = (_adc_pin_mv(packet.get("adc_pin_mv"))
             if self.snapshot["sensor_test_available"] and not packet["simulation"] and not packet["hardware_verified"] else {})
         self.snapshot.update(valves=list(valves), pump_percent=pump, step_index=step, cycle=cycle,
@@ -891,7 +1071,8 @@ class AppController:
             else:
                 self._finish_run("completed")
         if (not packet["simulation"] and values["pressure_psi"] is None
-                and (state in ("running", "manual") or self.start_phase is not None)):
+                and (state == "running" or self.start_phase is not None
+                     or (state == "manual" and pressure_startup != "active"))):
             self._abort("Pressure reading unavailable during physical operation")
             return
         if state in ("running", "manual") and values["pressure_psi"] is not None and values["pressure_psi"] > self.settings["max_pressure_psi"]:
@@ -950,6 +1131,7 @@ class AppController:
         if self.closed:
             return
         now = self.clock()
+        self._poll_adc_monitor()
         if self.driver is not None and not self.device and self.connect_started is not None and now-self.connect_started < 8 and now-self.last_hello >= 1:
             try:
                 self._request("hello")
@@ -990,6 +1172,7 @@ class AppController:
                 if self.snapshot["controller_status"] != "Telemetry stale":
                     self._esp32_event("telemetry_stale")
                 self.snapshot["live_sensor_voltages"] = {}
+                self.snapshot.update(EMPTY_PUMP_MOTION, **EMPTY_ADC_VOLTAGES)
                 if self._active() or self.run_id is not None:
                     self._abort("Controller telemetry is stale")
                     if self.driver is not None:
@@ -1074,7 +1257,8 @@ class AppController:
         try:
             for name, action in (("stop", self.stop_run),
                                  ("controller disconnect", self.disconnect_controller),
-                                 ("balance disconnect", self.disconnect_balance)):
+                                 ("balance disconnect", self.disconnect_balance),
+                                 ("ADC sensor board disconnect", self.disconnect_adc_monitor)):
                 try:
                     action()
                 except Exception as error:

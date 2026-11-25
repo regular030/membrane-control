@@ -5,7 +5,8 @@
 namespace basu {
 
 enum class RelayKind { DirectGpio, ShiftRegister595 };
-enum class AnalogSource { Disabled, NativeAdc1, Ads1115 };
+enum class AnalogSource { Disabled, NativeAdc1, Ads1115, NativeAdc2 };
+enum class NativeAdcAttenuation { Db11, Db2_5 };
 enum class PumpCommandSource { Gp8403, PwmConverter };
 
 struct AnalogConfig {
@@ -20,6 +21,9 @@ struct AnalogConfig {
   double minValue = -1000000;
   double maxValue = 1000000;
   bool rejectRails = true;
+  double adsZeroToleranceVolts = 0;  // Explicit ADS-only tolerance for measured near-zero codes.
+  NativeAdcAttenuation nativeAdcAttenuation = NativeAdcAttenuation::Db11;
+  bool nativeAdc2Pulldown = false;  // Calibration must include the enabled pull-down's loading.
 };
 
 struct BoardConfig {
@@ -43,6 +47,7 @@ struct BoardConfig {
   bool pumpContactActiveHigh = true;
   int i2cSdaPin = -1;
   int i2cSclPin = -1;
+  uint32_t i2cClockHz = 100000;
   uint8_t gp8403Address = 0x58;
   uint8_t gp8403Channel = 0;
   bool gp8403InterfaceVerified = false;
@@ -59,7 +64,11 @@ struct BoardConfig {
   AnalogConfig pumpFeedback;
   double pressureLimitPsi = NAN;
   uint32_t sensorMaxAgeMs = 1000;
+  uint32_t pressureStartupMs = 0;  // Optional bounded manual start below the native ADC range.
   int pumpContactBit = -1;  // Reviewed spare 595 bit; leave -1 for a separate GPIO contact.
+  int pumpTachPin = -1;  // Set only for a reviewed, conditioned tach signal.
+  uint16_t pumpTachPulsesPerRevolution = 100;  // Masterflex 75211-70 tach specification.
+  PumpOperatingLimits pumpLimits;
 };
 
 inline bool outputCapablePin(int pin) {
@@ -68,8 +77,24 @@ inline bool outputCapablePin(int pin) {
          pin != 20 && pin != 24 && !(pin >= 28 && pin <= 31);
 }
 
+inline bool usesNativeAdc(AnalogSource source) {
+  return source == AnalogSource::NativeAdc1 || source == AnalogSource::NativeAdc2;
+}
+
 inline bool calibrationValid(const AnalogConfig& input) {
-  return input.calibrationVerified && std::isfinite(input.unitsPerVolt) && input.unitsPerVolt != 0 &&
+  // On classic ESP32 the recommended 2.5 dB ADC range is 0.100–1.250 V.
+  const bool nativeRangeValid = !usesNativeAdc(input.source) ||
+      input.nativeAdcAttenuation == NativeAdcAttenuation::Db11 ||
+      (input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 &&
+       input.minPinVolts >= 0.100 && input.maxPinVolts <= 1.250);
+  const double zeroTolerance = input.adsZeroToleranceVolts;
+  const bool adsZeroValid = std::isfinite(zeroTolerance) && zeroTolerance >= 0 && zeroTolerance <= 0.005 &&
+      (zeroTolerance == 0 ||
+       (input.source == AnalogSource::Ads1115 && input.minPinVolts == 0 &&
+        input.unitsPerVolt > 0 && std::isfinite(input.offset) && input.offset <= 0 &&
+        -input.offset / input.unitsPerVolt <= zeroTolerance && !input.rejectRails &&
+        input.minValue <= 0 && input.maxValue > 0));
+  return nativeRangeValid && adsZeroValid && input.calibrationVerified && std::isfinite(input.unitsPerVolt) && input.unitsPerVolt != 0 &&
          std::isfinite(input.offset) && std::isfinite(input.minPinVolts) &&
          std::isfinite(input.maxPinVolts) && input.minPinVolts >= 0 &&
          input.maxPinVolts <= 3.3 && input.maxPinVolts > input.minPinVolts &&
@@ -114,6 +139,12 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
   if (!config.safeProfileVerified || !std::isfinite(config.pressureLimitPsi) ||
       config.pressureLimitPsi <= 0 || config.sensorMaxAgeMs < 100 || config.sensorMaxAgeMs > 3000)
     return "verified safe states, positive pressure limit and sensor age are required";
+  if (!std::isfinite(config.pumpLimits.maxPercent) ||
+      config.pumpLimits.maxPercent < 0 || config.pumpLimits.maxPercent > 100)
+    return "pump profile limit must be finite and 0-100";
+  if (config.pumpLimits.requiredValves && hasAbsentValve6(config) &&
+      (*config.pumpLimits.requiredValves)[kValve6Slot])
+    return "pump valve path includes absent V6";
   if (config.pumpCommandSource == PumpCommandSource::Gp8403) {
     if (!config.gp8403InterfaceVerified || config.gp8403Address < 0x58 ||
         config.gp8403Address > 0x5f || config.gp8403Channel > 1)
@@ -126,6 +157,12 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
       return "PWM converter interface, channel, frequency or resolution is not verified";
   } else return "unknown pump command source";
   if (config.pressure.source == AnalogSource::Disabled) return "physical operation requires pressure input";
+  if (config.pressureStartupMs &&
+      (config.pressureStartupMs > kMaxPressureStartupMs || !config.pumpLimits.requiredValves ||
+       config.pumpCommandSource != PumpCommandSource::PwmConverter || !usesNativeAdc(config.pressure.source) ||
+       config.pressure.nativeAdcAttenuation != NativeAdcAttenuation::Db2_5 || config.pressure.unitsPerVolt <= 0 ||
+       config.pressure.minPinVolts * config.pressure.unitsPerVolt + config.pressure.offset >= config.pressureLimitPsi))
+    return "pressure startup requires a bounded PWM profile with a low-range native pressure input";
   std::array<bool, 40> used{};
   // On the selected X16 PCB GPIO4 may serve the shift-register clear input.
   // New PWM profiles must leave it alone; legacy GP8403 profiles are unchanged.
@@ -142,6 +179,8 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
     return "pump RUN bit requires a 595 relay chain, active-high RUN and no contact GPIO";
   }
   if (boardUsesI2c(config) || config.i2cSdaPin != -1 || config.i2cSclPin != -1) {
+    if (config.i2cClockHz < 10000 || config.i2cClockHz > 400000)
+      return "I2C clock must be 10000-400000 Hz";
     if (!reserve(config.i2cSdaPin) || !reserve(config.i2cSclPin))
       return "I2C pins invalid or conflicting";
   }
@@ -177,10 +216,15 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
   bool usesAds = false;
   std::array<bool, 4> adsChannels{};
   for (const AnalogConfig* input : {&config.pressure, &config.flow, &config.pumpFeedback}) {
+    if (input->nativeAdc2Pulldown && input->source != AnalogSource::NativeAdc2)
+      return "internal pull-down requires a native ADC2 input";
     if (input->source == AnalogSource::Disabled) continue;
     if (!calibrationValid(*input)) return "sensor calibration or protected pin voltage range invalid";
     if (input->source == AnalogSource::NativeAdc1) {
       if (input->pin < 32 || input->pin > 39 || used[input->pin]) return "ADC1 pin invalid or conflicting";
+      used[input->pin] = true;
+    } else if (input->source == AnalogSource::NativeAdc2) {
+      if ((input->pin != 26 && input->pin != 27) || used[input->pin]) return "ADC2 pin invalid or conflicting";
       used[input->pin] = true;
     } else if (input->source == AnalogSource::Ads1115) {
       usesAds = true;
@@ -191,6 +235,15 @@ inline const char* validateBoardConfig(const BoardConfig& config) {
   }
   if (usesAds && (config.ads1115Address < 0x48 || config.ads1115Address > 0x4b))
     return "ADS1115 address must be 0x48-0x4b";
+  const int tachPin = config.pumpTachPin;
+  if (tachPin != -1) {
+    // The PCNT driver enables the GPIO pull-up. Exclude input-only pins,
+    // boot-strapping pins and the candidate shift-register clear pin.
+    if (!outputCapablePin(tachPin) || tachPin == 0 || tachPin == 2 || tachPin == 4 ||
+        tachPin == 5 || tachPin == 12 || tachPin == 15 || used[tachPin])
+      return "pump tach pin invalid, reserved or conflicting";
+    if (config.pumpTachPulsesPerRevolution == 0) return "pump tach pulses per revolution must be positive";
+  }
   return nullptr;
 }
 
@@ -209,8 +262,15 @@ inline Reading calibratedReading(const AnalogConfig& config, double pinVolts, ui
   Reading reading;
   reading.acquiredMs = now;
   reading.value = pinVolts * config.unitsPerVolt + config.offset;
-  reading.valid = calibrationValid(config) && std::isfinite(pinVolts) &&
-                  pinVolts >= config.minPinVolts && pinVolts <= config.maxPinVolts &&
+  const bool validCalibration = calibrationValid(config);
+  const bool adsZero = validCalibration && config.adsZeroToleranceVolts > 0;
+  const double minimumPinVolts = adsZero ? -config.adsZeroToleranceVolts : config.minPinVolts;
+  // A real completed ADS conversion can have a slightly negative ground code.
+  // Preserve the raw voltage elsewhere; this only normalizes its engineering zero.
+  if (adsZero && std::isfinite(pinVolts) && pinVolts >= minimumPinVolts &&
+      pinVolts <= -config.offset / config.unitsPerVolt) reading.value = 0;
+  reading.valid = validCalibration && std::isfinite(pinVolts) &&
+                  pinVolts >= minimumPinVolts && pinVolts <= config.maxPinVolts &&
                   reading.value >= config.minValue && reading.value <= config.maxValue;
   if (config.rejectRails && (pinVolts <= 0.001 || pinVolts >= 3.299)) reading.valid = false;
   return reading;

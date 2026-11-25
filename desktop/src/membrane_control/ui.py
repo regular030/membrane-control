@@ -25,8 +25,15 @@ from PySide6.QtWidgets import (
 import pyqtgraph as pg
 
 from .models import MAX_STEPS, Recipe
+from .adc_display import adc_display_readings, adc_display_values, adc_monitor_selected
+from .bluetooth_pairing import BluetoothPairingWindow
 from .connection_diagnostics import connection_diagnostics
-from .device_status import device_statuses, MANUAL_VALVE_IDS, MANUAL_VALVE_BITS
+from .controller import _checked_pump_pwm
+from .device_status import (
+    MANUAL_VALVE_BITS, MANUAL_VALVE_IDS, checked_manual_pump_profile, checked_pressure_startup,
+    device_statuses,
+)
+from .pump_voltage_test import PumpVoltageTestWindow
 from .zoom import NativeZoom
 from .relay_bench import RelayBenchDialog
 from .sensor_setup import SensorSetupDialog, observed_zero_baseline, sensor_display_estimate
@@ -34,6 +41,7 @@ from .valve_test import ValveTestDialog
 
 
 LAB_BALANCE_PORT = "COM6"
+LAB_ADC_PORT = "COM5"
 
 METRICS = {
     "flow_ml_min": ("Flow", "mL/min", "flow"),
@@ -145,6 +153,13 @@ def _number(value: Any, precision: int = 2) -> str:
         return "Waiting"
 
 
+def _drive_feedback_percent(volts):
+    """Nominal 0–10 V drive-output level, independent of app command or RPM."""
+    if type(volts) not in (int, float) or not 0 <= volts <= 10.5 or not math.isfinite(volts):
+        return None
+    return volts * 10
+
+
 class MainWindow(QMainWindow):
     """Single-window dashboard, recipe editor and device setup."""
 
@@ -163,8 +178,10 @@ class MainWindow(QMainWindow):
         self.controller = controller
         self._relay_bench_dialog = None
         self._valve_test_dialog = None
+        self._pump_test_dialog = None
         self._balance_diagnostics_dialog = None
         self._sensor_setup_dialog = None
+        self._bluetooth_pairing_window = None
         self._shutdown_started = False
         self._updating = False
         self._last_log = ""
@@ -356,8 +373,8 @@ class MainWindow(QMainWindow):
         self.live_sensor_detail = _label("", "muted", True)
         self.live_sensor_detail.setAccessibleName("Live diagnostic sensor inputs")
         self.live_sensor_detail.setToolTip(
-            "Pressure and flow estimates use the sensor certificates and an assumed 5:1 divider, or two measured references. "
-            "The default flow estimate includes the lab's 2× correction. "
+            "Pressure estimates use the sensor certificate and flow estimates use the lab's voltage-to-flow calibration. "
+            "Both assume a 5:1 divider unless you enter two measured references. "
             "A zero baseline shows raw voltage change. Below 100 mV, check with a voltmeter.")
         self.live_sensor_detail.hide()
         outer.addWidget(self.live_sensor_detail)
@@ -447,7 +464,8 @@ class MainWindow(QMainWindow):
         low_layout.setContentsMargins(0, 0, 0, 0)
         manual = QGroupBox("Pump settings")
         manual_layout = QVBoxLayout(manual)
-        manual_layout.addWidget(_label("These show the commands sent. The app cannot confirm that a valve actually moved.", "muted", True))
+        self.manual_pump_status = _label("", "muted", True)
+        manual_layout.addWidget(self.manual_pump_status)
         pump_row = QHBoxLayout()
         pump_row.addWidget(_label("New pump setting"))
         self.manual_pump = QDoubleSpinBox()
@@ -456,12 +474,23 @@ class MainWindow(QMainWindow):
         self.manual_pump.setSuffix(" %")
         self.manual_pump.setAccessibleName("Manual pump command percent")
         pump_row.addWidget(self.manual_pump)
-        self.manual_apply = _button("Apply pump", self._manual_command)
+        self.manual_apply = _button("Start pump", self._manual_command)
         pump_row.addWidget(self.manual_apply)
-        self.manual_pump_sent = _label("Sent: 0.0 %", "muted")
+        self.manual_pump.valueChanged.connect(self._update_pump_start_enabled)
+        self.manual_stop = _button("Stop pump", self._stop_run, "stopButton")
+        self.manual_stop.setToolTip("Stop the pump and return the valves to their configured safe states.")
+        pump_row.addWidget(self.manual_stop)
+        self.manual_pump_sent = _label("Command unavailable", "muted")
         pump_row.addWidget(self.manual_pump_sent)
         pump_row.addStretch()
         manual_layout.addLayout(pump_row)
+        self.manual_pump_feedback = _label("", "muted", True)
+        self.manual_pump_feedback.setAccessibleName("Pump feedback readings")
+        self.manual_pump_feedback.setToolTip(
+            "The run contact shows the controller's command. Drive feedback measures the pump's "
+            "running-command output in volts. A connected tachometer measures rotation. "
+            "A disconnected tachometer can also give no pulses.")
+        manual_layout.addWidget(self.manual_pump_feedback)
         target_row = QHBoxLayout()
         target_row.addWidget(_label("Desired flow (mL/min)"))
         self.desired_flow_spin = QDoubleSpinBox()
@@ -592,7 +621,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(18, 15, 18, 15)
-        layout.addWidget(_label("The app tries COM8 for the ESP32 and COM6 for the scale on startup. Use the controls below to reconnect or choose other ports.", "muted", True))
+        layout.addWidget(_label("The app finds the paired MembraneControl-Rig Bluetooth port and connects to the scale on COM6 at startup. The rig controller reads all three ADS1115 sensors. Windows assigns its Bluetooth COM number.", "muted", True))
         devices = QHBoxLayout()
         controller_box = QGroupBox("ESP32 controller")
         cform = QFormLayout(controller_box)
@@ -614,6 +643,9 @@ class MainWindow(QMainWindow):
         self.copy_connection_diagnostics_button = _button("Copy connection diagnostics", self._copy_connection_diagnostics)
         self.copy_connection_diagnostics_button.setToolTip("Copy the app version, COM port list, controller status and recent ESP32 events.")
         cform.addRow(self.copy_connection_diagnostics_button)
+        self.bluetooth_pair_button = _button("Pair MembraneControl-Rig over USB", self._open_bluetooth_pairing)
+        self.bluetooth_pair_button.setToolTip("Use the new rig's wired USB port to compare and confirm its Bluetooth code locally.")
+        cform.addRow(self.bluetooth_pair_button)
         self.sensor_test_button = _button("Read sensor inputs", self._read_sensor_inputs)
         self.connections_sensor_setup_button = _button("Sensor setup", self._open_sensor_setup)
         cform.addRow(self.connections_sensor_setup_button)
@@ -627,6 +659,9 @@ class MainWindow(QMainWindow):
         self.valve_test_button = _button("2. Legacy valve pulse test", self._open_valve_test)
         self.valve_test_button.setToolTip("Older separate pulse-test firmware. For this six-valve rig, use the normal Dashboard toggles instead.")
         cform.addRow(self.valve_test_button)
+        self.pump_test_button = _button("Open-bucket pump test", self._open_pump_test)
+        self.pump_test_button.setToolTip("Use the dedicated open-bucket firmware over the ESP32’s wired USB connection.")
+        cform.addRow(self.pump_test_button)
         cform.addRow(_label("Installed: V1–V5 and V7; bits 0,1,2,3,5,6. No V6. Normal Dashboard toggles work without sensors; the separate tests below are optional.", "muted", True))
         devices.addWidget(controller_box)
         balance_box = QGroupBox("Balance")
@@ -666,6 +701,25 @@ class MainWindow(QMainWindow):
         bform.addRow(self.balance_port_hint)
         devices.addWidget(balance_box)
         layout.addLayout(devices)
+        adc_box = QGroupBox("Optional separate sensor board · manual connection")
+        adc_form = QFormLayout(adc_box)
+        self.adc_port = QComboBox()
+        self.adc_port.setAccessibleName("External sensor board serial port")
+        adc_form.addRow("USB serial port", self.adc_port)
+        adc_buttons = QHBoxLayout()
+        self.adc_connect = _button("Connect sensors", self._connect_adc_monitor)
+        self.adc_disconnect = _button("Disconnect sensors", lambda: self._action(
+            self.controller.disconnect_adc_monitor, "Sensor board disconnected"))
+        adc_buttons.addWidget(self.adc_connect)
+        adc_buttons.addWidget(self.adc_disconnect)
+        adc_form.addRow(adc_buttons)
+        self.adc_detail = _label("Sensor board not connected", "muted", True)
+        self.adc_detail.setAccessibleName("External sensor board connection status")
+        adc_form.addRow(self.adc_detail)
+        adc_form.addRow(_label(
+            "Only use this connection with a separate USB sensor-only board. The full rig reads A3 pressure, A1 flow and A2 pump feedback through its controller connection above. This optional port does not connect automatically.",
+            "muted", True))
+        layout.addWidget(adc_box)
         refresh = QHBoxLayout()
         refresh.addWidget(_button("Refresh serial ports", self._refresh_ports))
         refresh.addStretch()
@@ -763,7 +817,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(modes)
         equipment = QGroupBox("When you are ready to connect the rig")
         equipment_layout = QVBoxLayout(equipment)
-        equipment_layout.addWidget(_label("Ask the lab maintainer to finish and check the controller setup first. Then open Connections and settings and connect the ESP32 and scale. The default lab ports are COM8 for the ESP32 and COM6 for the scale. The scale baud rate must match the setting on the scale.", "", True))
+        equipment_layout.addWidget(_label("Pair MembraneControl-Rig in Windows, then open Connections and settings. The app finds its outgoing Bluetooth port automatically and uses COM6 for the scale. All three sensors connect to the rig's ADS1115: A3 pressure, A1 flow and A2 pump feedback, with SDA GPIO22 and SCL GPIO21. The scale baud rate must match the setting on the scale.", "", True))
         equipment_layout.addWidget(_label("The Dashboard explains why Start run is unavailable and gives you the next action. ON and OFF are commands, not proof that equipment moved. Stop run is a software stop; use the lab's physical stop procedure in an emergency.", "", True))
         buttons = QHBoxLayout()
         buttons.addWidget(_button("Open connections", lambda: self.tabs.setCurrentIndex(2)))
@@ -792,6 +846,7 @@ class MainWindow(QMainWindow):
         self.zoom_label.setToolTip("Ctrl + -: zoom out  |  Ctrl + + or =: zoom in  |  Ctrl + 0: reset\n60% to 150% in 10% steps. Display size only; experiment settings do not change.")
         self.statusBar().addPermanentWidget(self.zoom_label)
         self._zoom = NativeZoom(self, self._plots.values())
+        self._fit_dashboard_control_heights()
         self.zoom_shortcuts = []
         for keys, change in ((["Ctrl+-"], -10), (["Ctrl++", "Ctrl+=", "Ctrl+Shift++", "Ctrl+Shift+="], 10), (["Ctrl+0"], 0)):
             shortcut = QShortcut(self)
@@ -808,9 +863,17 @@ class MainWindow(QMainWindow):
         if self._zoom is None:
             return
         self._zoom.set_percent(percent)
+        self._fit_dashboard_control_heights()
         self.flow_legend.setLabelTextSize(f"{8 * self._zoom.factor:g}pt")
         self.zoom_label.setText(f"Zoom {self.zoom_percent}%")
         self.statusBar().showMessage(f"Interface zoom: {self.zoom_percent}%. Ctrl + 0 resets to 100%. Experiment settings are unchanged.", 5000)
+
+    def _fit_dashboard_control_heights(self):
+        # The compact dashboard can squeeze controls inside the splitter below
+        # their native size hints. Recheck after fonts and styles are scaled.
+        for control in (*self.valve_buttons, self.manual_pump, self.manual_apply, self.manual_stop,
+                        self.desired_flow_spin, self.apply_target_button):
+            control.setMinimumHeight(control.sizeHint().height())
 
     def _set_zoom_style(self, widget, source):
         if self._zoom is None:
@@ -1048,6 +1111,7 @@ class MainWindow(QMainWindow):
 
     def _stop_run(self):
         self._action(self.controller.stop_run, "Stop requested")
+        self._update_view(dict(self.controller.snapshot))
         self._refresh_history()
 
     def _clear_fault(self):
@@ -1057,10 +1121,58 @@ class MainWindow(QMainWindow):
             self._timer_stop_requested = False
         self._action(clear, "Fault clear requested. Outputs remain stopped.")
 
-    def _manual_command(self, *_):
-        if self._updating:
+    def _update_pump_start_enabled(self):
+        self.manual_apply.setEnabled(self.manual_pump.isEnabled() and self.manual_pump.value() > 0)
+
+    def _update_pump_feedback(self, snapshot, *, fresh, simulation):
+        if not fresh:
+            self.manual_pump_sent.setText("Command unavailable")
+            self.manual_pump_feedback.setText("Waiting for fresh pump feedback.")
             return
-        self._action(lambda: self.controller.set_manual(self._manual_wire_values(), self.manual_pump.value()), "Manual output command sent")
+        speed = _number(snapshot.get("pump_percent"), 1)
+        self.manual_pump_sent.setText(f"Commanded {speed}%")
+        if simulation:
+            self.manual_pump_feedback.setText("Simulated pump command and feedback.")
+            return
+
+        contact = snapshot.get("pump_run_contact_commanded")
+        if contact is None:
+            contact_text = "Run contact command unavailable"
+        else:
+            contact_text = f"Run contact commanded {'closed' if contact else 'open'}"
+        feedback = snapshot.get("pump_feedback_v") if snapshot.get("hardware_verified") else None
+        drive_text = ("Drive command feedback unavailable" if feedback is None
+                      else f"Drive command feedback {_number(feedback)} V")
+        feedback_percent = _drive_feedback_percent(feedback)
+        if feedback_percent is not None:
+            drive_text += f" · Reported drive level {feedback_percent:.1f}%"
+        pwm = _checked_pump_pwm(snapshot)
+        if pwm is None:
+            pwm_text = "Controller PWM readback unavailable"
+        else:
+            pwm_percent = pwm["duty_code"] * 100 / (1 << pwm["resolution_bits"])
+            pwm_text = (f"Controller PWM: {pwm_percent:.1f}% · IO{pwm['pin']} · "
+                        f"{pwm['frequency_hz']} Hz (register readback)")
+        rpm = snapshot.get("pump_rpm")
+        if snapshot.get("pump_tach_status") == "waiting":
+            tach_text = "Waiting for a tachometer sample"
+        elif rpm is None:
+            tach_text = "Motor tachometer unavailable"
+        elif rpm == 0:
+            tach_text = "No tach pulses detected"
+        else:
+            rpm_text = "under 0.1" if rpm < 0.05 else _number(rpm, 1)
+            tach_text = f"Motor tachometer {rpm_text} RPM · rotation detected"
+        self.manual_pump_feedback.setText(f"{contact_text} · {drive_text}\n{pwm_text}\n{tach_text}")
+
+    def _manual_command(self, *_):
+        pump_percent = self.manual_pump.value()
+        if self._updating or not self.manual_apply.isEnabled() or pump_percent <= 0:
+            return
+        profile = checked_manual_pump_profile(self.controller.snapshot)
+        valves = profile["valves"] if profile else self._manual_wire_values()
+        self._action(lambda: self.controller.set_manual(valves, pump_percent), "Pump command sent")
+        self._update_view(dict(self.controller.snapshot))
 
     def _manual_wire_values(self):
         states = [False] * 7
@@ -1075,6 +1187,8 @@ class MainWindow(QMainWindow):
         if str(self.controller.snapshot.get('state')).lower() == 'manual':
             # Preserve an already running, fully configured pump manual session.
             pump = float(self.controller.snapshot.get('pump_percent') or 0)
+            if pump > 0 and checked_manual_pump_profile(self.controller.snapshot):
+                return
             self._action(lambda: self.controller.set_manual(self._manual_wire_values(), pump), 'Valve command sent; current pump setting retained')
         else:
             self._action(lambda: self.controller.set_manual_valves(valves), 'Valve command sent; pump command is zero')
@@ -1090,7 +1204,7 @@ class MainWindow(QMainWindow):
             previous_controller_default = self.controller.preferred_controller_port
             ports = self.controller.list_ports()
             for combo, preferred in ((self.controller_port, self.controller.preferred_controller_port),
-                                     (self.balance_port, LAB_BALANCE_PORT)):
+                                     (self.balance_port, LAB_BALANCE_PORT), (self.adc_port, LAB_ADC_PORT)):
                 previous = combo.currentData()
                 if combo is self.controller_port and previous == previous_controller_default:
                     previous = preferred
@@ -1118,6 +1232,14 @@ class MainWindow(QMainWindow):
         if self.balance_port.currentData() == LAB_BALANCE_PORT:
             self._connect_balance(show_dialog=False)
 
+    def _connect_adc_monitor(self, *, show_dialog=True):
+        port = self.adc_port.currentData()
+        if port:
+            self._action(lambda: self.controller.connect_adc_monitor(port), "Sensor board connection requested",
+                         show_dialog=show_dialog)
+        else:
+            self.statusBar().showMessage("Select the sensor board USB port first", 6000)
+
     def _connect_controller(self, *, show_dialog=True):
         port = self.controller_port.currentData()
         if port:
@@ -1133,6 +1255,36 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("ESP32 log copied. Paste it into your troubleshooting message.", 6000)
         else:
             self.statusBar().showMessage("No ESP32 connection events have been logged yet.", 6000)
+
+    def _open_bluetooth_pairing(self):
+        if self._shutdown_started or self._operation_in_progress(self.controller.snapshot):
+            self.statusBar().showMessage("Stop the current operation before pairing Bluetooth.", 8000)
+            return
+        if self._bluetooth_pairing_window is not None and self._bluetooth_pairing_window.isVisible():
+            self._bluetooth_pairing_window.raise_()
+            self._bluetooth_pairing_window.activateWindow()
+            return
+        ports = [(port, description) for port, description in self.controller.list_ports()
+                 if "bluetooth" not in description.lower() and any(
+                     word in description.lower() for word in ("usb", "uart", "cp210", "ch340"))]
+        if not ports:
+            self.statusBar().showMessage("Connect the rig's wired USB cable, then try pairing again.", 8000)
+            return
+        labels = [f"{port} · {description}" for port, description in ports]
+        selected = next((index for index, (port, _) in enumerate(ports) if port == "COM5"), 0)
+        label, accepted = QInputDialog.getItem(self, "Pair MembraneControl-Rig",
+            "Choose the rig's wired USB port (COM5 on this PC).", labels, selected, False)
+        if not accepted:
+            return
+        port = ports[labels.index(label)][0]
+        if any(getattr(device, "port", None) == port for device in (self.controller.driver, self.controller.balance)):
+            self.statusBar().showMessage("Disconnect this USB port in Connections before opening the pairing helper.", 8000)
+            return
+        monitor = getattr(self.controller, "adc_monitor", None)
+        if monitor is not None and getattr(getattr(monitor, "transport", None), "port", None) == port:
+            self.controller.disconnect_adc_monitor()
+        self._bluetooth_pairing_window = BluetoothPairingWindow(port, self)
+        self._bluetooth_pairing_window.show()
 
     def _copy_connection_diagnostics(self):
         report = connection_diagnostics(
@@ -1151,6 +1303,10 @@ class MainWindow(QMainWindow):
 
     def _open_sensor_setup(self):
         if self._shutdown_started:
+            return
+        if adc_monitor_selected(self.controller.snapshot) and not self.controller.simulation:
+            self.tabs.setCurrentIndex(self.connections_tab_index)
+            self.adc_port.setFocus()
             return
         if self._sensor_setup_dialog is None:
             self._sensor_setup_dialog = SensorSetupDialog(self.controller, self)
@@ -1334,6 +1490,61 @@ class MainWindow(QMainWindow):
                 dialog.shutdown()
             except Exception:
                 logging.exception("Could not shut down valve test dialog")
+            finally:
+                try:
+                    dialog.reject()
+                except RuntimeError:
+                    pass
+
+    def _open_pump_test(self):
+        if self._shutdown_started or self.controller.simulation or self.controller._active():
+            return
+        if any(dialog is not None for dialog in (self._relay_bench_dialog, self._valve_test_dialog,
+                                                self._pump_test_dialog, self._balance_diagnostics_dialog)):
+            return
+        excluded = set()
+        if self.controller.balance is not None:
+            excluded.add(self.controller.balance.port)
+        try:
+            ports = {f"{port}  {description}": port for port, description in self.controller.list_ports()
+                     if port not in excluded and "bluetooth" not in description.casefold()}
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not list USB serial ports: {exc}", 10000)
+            return
+        if not ports:
+            self.statusBar().showMessage("Connect the ESP32’s wired USB adapter, then try again.", 10000)
+            return
+        labels = list(ports)
+        selected = next((i for i, port in enumerate(ports.values()) if port == "COM5"), 0)
+        label, accepted = QInputDialog.getItem(self, "Open-bucket pump test",
+            "Select the wired ESP32 USB port after flashing the open-bucket test firmware.", labels, selected, False)
+        if not accepted or self._shutdown_started or self.controller._active():
+            return
+        try:
+            self.controller.disconnect_controller()
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not release the controller port: {exc}", 10000)
+            return
+        dialog = PumpVoltageTestWindow(ports[label], self, open_bucket=True)
+        self._pump_test_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            try:
+                dialog.shutdown()
+            finally:
+                self._pump_test_dialog = None
+                dialog.deleteLater()
+        if not self._shutdown_started:
+            self._update_view(dict(self.controller.snapshot))
+
+    def shutdown_pump_test(self):
+        dialog, self._pump_test_dialog = self._pump_test_dialog, None
+        if dialog is not None:
+            try:
+                dialog.shutdown()
+            except Exception:
+                logging.exception("Could not shut down pump test dialog")
             finally:
                 try:
                     dialog.reject()
@@ -1536,7 +1747,7 @@ class MainWindow(QMainWindow):
             # The equipment window has its own timer. Avoid expensive hidden
             # graph/layout refreshes competing with its serial heartbeat.
             if not any(dialog is not None for dialog in (self._relay_bench_dialog,
-                    self._valve_test_dialog, self._balance_diagnostics_dialog)):
+                    self._valve_test_dialog, self._pump_test_dialog, self._balance_diagnostics_dialog)):
                 self._update_view(dict(self.controller.snapshot))
         except Exception as exc:
             now = time.monotonic()
@@ -1622,9 +1833,15 @@ class MainWindow(QMainWindow):
                 widget.setEnabled(not operating)
             applied_recipe = getattr(self.controller, "recipe", None)
             applied_approved = bool(getattr(applied_recipe, "hardware_approved", False))
-            manual_needs_scale = bool(getattr(applied_recipe, "require_balance", False)) or bool(self.controller.settings.get("require_balance", False))
+            pump_profile = checked_manual_pump_profile(snap)
+            pressure_startup = checked_pressure_startup(snap, pump_profile)
+            pump_state = state.lower()
+            pump_percent = snap.get("pump_percent") or 0
+            manual_needs_scale = bool(self.controller.settings.get("require_balance", False)) or (
+                not pump_profile and bool(getattr(applied_recipe, "require_balance", False)))
             manual_ready = connected and fresh and (simulation or (verified and applied_approved and snap.get("pressure_psi") is not None)) and (balanced or not manual_needs_scale)
-            manual = not active and manual_ready and not fault
+            manual = not active and manual_ready and not fault and not (
+                pump_profile and pump_state == "manual" and pump_percent > 0)
             valves_only_ready = (connected and fresh and bool(snap.get('valve_control_ready'))
                 and state.lower() in {'idle', 'manual_valves'} and not active and not fault)
             for index, button in enumerate(self.valve_buttons):
@@ -1640,15 +1857,47 @@ class MainWindow(QMainWindow):
                 self.valve_control_note.setText(str(snap.get('valve_control_status') or 'Upload normal controller firmware 0.1.16 for the installed valve mapping.'))
             else:
                 self.valve_control_note.setText('V1–V4 → bits 0–3; V5 → bit 5; V7 → bit 6. No V6. Click ON/OFF; Stop turns all six OFF.')
-            self.manual_pump.setEnabled(manual and state.lower() != 'manual_valves')
-            self.manual_apply.setEnabled(manual and state.lower() != 'manual_valves')
-            self.manual_apply.setToolTip("Apply the reviewed sequence first in Sequence editor." if not simulation and verified and not applied_approved
-                                         else 'Stop manual valves before changing pump control.' if state.lower() == 'manual_valves'
-                                         else "Send the new pump setting. Valve settings stay as shown.")
-            self.manual_pump_sent.setText("Sent: " + _number(snap.get("pump_percent", 0), 1) + " %")
+            pump_states = {"idle", "manual"}
+            if pump_profile and snap.get("valves") == pump_profile["valves"]:
+                pump_states.add("manual_valves")
+            pump_blocker = next((reason for blocked, reason in (
+                (snap.get("stop_pending"), "Waiting for the controller to confirm Stop."),
+                (not connected, "Connect the controller to use the pump."),
+                (fault, "Clear the controller fault before starting the pump."),
+                (not fresh, "Wait for a fresh controller reading."),
+                (not simulation and not verified, "The controller needs a verified pump and pressure profile. The factory firmware supports manual valves only."),
+                (pump_state == "manual_valves" and pump_state not in pump_states,
+                 "Stop manual valves before changing pump control."),
+                (snap.get("manual_pending"), "Waiting for the controller to confirm the manual command."),
+                (active or pump_state not in pump_states, "Stop the current operation before using the manual pump."),
+                (not simulation and not pump_profile and not applied_approved, "Apply the reviewed sequence first in Sequence editor."),
+                (pressure_startup == "active", "Starting pump. Waiting for the first pressure reading."),
+                (not simulation and snap.get("pressure_psi") is None and pressure_startup != "available",
+                 "Wait for a valid calibrated pressure reading."),
+                (pump_profile and snap.get("pressure_psi") is not None
+                 and snap["pressure_psi"] > self.controller.settings["max_pressure_psi"],
+                 "Pressure is above the desktop stop threshold."),
+                (manual_needs_scale and not balanced, "Wait for the required scale reading."),
+            ) if blocked), "")
+            self.manual_pump.setMaximum(pump_profile["max_percent"] if pump_profile else 100)
+            self.manual_pump.setEnabled(not pump_blocker)
+            pump_path = (f"Pump runs with V1 and V3 open. Maximum {pump_profile['max_percent']:g}%."
+                         if pump_profile else "")
+            if pressure_startup == "available":
+                wait_seconds = pump_profile["pressure_startup_ms"] / 1000
+                pump_path += f" Pump stops if pressure is unavailable {wait_seconds:g} s after the RUN relay closes."
+            self.manual_pump_status.setText(pump_blocker or pump_path or self.manual_stop.toolTip())
+            self.manual_apply.setToolTip(pump_blocker or pump_path or "Enter a speed above 0% to send it with the current valve settings.")
+            self.manual_apply.setText("Starting pump…" if pressure_startup == "active" else
+                "Apply speed" if pump_state == "manual" and pump_percent > 0 else "Start pump")
+            manual_request = self.controller.manual_requested
+            pump_start_pending = bool(snap.get("manual_pending") and manual_request and manual_request[1] > 0)
+            self.manual_stop.setEnabled((pump_state == "manual" or pump_start_pending) and not snap.get("stop_pending"))
+            self._update_pump_feedback(snap, fresh=connected and fresh, simulation=simulation)
             if (state.upper() in {"RUNNING", "PAUSED", "STOPPING", "FAULT"} or snap.get("start_pending")
                     or snap.get("stop_pending") or (self._previous_state != state and state.upper() == "IDLE")):
-                self.manual_pump.setValue(float(snap.get("pump_percent") or 0))
+                self.manual_pump.setValue(float(pump_percent))
+            self._update_pump_start_enabled()
             self.controller_badge.setText(f"Controller: {'simulated' if desktop_simulation else ('connected' if connected else 'disconnected')}")
             self.balance_badge.setText(f"Balance: {'simulated' if desktop_simulation else ('connected' if balanced else 'disconnected')}")
             self.controller_detail.setText(str(snap.get("controller_status") or "No responding controller"))
@@ -1677,10 +1926,62 @@ class MainWindow(QMainWindow):
                 else:
                     sensor_setup.sync_connection()
             sensor_zero = sensor_setup.zero_baselines() if sensor_setup is not None else snap.get("live_sensor_zero", {})
+            adc_fresh = connected and fresh and not simulation
+            sensor_inputs = snap.get("sensor_inputs", {})
+            adc_selected = not desktop_simulation and adc_monitor_selected(snap)
+            external_readings = adc_display_readings(snap) if adc_selected else {}
+            display_values = adc_display_values(snap, self.controller.settings["membrane_area_m2"]) if adc_selected else {}
+            monitor = snap.get("adc_monitor", {})
+            self.adc_detail.setText(str(monitor.get("status") or "Sensor board not connected"))
+            self.adc_connect.setEnabled(not desktop_simulation)
+            self.adc_disconnect.setEnabled(not desktop_simulation and bool(monitor.get("opened") or monitor.get("connected")))
+            self.sensor_setup_button.setText("Sensor connections" if adc_selected else "Sensor setup")
+            self.connections_sensor_setup_button.setText("Sensor connections" if adc_selected else "Sensor setup")
             for key, (_, unit, channel) in METRICS.items():
+                if adc_selected and key in display_values:
+                    value = _number(display_values[key], 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
+                    if channel:
+                        reading = external_readings[channel]
+                        volts = reading["volts"]
+                        if reading["value"] is not None:
+                            value = "≈" + value
+                            unit = f"{unit} · {volts:.4f} V at ADS1115 {reading['channel']} · {reading['note']}"
+                        elif volts is not None:
+                            value = _number(volts, 4)
+                            unit = f"V at ADS1115 {reading['channel']} · {reading['note']}"
+                        else:
+                            unit = f"{unit} · {reading['note']}"
+                    else:
+                        if display_values[key] is not None:
+                            value = "≈" + value
+                        unit += " · from external flow estimate"
+                    self._metric_labels[key].setText(value)
+                    self._metric_units[key].setText(unit)
+                    continue
                 value = _number(snap.get(key), 1 if key in {"flow_ml_min", "flux_lmh"} else 2)
                 raw = live_mv.get(channel)
-                if value == "Waiting" and raw is not None:
+                pin_mv = snap.get(f"{channel}_adc_mv") if adc_fresh and channel else None
+                pin_volts = snap.get(f"{channel}_adc_v") if adc_fresh and channel else None
+                if type(pin_volts) not in (int, float) or not math.isfinite(pin_volts):
+                    pin_volts = pin_mv / 1000 if pin_mv is not None else None
+                if pin_volts is not None and (value == "Waiting" or not verified):
+                    value = _number(pin_volts, 3)
+                    unit = "V at ESP32"
+                    sensor_input = sensor_inputs.get(channel, {})
+                    ads_channel = sensor_input.get("channel", -1)
+                    if sensor_input.get("source") == "ads1115" and 0 <= ads_channel <= 3:
+                        unit = f"V at ADS1115 A{ads_channel}"
+                    if key == "pressure_psi" and pressure_startup:
+                        unit += " · below calibrated ADC range"
+                    if pin_volts < -0.005:
+                        unit += " · below GND · check shared ground"
+                elif pin_volts is not None:
+                    sensor_input = sensor_inputs.get(channel, {})
+                    ads_channel = sensor_input.get("channel", -1)
+                    source = (f"ADS1115 A{ads_channel}" if sensor_input.get("source") == "ads1115"
+                              and 0 <= ads_channel <= 3 else "ESP32")
+                    unit += f" · {pin_volts:.4f} V at {source}"
+                elif value == "Waiting" and raw is not None:
                     reference = sensor_setup.reference_estimate(channel, raw) if sensor_setup is not None else (False, None)
                     zero_mv = sensor_zero.get(channel)
                     estimate, source = sensor_display_estimate(channel, raw, reference, zero_mv)
@@ -1695,13 +1996,26 @@ class MainWindow(QMainWindow):
                         unit = f"No {unit} reading · {raw} mV at ESP32 · {source}"
                     if zero_mv is not None:
                         unit += " · observed zero saved"
+                if key == "pump_feedback_v" and adc_fresh and verified:
+                    feedback_percent = _drive_feedback_percent(snap.get("pump_feedback_v"))
+                    if feedback_percent is not None:
+                        unit = f"V · {feedback_percent:.1f}% drive feedback" + unit[1:]
                 self._metric_labels[key].setText(value)
                 self._metric_units[key].setText(unit)
-            self.live_sensor_detail.setVisible(bool(live_mv))
-            self.live_sensor_zero_controls.setVisible(bool(live_mv))
+            self.live_sensor_detail.setVisible(bool(live_mv) or adc_selected)
+            self.live_sensor_zero_controls.setVisible(bool(live_mv) and not adc_selected)
             self.zero_live_sensors_button.setEnabled(bool(live_mv) and not operating and not fault and state == "idle")
             self.clear_live_sensor_zero_button.setEnabled(any(key in sensor_zero for key in ("pressure", "flow")))
-            if live_mv:
+            if adc_selected:
+                details = []
+                for channel, reading in external_readings.items():
+                    volts = reading["volts"]
+                    details.append(f"{reading['channel']} {channel.replace('_', ' ')} "
+                                   + (f"{volts:.4f} V" if volts is not None else "Waiting"))
+                self.live_sensor_detail.setText(
+                    f"External ADC {monitor.get('port') or ''} · " + " · ".join(details)
+                    + f"\n{monitor.get('status') or 'Waiting for sensor board'}. Engineering values are display estimates.")
+            elif live_mv:
                 pressure, flow, feedback = (live_mv[key] for key in ("pressure", "flow", "pump_feedback"))
                 uptime_ms = self.controller.last_controller_uptime
                 sample = f" · ESP32 sample at {uptime_ms / 1000:.2f} s" if uptime_ms is not None else ""
@@ -1723,8 +2037,7 @@ class MainWindow(QMainWindow):
             elif verified:
                 hardware_text = "Equipment setup: approved by the controller. A trained operator must also review the sequence."
             elif snap.get('valve_control_ready'):
-                inputs = snap.get("sensor_inputs", {})
-                if all(inputs.get(key, {}).get("source") == "disabled" for key in ("pressure", "flow")):
+                if all(sensor_inputs.get(key, {}).get("source") == "disabled" for key in ("pressure", "flow")):
                     hardware_text = ("Manual valves are ready. Open Sensor setup to check live input voltages. "
                                      "Calibrated pressure and flow still need a reviewed profile.")
                 else:
@@ -1733,8 +2046,10 @@ class MainWindow(QMainWindow):
                 hardware_text = "Equipment setup is unfinished. Ask the lab maintainer; this cannot be changed here."
             self.hardware_status.setText(hardware_text)
             self.controller_connect.setEnabled(not operating and not desktop_simulation)
+            self.bluetooth_pair_button.setEnabled(not operating and not desktop_simulation)
             self.relay_bench_button.setEnabled(not operating and not desktop_simulation)
             self.valve_test_button.setEnabled(not operating and not desktop_simulation)
+            self.pump_test_button.setEnabled(not operating and not desktop_simulation)
             self.sensorless_valve_button.setEnabled(not operating and not desktop_simulation)
             self.balance_connect.setEnabled(not operating and not desktop_simulation)
             controller_port_opening = self.controller.driver is not None
@@ -1768,7 +2083,7 @@ class MainWindow(QMainWindow):
                 self._plot_time.append(now - self._plot_start)
                 for key, points in self._plot_data.items():
                     try:
-                        value = float(snap.get(key))
+                        value = float(display_values.get(key) if key in display_values else snap.get(key))
                     except (TypeError, ValueError):
                         value = float("nan")
                     points.append(value)
@@ -1806,6 +2121,9 @@ class MainWindow(QMainWindow):
         if self._sensor_setup_dialog is not None:
             self._sensor_setup_dialog.close()
             self._sensor_setup_dialog = None
+        if self._bluetooth_pairing_window is not None:
+            self._bluetooth_pairing_window.close()
+            self._bluetooth_pairing_window = None
         try:
             self.timer.stop()
         except RuntimeError:
@@ -1818,6 +2136,7 @@ class MainWindow(QMainWindow):
                     logging.exception("Could not stop a destroyed UI timer")
         except RuntimeError:
             logging.exception("Could not enumerate timers during Qt teardown")
+        self.shutdown_pump_test()
         try:
             self.shutdown_relay_bench()
         finally:

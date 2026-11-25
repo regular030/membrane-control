@@ -78,7 +78,8 @@ def test_plan_validates_hashes_and_has_no_install_or_environment_side_effects(pa
     assert plan["pythonVersion"] == "3.14.10"
     assert plan["flashes_board"] is False and plan["installs_drivers"] is False
     assert plan["firmware_targets"] == ["esp32-dry-run", "esp32-relay-bench", "esp32-valve-test", "esp32-physical"]
-    assert plan["optional_firmware_targets"] == ["esp32-bluetooth-dry-run", "esp32-bluetooth-physical"]
+    assert plan["optional_firmware_targets"] == ["esp32-bluetooth-dry-run", "esp32-bluetooth-physical",
+        "esp32-pump-voltage-test", "esp32-pump-open-bucket-test"]
     assert plan["valve_test"] == {"environment": "esp32-valve-test",
         "commissioning_required": True, "physical_outputs_locked_by_default": True,
         "shipped_profile_verified": False}
@@ -224,12 +225,13 @@ def prepare_flash_target(target):
     firmware = target / "firmware/platformio.ini"
     firmware.parent.mkdir()
     firmware.write_text("[env:esp32-dry-run]\n[env:esp32-bluetooth-dry-run]\n[env:esp32-relay-bench]\n"
-        "[env:esp32-valve-test]\n[env:esp32-physical]\n[env:esp32-bluetooth-physical]\n", encoding="utf-8")
+        "[env:esp32-valve-test]\n[env:esp32-physical]\n[env:esp32-bluetooth-physical]\n"
+        "[env:esp32-pump-voltage-test]\n[env:esp32-pump-open-bucket-test]\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize("selected", [None, "esp32-dry-run", "esp32-relay-bench", "ESP32-BLUETOOTH-DRY-RUN",
     "ESP32-RELAY-BENCH", "esp32-valve-test", "ESP32-VALVE-TEST", "esp32-physical", "ESP32-PHYSICAL",
-    "ESP32-BLUETOOTH-PHYSICAL"])
+    "ESP32-BLUETOOTH-PHYSICAL", "ESP32-PUMP-VOLTAGE-TEST", "ESP32-PUMP-OPEN-BUCKET-TEST"])
 def test_flash_plan_selects_only_allowed_target_and_preserves_paths_as_arguments(payload, selected):
     _, _, target = payload
     prepare_flash_target(target)
@@ -244,7 +246,8 @@ def test_flash_plan_selects_only_allowed_target_and_preserves_paths_as_arguments
     assert plan["arguments"][-3:] == ["upload", "--upload-port", "COM4"]
     assert str(target / "firmware") in plan["arguments"]
     assert plan["requires_existing_bluetooth_bond"] is (expected == "esp32-bluetooth-physical")
-    assert plan["commissioning_required"] is (normal or expected == "esp32-valve-test")
+    assert plan["commissioning_required"] is (normal or expected in {
+        "esp32-valve-test", "esp32-pump-voltage-test", "esp32-pump-open-bucket-test"})
     assert plan["physical_outputs_locked_by_default"] is (expected == "esp32-valve-test")
     assert plan['manual_valve_control_ready_by_default'] is normal
     assert plan['manual_valve_count'] == (6 if normal else 0)
@@ -254,7 +257,8 @@ def test_flash_plan_selects_only_allowed_target_and_preserves_paths_as_arguments
 
 @pytest.mark.parametrize(("firmware", "commissioning", "locked"), [
     ("esp32-valve-test", True, True), ("esp32-bluetooth-dry-run", False, False),
-    ("esp32-bluetooth-physical", True, False),
+    ("esp32-bluetooth-physical", True, False), ("esp32-pump-voltage-test", True, False),
+    ("esp32-pump-open-bucket-test", True, False),
 ])
 def test_flash_script_entry_point_returns_plan_without_upload(payload, firmware, commissioning, locked):
     _, _, target = payload
@@ -283,7 +287,8 @@ def test_flash_rejects_unsupported_firmware_before_any_work(payload, target):
 
 
 @pytest.mark.parametrize("selected", ["esp32-dry-run", "esp32-bluetooth-dry-run", "esp32-relay-bench",
-    "esp32-valve-test", "esp32-physical", "esp32-bluetooth-physical"])
+    "esp32-valve-test", "esp32-physical", "esp32-bluetooth-physical", "esp32-pump-voltage-test",
+    "esp32-pump-open-bucket-test"])
 def test_any_upload_can_be_cancelled_without_executing_the_fake_tool(payload, selected):
     _, _, target = payload
     prepare_flash_target(target)
@@ -306,6 +311,10 @@ def test_any_upload_can_be_cancelled_without_executing_the_fake_tool(payload, se
         assert "COM, NO and NC" in result.stdout
         assert "docs/valve-test.md" in result.stdout
         assert "Dry-run firmware uses generated" not in result.stdout
+    elif selected == "esp32-pump-voltage-test":
+        assert "RUN contact open" in result.stdout
+    elif selected == "esp32-pump-open-bucket-test":
+        assert "CAN START THE MOTOR" in result.stdout and "unrestricted discharge" in result.stdout
     elif selected in {"esp32-physical", "esp32-bluetooth-physical"}:
         assert "NORMAL CONTROLLER" in result.stdout
         assert "V1,V2,V3,V4,V5,V7 = relay bits 0,1,2,3,5,6" in result.stdout
@@ -383,13 +392,16 @@ def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(p
     shortcuts = {item["Name"]: item for item in json.loads(result.stdout)}
     assert set(shortcuts) == {"Membrane Control", "Flash ESP32 dry run", "Flash ESP32 Bluetooth test", "Flash relay board test",
         "Flash valve test (setup required)", "Flash full controller (setup required)", "Flash normal controller",
-        "Flash normal controller (Bluetooth)", "Pair Bluetooth controller", "USB driver help"}
+        "Flash normal controller (Bluetooth)", "Flash pump voltage test", "Flash open-bucket pump test",
+        "Pair Bluetooth controller", "USB driver help"}
     assert shortcuts["Membrane Control"]["Target"] == str(destination / "MembraneControl.exe")
     assert shortcuts["Membrane Control"]["Arguments"] == ""
     for name, target in [("Flash ESP32 dry run", "esp32-dry-run"), ("Flash relay board test", "esp32-relay-bench"),
         ("Flash ESP32 Bluetooth test", "esp32-bluetooth-dry-run"),
         ("Flash normal controller (Bluetooth)", "esp32-bluetooth-physical"),
         ("Flash valve test (setup required)", "esp32-valve-test"),
+        ("Flash pump voltage test", "esp32-pump-voltage-test"),
+        ("Flash open-bucket pump test", "esp32-pump-open-bucket-test"),
         ("Flash full controller (setup required)", "esp32-physical")]:
         spec = shortcuts[name]
         assert spec["Target"].lower().endswith(r"\powershell.exe")
@@ -402,3 +414,29 @@ def test_shortcuts_preserve_default_and_explicitly_select_each_firmware_target(p
     assert "-Firmware" not in shortcuts["USB driver help"]["Arguments"]
     assert f'-Root "{destination}"' in shortcuts["USB driver help"]["Arguments"]
     assert not destination.exists()  # Metadata inspection creates no actual shortcuts.
+
+
+@pytest.mark.parametrize("code", [0, 8])
+def test_open_bucket_flash_uses_short_paths_and_releases_its_aliases(payload, code):
+    _, _, target = payload
+    result = run_ps(definitions(FLASH) +
+        "function Read-Host { return 'FLASH' }; "
+        "$script:AliasIndex = 0; $script:Released = @(); "
+        "function New-FlashDriveAlias { param($Path) $script:AliasIndex++; "
+        "if ($script:AliasIndex -eq 1) { return 'Q:' }; return 'R:' }; "
+        "function Remove-FlashDriveAlias { param($Drive) $script:Released += $Drive }; "
+        f"function Invoke-FakeUpload {{ $script:ActualArgs = @($args); "
+        f"$script:ActualCore = $env:PLATFORMIO_CORE_DIR; $global:LASTEXITCODE = {code}; 'fake upload' }}; "
+        "function Get-DryRunFlashPlan { [PSCustomObject]@{python='Invoke-FakeUpload';core='original core';"
+        "port='COM5';arguments=@('run','-d','original project','-e','esp32-pump-open-bucket-test','--upload-port','COM5')} }; "
+        "$env:PLATFORMIO_CORE_DIR = 'previous core'; $failed = $false; "
+        f"try {{ Invoke-DryRunFlash -Root {ps_quote(target)} -ComPort COM5 -Firmware esp32-pump-open-bucket-test }} "
+        "catch { $failed = $true }; "
+        "[PSCustomObject]@{args=$script:ActualArgs;core=$script:ActualCore;released=$script:Released;"
+        "restored=$env:PLATFORMIO_CORE_DIR;failed=$failed} | ConvertTo-Json -Compress")
+    outcome = json.loads(result.stdout.splitlines()[-1])
+    assert outcome["args"] == ["run", "-d", r"Q:\firmware", "-e", "esp32-pump-open-bucket-test", "--upload-port", "COM5"]
+    assert outcome["core"] == "R:\\" and outcome["restored"] == "previous core"
+    assert outcome["released"] == ["Q:", "R:"] and outcome["failed"] is (code != 0)
+    if code == 0:
+        assert "Connections and settings, choose Open-bucket pump test, and select COM5" in result.stdout

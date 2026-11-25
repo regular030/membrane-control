@@ -18,15 +18,14 @@ CHANNELS = {
 }
 # Factory firmware sets pressure and flow to 2.5 dB and pump feedback to 11 dB.
 ADC_RANGE_MV = {"pressure": (100, 1250), "flow": (100, 1250), "pump_feedback": (150, 2450)}
-# Certificate points are pre-divider volts and engineering units. Use the upper
-# recorded pressure zero of 0.005 V and round to the ESP32's millivolt resolution.
-CERTIFICATE_POINTS = {
-    key: tuple((round(volts * 1000 / 5), value) for volts, value in points)
-    for key, points in {
-        "pressure": ((0.005, 0), (2.502, 50), (5.004, 100)),
-        "flow": ((1.01, 20), (2.48, 50), (5.00, 100)),
-    }.items()
-}
+# Use the upper recorded pressure zero of 0.005 V and round the certificate
+# points to the ESP32's millivolt resolution after the 5:1 divider.
+PRESSURE_CERTIFICATE_POINTS = tuple(
+    (round(volts * 1000 / 5), psi) for volts, psi in ((0.005, 0), (2.502, 50), (5.004, 100))
+)
+# The lab measured 20, 50 and 100 mL/min at 1, 2.5 and 5 V before the divider.
+# This is 100 mL/min per volt at the ESP32 pin.
+FLOW_CALIBRATION_RANGE_MV = (200, 1000)
 
 
 def _interpolate(mv, lower, upper):
@@ -47,19 +46,15 @@ def sensor_display_estimate(channel, mv, reference=(False, None), zero_mv=None):
         return None, "matches observed zero voltage"
     if channel == "pump_feedback":
         return (mv / 200, "nominal estimate") if mv <= 2000 else (None, "outside nominal range")
-    points = CERTIFICATE_POINTS[channel]
     if channel == "flow":
-        first, middle, last = points
-        segment = (first, middle) if mv <= middle[0] else (middle, last)
-        # On this rig the sensor showed 40 and 100 when the certificate gave 20 and 50.
-        estimate = 2 * _interpolate(mv, *segment)
-        source = "lab-corrected estimate"
-        if not first[0] <= mv <= last[0]:
-            source += " · outside certificate range"
-        elif not 40 <= estimate <= 100:
-            source += " · outside checked flow range"
-        return estimate, source
-    for lower, upper in pairwise(points):
+        first, full_scale = FLOW_CALIBRATION_RANGE_MV
+        source = "calibration estimate"
+        if mv < first:
+            source += " · below calibrated flow range"
+        elif mv > full_scale:
+            source += " · above flow sensor full scale"
+        return mv / 10, source
+    for lower, upper in pairwise(PRESSURE_CERTIFICATE_POINTS):
         if mv <= upper[0]:
             return _interpolate(mv, lower, upper), "certificate estimate"
     return None, "above certificate range"
@@ -86,8 +81,8 @@ class SensorSetupDialog(QDialog):
 
         layout = QVBoxLayout(self)
         introduction = QLabel(
-            "Pressure and flow estimates use the sensor certificates and an assumed 5:1 divider. "
-            "The default flow estimate includes the lab's 2× correction. "
+            "Pressure estimates use the sensor certificate. Flow estimates use the lab's calibration. "
+            "Both use a 5:1 divider. "
             "Capture a zero to compare raw voltages. Two independent measured references are optional. "
             "Run protection uses the commissioned pressure input."
         )

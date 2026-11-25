@@ -230,7 +230,8 @@ def test_step_name_exports_and_old_records_remain_compatible(tmp_path):
         store.export(output, run_id)
         with output.open(encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
-            assert reader.fieldnames[-1] == "step_name"  # Existing column order is preserved.
+            assert reader.fieldnames[-6:] == ["step_name", "sensor_source", "sensor_estimated",
+                                              "pressure_adc_v", "flow_adc_v", "pump_feedback_adc_v"]
             exported = list(reader)
         assert exported[0]["step_name"] == "Backwash"
         assert exported[0]["mass_g"] == ""

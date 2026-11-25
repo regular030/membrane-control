@@ -5,7 +5,7 @@ for the ready-to-run app.
 
 ## Download
 
-For a new Windows x64 PC, download **MembraneControl-Setup-0.1.11-windows-x64.exe**
+For a new Windows x64 PC, download **MembraneControl-Setup-0.1.28-windows-x64.exe**
 from the release and double-click it. Internet is required to install its own
 Python runtime, PlatformIO and ESP32 compiler/framework. It also installs the
 app and creates shortcuts. See the [new-PC setup guide](https://github.com/regular030/membrane-control/blob/main/docs/setup-new-pc.md).
@@ -17,7 +17,7 @@ Python runtime and application libraries it needs.
 1. Open [Releases](https://github.com/regular030/membrane-control/releases)
    to download the application and setup files.
 2. Open the release given to you by the maintainer. Under **Assets**, download
-   `MembraneControl-0.1.11-windows-x64.exe` or the matching portable app ZIP.
+   `MembraneControl-0.1.28-windows-x64.exe` or the matching portable app ZIP.
    **Source code (zip)** is for developers and does not contain the EXE.
 3. If you chose the portable ZIP, right-click it and choose **Extract All**.
 4. Open the EXE and follow [Start here](START-HERE.md).
@@ -29,6 +29,11 @@ software protection blocks the file, ask the maintainer or IT to review it.
 
 If the interface is too large, use **Ctrl + -** to shrink it. **Ctrl + +**
 (or **Ctrl + =**) enlarges it; **Ctrl + 0** restores 100%.
+
+For the isolated pump test, use Setup's **Flash open-bucket pump test**
+shortcut, then open **Connections and settings → Open-bucket pump test**
+in the app and choose the ESP32's wired USB port. See the
+[pump test instructions](../hardware/pump-interface.md#run-the-drive-at-50-with-an-open-discharge).
 
 ## Connect USB equipment later
 

@@ -3,6 +3,10 @@ import os
 
 Import("env", "projenv")
 
+# SCons' literal-include scanner misses headers selected through profile macros.
+# Track project headers explicitly so profile edits rebuild the project objects.
+env.Depends(env.get("PIOBUILDFILES", []), env.Glob("$PROJECT_INCLUDE_DIR/*.h"))
+
 if os.name == "nt":
     project = env.subst("$PROJECT_DIR")
     toolchain = env.PioPlatform().get_package_dir("toolchain-xtensa-esp32")

@@ -2,7 +2,7 @@
 param(
     [string]$InstallRoot = '',
     [string]$Port = '',
-    [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical')]
+    [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical', 'esp32-pump-voltage-test', 'esp32-pump-open-bucket-test')]
     [string]$Firmware = 'esp32-dry-run',
     [switch]$Plan,
     [switch]$DefinitionsOnly
@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 function Get-DryRunFlashPlan {
     param([string]$Root, [string]$ComPort,
-        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical')][string]$Firmware = 'esp32-dry-run')
+        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical', 'esp32-pump-voltage-test', 'esp32-pump-open-bucket-test')][string]$Firmware = 'esp32-dry-run')
     # ValidateSet is case-insensitive in Windows PowerShell 5.1; PlatformIO
     # environment names must still receive their canonical spelling.
     $Firmware = $Firmware.ToLowerInvariant()
@@ -26,19 +26,44 @@ function Get-DryRunFlashPlan {
         throw 'The installed firmware tools are missing. Run Membrane Control Setup again first.'
     }
     $normalController = $Firmware -in @('esp32-physical', 'esp32-bluetooth-physical')
+    $pumpTest = $Firmware -in @('esp32-pump-voltage-test', 'esp32-pump-open-bucket-test')
     return [PSCustomObject]@{ python=$python; core=(Join-Path $destination 'tools/platformio'); port=$name;
         arguments=@('-I', '-m', 'platformio', '--no-ansi', 'run', '-d', $firmwareRoot, '-e', $Firmware, '-t', 'upload', '--upload-port', $name);
         environment=$Firmware; selected_firmware=$Firmware; replaces_existing_firmware=$true;
         requires_existing_bluetooth_bond=($Firmware -eq 'esp32-bluetooth-physical');
-        commissioning_required=($normalController -or $Firmware -eq 'esp32-valve-test');
+        commissioning_required=($normalController -or $pumpTest -or $Firmware -eq 'esp32-valve-test');
         physical_outputs_locked_by_default=($Firmware -eq 'esp32-valve-test');
         manual_valve_count=$(if ($normalController) { 6 } else { 0 });
         manual_valve_control_ready_by_default=$normalController }
 }
 
+function New-FlashDriveAlias {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "Flash folder is missing: $Path" }
+    $used = @(Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name })
+    $used += @([IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1) })
+    $subst = Join-Path $env:SystemRoot 'System32/subst.exe'
+    foreach ($number in 90..68) {
+        $letter = [string][char]$number
+        if ($letter -in $used) { continue }
+        $drive = $letter + ':'
+        try {
+            & $subst $drive ([IO.Path]::GetFullPath($Path)) *> $null
+            if ($LASTEXITCODE -eq 0) { return $drive }
+        } catch { continue }
+    }
+    throw 'Could not allocate a short drive path for the pump firmware tools.'
+}
+
+function Remove-FlashDriveAlias {
+    param([string]$Drive)
+    $subst = Join-Path $env:SystemRoot 'System32/subst.exe'
+    & $subst $Drive /D | Out-Null
+}
+
 function Invoke-DryRunFlash {
     param([string]$Root, [string]$ComPort, [switch]$PlanOnly,
-        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical')][string]$Firmware = 'esp32-dry-run')
+        [ValidateSet('esp32-dry-run', 'esp32-bluetooth-dry-run', 'esp32-relay-bench', 'esp32-valve-test', 'esp32-physical', 'esp32-bluetooth-physical', 'esp32-pump-voltage-test', 'esp32-pump-open-bucket-test')][string]$Firmware = 'esp32-dry-run')
     if ($PlanOnly) {
         Get-DryRunFlashPlan -Root $Root -ComPort $ComPort -Firmware $Firmware | ConvertTo-Json -Depth 4
         return
@@ -46,6 +71,7 @@ function Invoke-DryRunFlash {
     $bluetoothTest = $Firmware -eq 'esp32-bluetooth-dry-run'
     $bluetoothNormal = $Firmware -eq 'esp32-bluetooth-physical'
     $normalController = $bluetoothNormal -or $Firmware -eq 'esp32-physical'
+    $pumpTest = $Firmware -in @('esp32-pump-voltage-test', 'esp32-pump-open-bucket-test')
     Write-Host ("This uploads " + $Firmware + " and REPLACES the selected board's existing program.") -ForegroundColor Yellow
     if ($bluetoothTest) {
         Write-Host 'BLUETOOTH DRY RUN uses simulated measurements and never operates the pump or valves.'
@@ -57,6 +83,10 @@ function Invoke-DryRunFlash {
         Write-Host 'VALVE TEST (SETUP REQUIRED): the shipped valve profile is unverified and physical outputs are locked.' -ForegroundColor Yellow
         Write-Host 'This is a separate physical valve-test program, not dry run or the unloaded raw relay test. It has no sensor, DAC, pump or experiment controls.'
         Write-Host 'Disconnect every external wire from all relay COM, NO and NC contacts for this initial upload. Read docs/valve-test.md before preparing a reviewed valve profile or connecting loads.'
+    } elseif ($Firmware -eq 'esp32-pump-voltage-test') {
+        Write-Host 'PUMP VOLTAGE TEST drives the speed command. Keep START/STOP required ON and the pump RUN contact open during the test.' -ForegroundColor Yellow
+    } elseif ($Firmware -eq 'esp32-pump-open-bucket-test') {
+        Write-Host 'OPEN-BUCKET PUMP TEST CAN START THE MOTOR. Use a primed water supply and unrestricted discharge into an open bucket, isolated from the rig valves.' -ForegroundColor Yellow
     } elseif ($normalController) {
         Write-Host 'NORMAL CONTROLLER: V1,V2,V3,V4,V5,V7 = relay bits 0,1,2,3,5,6. No V6; bit4 unused.'
         if ($bluetoothNormal) {
@@ -70,7 +100,7 @@ function Invoke-DryRunFlash {
         Write-Host 'Dry-run firmware uses generated measurements and does not operate relay GPIO.'
     }
     if ($Firmware -ne 'esp32-physical') { Write-Host 'Keep the pump and valve loads disconnected. Confirm the actual board supply rating before powering it.' }
-    Write-Host 'Close Arduino Serial Monitor/Plotter, the app''s controller connection and any other program using this COM port.'
+    Write-Host 'Close Arduino Serial Monitor/Plotter, the app''s controller connection, any pump test window and other programs using this COM port.'
     Write-Host 'For an external-UART board without automatic reset: hold IO0, press and release EN/RESET, then release IO0 before continuing.'
     if ([string]::IsNullOrWhiteSpace($ComPort)) { $ComPort = Read-Host 'Wired controller USB-UART COM port from Windows Device Manager (for example COM3)' }
     $flash = Get-DryRunFlashPlan -Root $Root -ComPort $ComPort -Firmware $Firmware
@@ -82,12 +112,24 @@ function Invoke-DryRunFlash {
     New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
     $log = Join-Path $logRoot ('flash-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
     $savedCore = $env:PLATFORMIO_CORE_DIR
+    $aliases = @()
     try {
         $env:PLATFORMIO_CORE_DIR = $flash.core
+        $uploadArguments = [string[]]$flash.arguments
+        if ($pumpTest) {
+            # The ESP32 Windows toolchain can exceed its process command limit
+            # when the build project and toolchain both use full user paths.
+            $projectDrive = New-FlashDriveAlias -Path $Root
+            $aliases += $projectDrive
+            $coreDrive = New-FlashDriveAlias -Path $flash.core
+            $aliases += $coreDrive
+            $env:PLATFORMIO_CORE_DIR = $coreDrive + '\'
+            $projectArgument = [Array]::IndexOf($uploadArguments, '-d') + 1
+            $uploadArguments[$projectArgument] = $projectDrive + '\firmware'
+        }
         $savedPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
-            $uploadArguments = [string[]]$flash.arguments
             & $flash.python @uploadArguments 2>&1 | ForEach-Object { Write-Host ([string]$_); Add-Content -LiteralPath $log -Value ([string]$_) -Encoding UTF8 }
             $code = $LASTEXITCODE
         } finally { $ErrorActionPreference = $savedPreference }
@@ -103,6 +145,11 @@ function Invoke-DryRunFlash {
         } elseif ($Firmware -eq 'esp32-valve-test') {
             Write-Host 'Follow docs/valve-test.md in the installation folder. The shipped valve-test profile must report unverified and keep physical outputs locked.'
             Write-Host 'A reviewed valve profile and its commissioning checks are required before connecting loads. This target does not use sensors or control the pump, DAC or an experiment.'
+        } elseif ($Firmware -eq 'esp32-pump-voltage-test') {
+            Write-Host ('To open the voltage-only app, start MembraneControl.exe with --pump-voltage-test ' + $flash.port + '.')
+        } elseif ($Firmware -eq 'esp32-pump-open-bucket-test') {
+            Write-Host ('In Membrane Control, open Connections and settings, choose Open-bucket pump test, and select ' + $flash.port + '.')
+            Write-Host 'After the test, close the test window and use the normal controller flash shortcut to restore the rig firmware.'
         } elseif ($normalController) {
             if ($bluetoothNormal) {
                 Write-Host 'The ESP32 keeps the Bluetooth name MembraneControl-Bench. Keep the existing Windows pairing.'
@@ -117,7 +164,13 @@ function Invoke-DryRunFlash {
             Write-Host 'Open the app in hardware mode and select this controller port. It must report Connected (dry run).'
             Write-Host 'This does not commission the relay wiring or enable physical equipment.'
         }
-    } finally { $env:PLATFORMIO_CORE_DIR = $savedCore }
+    } finally {
+        $env:PLATFORMIO_CORE_DIR = $savedCore
+        foreach ($alias in $aliases) {
+            try { Remove-FlashDriveAlias -Drive $alias }
+            catch { Write-Warning "Could not release temporary flash drive $alias" }
+        }
+    }
 }
 
 if (-not $DefinitionsOnly) {

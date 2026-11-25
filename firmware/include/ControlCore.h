@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace basu {
@@ -22,6 +23,8 @@ constexpr std::size_t kMaxSteps = 32;
 constexpr std::size_t kMaxLineBytes = 8192;
 constexpr uint32_t kHeartbeatTimeoutMs = 3000;
 constexpr uint32_t kTelemetryIntervalMs = 250;
+constexpr uint32_t kNativeAdcSampleIntervalMs = 100;
+constexpr uint32_t kMaxPressureStartupMs = 10000;
 constexpr double kMaxTotalSeconds = 604800.0;
 
 struct Outputs {
@@ -32,6 +35,18 @@ struct Outputs {
   }
   bool operator!=(const Outputs& other) const { return !(*this == other); }
 };
+
+struct PumpOperatingLimits {
+  double maxPercent = 100;
+  std::optional<std::array<bool, kValveCount>> requiredValves;
+};
+
+inline const char* pumpOutputLimitError(const Outputs& outputs, const PumpOperatingLimits& limits) {
+  if (outputs.pumpPercent > limits.maxPercent) return "pump_percent_exceeds_profile_limit";
+  if (outputs.pumpPercent > 0 && limits.requiredValves && outputs.valves != *limits.requiredValves)
+    return "pump_valve_path_mismatch";
+  return nullptr;
+}
 
 struct Step {
   std::string name;
@@ -56,7 +71,8 @@ inline bool validOutputs(const Outputs& outputs) {
          outputs.pumpPercent <= 100;
 }
 
-inline const char* validateRecipe(const Recipe& recipe, bool valve6Absent = false) {
+inline const char* validateRecipe(const Recipe& recipe, bool valve6Absent = false,
+                                  const PumpOperatingLimits& pumpLimits = {}) {
   if (recipe.schemaVersion != 1) return "unsupported recipe schema_version";
   if (recipe.name.empty() || recipe.name.size() > 80) return "recipe name must contain 1-80 bytes";
   if (recipe.description.size() > 1000) return "recipe description exceeds 1000 bytes";
@@ -72,6 +88,7 @@ inline const char* validateRecipe(const Recipe& recipe, bool valve6Absent = fals
         step.durationSeconds > 86400) return "duration_s must be 0.1-86400";
     if (!validOutputs(step.outputs)) return "pump_percent must be finite and 0-100";
     if (valve6Absent && step.outputs.valves[kValve6Slot]) return "V6 is not installed; its wire slot must remain false";
+    if (const char* error = pumpOutputLimitError(step.outputs, pumpLimits)) return error;
     total += step.durationSeconds;
   }
   if (!std::isfinite(total) || total * recipe.repeat > kMaxTotalSeconds)
@@ -92,6 +109,7 @@ struct Measurements {
   Reading pressure;
   Reading flow;
   Reading pumpFeedback;
+  bool pressureBelowAdcRange = false;
 };
 
 struct SafetyConfig {
@@ -103,6 +121,8 @@ struct SafetyConfig {
   uint32_t sensorMaxAgeMs = 1000;
   std::array<bool, kValveCount> safeValves{};
   bool valve6Absent = false;
+  PumpOperatingLimits pumpLimits;
+  uint32_t pressureStartupMs = 0;
 };
 
 enum class State { Idle, Running, Manual, ManualValves, Fault };
@@ -124,7 +144,7 @@ class Controller {
 
   const char* load(const Recipe& candidate) {
     if (state_ != State::Idle) return "recipe can only be replaced while idle";
-    if (const char* error = validateRecipe(candidate, safety_.valve6Absent)) return error;
+    if (const char* error = validateRecipe(candidate, safety_.valve6Absent, safety_.pumpLimits)) return error;
     recipe_ = candidate;  // Commit only after every field/step has passed validation.
     loaded_ = true;
     return nullptr;
@@ -145,12 +165,23 @@ class Controller {
     return nullptr;
   }
 
-  const char* manual(const Outputs& requested, uint32_t now) {
-    if (state_ != State::Idle && state_ != State::Manual)
+  const char* manual(const Outputs& requested, uint32_t now, bool allowPressureStartup = false) {
+    const bool valveHandoff = state_ == State::ManualValves && manualPumpProfile();
+    if (valveHandoff) {
+      tick(now);
+      if (state_ == State::Fault) return fault_.c_str();
+    } else if (state_ != State::Idle && state_ != State::Manual) {
       return "manual control requires idle or manual state";
+    }
     if (!validOutputs(requested)) return "pump_percent must be finite and 0-100";
     if (safety_.valve6Absent && requested.valves[kValve6Slot]) return "V6 is not installed; its wire slot must remain false";
-    if (const char* error = readiness(now)) return error;
+    if (const char* error = pumpOutputLimitError(requested, safety_.pumpLimits)) return error;
+    if (valveHandoff && (outputs_.valves != *safety_.pumpLimits.requiredValves || requested.valves != outputs_.valves))
+      return "pump_valve_path_mismatch";
+    if (pressureStartup_) return "pressure_startup_in_progress";
+    const bool pressureStartup = allowPressureStartup && requested.pumpPercent > 0 && canStartWithLowPressure(now);
+    if (const char* error = readiness(now, pressureStartup)) return error;
+    if (pressureStartup) pressureStartup_.emplace();
     valveOnlyOutputs_ = false;
     if (state_ == State::Idle) lastHeartbeatMs_ = now;
     state_ = State::Manual;
@@ -218,6 +249,9 @@ class Controller {
   void setMeasurements(const Measurements& readings) { measurements_ = readings; }
   void setHardwareReady(bool ready) { safety_.hardwareReady = ready; }
   void setValveControlReady(bool ready) { safety_.valveControlReady = ready; }
+  void notePumpRunCommanded(uint32_t now) {
+    if (pressureStartup_ && !pressureStartup_->runCommandedMs) pressureStartup_->runCommandedMs = now;
+  }
 
   void tick(uint32_t now) {
     if (!active()) return;
@@ -231,9 +265,17 @@ class Controller {
       return;  // Pump is zero; physical pressure/pump readiness applies to other modes.
     }
     if (!safety_.simulation) {
-      if (const char* error = readiness(now)) {
+      if (const char* error = readiness(now, pressureStartup_.has_value())) {
         latchFault(error);
         return;
+      }
+      if (pressureStartup_) {
+        const auto runCommandedMs = pressureStartup_->runCommandedMs;
+        if (runCommandedMs && static_cast<uint32_t>(now - *runCommandedMs) >= safety_.pressureStartupMs) {
+          latchFault("pressure_startup_timeout");
+          return;
+        }
+        if (measurements_.pressure.fresh(now, safety_.sensorMaxAgeMs)) pressureStartup_.reset();
       }
     }
     if (state_ != State::Running) return;
@@ -264,6 +306,17 @@ class Controller {
   bool recipeLoaded() const { return loaded_; }
   bool simulation() const { return safety_.simulation; }
   bool hardwareVerified() const { return !safety_.simulation && safety_.hardwareReady && safety_.safeProfileVerified; }
+  const PumpOperatingLimits* manualPumpProfile() const {
+    const auto& limits = safety_.pumpLimits;
+    return hardwareVerified() && limits.requiredValves && limits.maxPercent > 0 ? &limits : nullptr;
+  }
+  uint32_t manualPressureStartupMs() const {
+    return manualPumpProfile() && safety_.pressureStartupMs <= kMaxPressureStartupMs ? safety_.pressureStartupMs : 0;
+  }
+  const char* manualPressureStartupStatus(uint32_t now) const {
+    if (pressureStartup_) return "active";
+    return canStartWithLowPressure(now) ? "available" : nullptr;
+  }
   int stepIndex() const { return stepIndex_; }
   uint16_t cycle() const { return cycle_; }
   uint32_t sensorMaxAgeMs() const { return safety_.sensorMaxAgeMs; }
@@ -275,13 +328,26 @@ class Controller {
   }
 
  private:
-  const char* readiness(uint32_t now) const {
+  struct PressureStartup {
+    std::optional<uint32_t> runCommandedMs;
+  };
+
+  bool freshLowPressure(uint32_t now) const {
+    return measurements_.pressureBelowAdcRange && !measurements_.pressure.valid &&
+        static_cast<uint32_t>(now - measurements_.pressure.acquiredMs) <= 2 * kNativeAdcSampleIntervalMs;
+  }
+  bool canStartWithLowPressure(uint32_t now) const {
+    return manualPressureStartupMs() && freshLowPressure(now) &&
+        (state_ == State::Idle || (state_ == State::ManualValves && outputs_.valves == *safety_.pumpLimits.requiredValves));
+  }
+  const char* readiness(uint32_t now, bool allowLowPressure = false) const {
     if (safety_.simulation) return nullptr;
     if (!safety_.hardwareReady) return "hardware_not_verified";
     if (!safety_.safeProfileVerified || !std::isfinite(safety_.pressureLimitPsi) ||
         safety_.pressureLimitPsi <= 0 || safety_.sensorMaxAgeMs == 0)
       return "safe_profile_not_verified";
-    if (!measurements_.pressure.fresh(now, safety_.sensorMaxAgeMs)) return "pressure_invalid_or_stale";
+    if (!measurements_.pressure.fresh(now, safety_.sensorMaxAgeMs))
+      return allowLowPressure && freshLowPressure(now) ? nullptr : "pressure_invalid_or_stale";
     if (measurements_.pressure.value > safety_.pressureLimitPsi) return "pressure_limit_exceeded";
     return nullptr;
   }
@@ -290,6 +356,7 @@ class Controller {
     return std::max<uint32_t>(1, static_cast<uint32_t>(std::ceil(recipe_.steps[index].durationSeconds * 1000.0)));
   }
   void resetOutputs() {
+    pressureStartup_.reset();
     if (valveOnlyOutputs_) outputs_.valves.fill(false);
     else outputs_.valves = safety_.safeValves;
     outputs_.pumpPercent = 0;
@@ -305,6 +372,7 @@ class Controller {
   uint16_t cycle_ = 0;
   uint32_t stepStartedMs_ = 0;
   uint32_t lastHeartbeatMs_ = 0;
+  std::optional<PressureStartup> pressureStartup_;
   std::string fault_;
   bool valveOnlyOutputs_ = false;
 };
