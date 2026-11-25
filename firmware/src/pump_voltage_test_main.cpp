@@ -1,9 +1,10 @@
 #include <Arduino.h>
 #include <driver/ledc.h>
 #include <cstring>
+#include "PumpPwmPin.h"
 
 namespace {
-constexpr int kPwmPin = 25;
+constexpr int kPwmPin = basu::pumpPwmPin<25>();
 constexpr uint32_t kPwm50 = 2048;  // Half of the 12-bit timer period.
 constexpr uint32_t kLeaseMs = 2000;
 constexpr uint32_t kTestMs = 30000;

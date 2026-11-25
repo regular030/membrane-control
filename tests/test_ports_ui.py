@@ -101,7 +101,7 @@ def test_refresh_is_only_on_tab_entry_or_explicit_button_not_a_timer(ports_scree
     assert len(enumerations) == before + 2
 
 
-def test_startup_connects_only_detected_lab_defaults(ports_screen, monkeypatch):
+def test_startup_connects_the_detected_controller_but_keeps_scale_closed(ports_screen, monkeypatch):
     window, controller, ports, _ = ports_screen
     calls = []
     monkeypatch.setattr(controller, 'connect_controller', lambda port: calls.append(('ESP32', port)))
@@ -114,14 +114,49 @@ def test_startup_connects_only_detected_lab_defaults(ports_screen, monkeypatch):
 
     controller.set_simulation(False)
     window.connect_lab_defaults()
-    assert calls == [('ESP32', 'COM9'), ('scale', 'COM6', 9600,
-                                        {'serial_format': '8N1', 'polling': True})]
+    assert calls == [('ESP32', 'COM9')]
+    assert window.balance_port.currentData() == 'COM6'
+    assert controller.balance is None
 
     calls.clear()
     ports.remove(('COM6', 'Scale adapter'))
     window._refresh_ports()
     window.connect_lab_defaults()
     assert calls == [('ESP32', 'COM9')]
+
+
+@pytest.mark.parametrize('port_open', [False, True])
+def test_balance_can_disconnect_without_a_weight_reading(ports_screen, monkeypatch, port_open):
+    window, controller, ports, _ = ports_screen
+    controller.set_simulation(False)
+    ports.append(('COM6', 'Scale adapter'))
+    window._refresh_ports()
+    window._update_view(dict(controller.snapshot))
+    closed = []
+    events = [{'type': 'port_open'}] if port_open else []
+    transport = SimpleNamespace(
+        poll=lambda now: events,
+        close=lambda: closed.append(True),
+    )
+    monkeypatch.setattr('membrane_control.controller.SerialTransport',
+                        lambda *args, **options: transport)
+
+    window.balance_connect.click()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert controller.balance is transport
+    assert controller.balance_port_open is port_open
+    assert not controller.snapshot['balance_connected']
+    assert not window.balance_connect.isEnabled()
+    assert window.balance_disconnect.isEnabled()
+
+    window.balance_disconnect.click()
+    controller.tick()
+    window._update_view(dict(controller.snapshot))
+    assert closed == [True]
+    assert controller.balance is None
+    assert window.balance_connect.isEnabled()
+    assert not window.balance_disconnect.isEnabled()
 
 
 @pytest.mark.parametrize('peer', ['8C94DF4F8AEA', '8C94DF50204E'])

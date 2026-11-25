@@ -8,6 +8,7 @@ as **COM6**, separate from the ESP32's port.
 ## Connect in the app
 
 1. Open **Connections and settings** to check the balance connection.
+   The app leaves the balance port closed at startup until you click **Connect**.
 2. Under **Balance**, select the scale's current COM port. The app defaults to
    **9600 baud** and **NONE · 8N1**. If the scale uses different settings,
    match its baud and parity in the app. **EVEN** uses **7E1** and **ODD** uses
@@ -39,10 +40,11 @@ escaped text and hexadecimal data.
   SOH/EOT form boundaries are supported. Gross/Tare/ID lines are not silently
   substituted for the net result.
 
-The main app leaves the USB ready signal (**DTR**) off for the lab scale on
-**COM6**. In the lab test, the display stayed steady and a Print request
-returned a valid weight with DTR off. If using **Test scale / raw data** on
-COM6, uncheck **USB ready signal (DTR)** before connecting.
+The main app leaves the USB ready signal (**DTR**) off on Windows COM ports
+used for the balance, including when Windows assigns the scale a new port.
+In the lab test, the display stayed steady and a Print request returned a
+valid weight with DTR off. **Test scale / raw data** starts with DTR off
+when a Windows COM port is selected in the main app.
 
 For a continuous output setup, the balance menu can use `CONTIN ON`,
 `STABLE OFF`, `PERIOD OFF` and `SINGLE`. The app's polling option also supports

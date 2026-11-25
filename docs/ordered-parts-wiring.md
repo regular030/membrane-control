@@ -18,19 +18,19 @@ analog signals now go to the ADS1115, not to the ESP32's native ADC pins.
 
 | Function | Current connection | Signal |
 | --- | --- | --- |
-| Pressure measurement | ADS1115 **A3** | Divider 1 S output |
+| Pressure measurement | ADS1115 **A0** | Divider 1 S output |
 | Flow analog measurement | ADS1115 **A1** | Divider 2 S output |
 | Pump speed feedback measurement | ADS1115 **A2** | Divider 3 S output, after resolving pump analog references |
 | ADC data | ESP32 **IO22 / GPIO22** | ADS1115 SDA |
 | ADC clock | ESP32 **IO21 / GPIO21** | ADS1115 SCL, 25 kHz |
 | ADC supply / address | ESP32 **3V3 / GND** | ADS1115 VDD to 3V3; GND and ADDR to common GND, address `0x48` |
-| Pump speed command PWM | ESP32 **IO26 / GPIO26** | Garosa PWM+ |
+| Pump speed command PWM | ESP32 **IO23 / GPIO23** | Garosa PWM+ |
 | Pump start/stop | **Spare onboard relay**, raw bit 15 | Relay COM/NO to pump DB25 15/17 |
 | Low-voltage reference | **GND** | Sensor/divider references; pump references need the review below |
 
-ADS1115 A0 is unused. The onboard relay chain uses GPIO14/13/12/5 for
-data/clock/latch/OE; leave those traces alone. GPIO26 is the PWM output in this
-full-rig profile, not an external contact-driver output.
+ADS1115 A3 is unused. The onboard relay chain uses GPIO14/13/12/5 for
+data/clock/latch/OE; leave those traces alone. GPIO23 is the PWM output in
+this full-rig profile. The RUN contact uses the onboard relay.
 
 ## There is no 3.3 V switch on the HiLetgo board
 
@@ -81,7 +81,7 @@ be powered from an ESP32 GPIO or from the divider S output.
 | Pressure red, power + | External regulated +12 V |
 | Pressure black, return | Supply negative / reviewed ESP32 GND and divider 1 screw GND |
 | Pressure white, analog output | Divider 1 screw VCC |
-| Divider 1 S | ADS1115 **A3** |
+| Divider 1 S | ADS1115 **A0** |
 | Divider 1 header - | Common ADS1115 / ESP32 GND |
 | Flow red, power + | External regulated +12 V |
 | Flow black, return | Supply negative / reviewed ESP32 GND and divider 2 screw GND |
@@ -119,7 +119,7 @@ are **PWM-**, **PWM+**, **Supply+**, **Supply-**, **AO-** and **AO+**.
 | Converter terminal | Connect to |
 | --- | --- |
 | PWM- | ESP32 **GND** |
-| PWM+ | ESP32 **IO26** |
+| PWM+ | ESP32 **IO23** |
 | Supply+ | Regulated **+24 V DC** |
 | Supply- | Converter supply negative |
 
@@ -133,7 +133,7 @@ With the pump disconnected, use the
 [unloaded example](../firmware/examples/pwm-converter-bench/README.md) to
 measure AO+ relative to AO- at 1 kHz and 0%, 50%, and 100% duty. That separate
 bench example uses **IO25**, so its PWM connection differs from the full-rig
-firmware's **IO26**. The targets are about 0, 5 and 10 V, with a maximum of
+firmware's **IO23**. The targets are about 0, 5 and 10 V, with a maximum of
 10 V. Check zero after PWM loss and
 power cycling, and measure settling before approving the profile.
 
@@ -156,8 +156,7 @@ Use COM and NO from one physically unused relay after identifying its bit with
 the [unloaded relay test](relay-board-test.md). Keep the selected contact pair
 free of any mains COM jumper and external voltage. The current full-rig profile
 uses raw bit 15 for this contact. The generic factory firmware has no selected
-pump bit. Do not wire a separate contact driver to GPIO26 in the current rig:
-it is the Garosa PWM output.
+pump bit.
 
 On the pump, choose **Voltage Input**, exit to **Continuous Pump Mode**, set
 **START/STOP required ON**, and turn **AUTO START OFF**. With START/STOP set

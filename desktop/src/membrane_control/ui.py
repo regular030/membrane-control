@@ -42,6 +42,8 @@ from .valve_test import ValveTestDialog
 
 LAB_BALANCE_PORT = "COM6"
 LAB_ADC_PORT = "COM5"
+MEASURED_FLOW_ML_MIN = 49.0
+MEASURED_PUMP_PERCENT = 11.0
 
 METRICS = {
     "flow_ml_min": ("Flow", "mL/min", "flow"),
@@ -484,6 +486,21 @@ class MainWindow(QMainWindow):
         pump_row.addWidget(self.manual_pump_sent)
         pump_row.addStretch()
         manual_layout.addLayout(pump_row)
+        flow_row = QHBoxLayout()
+        flow_row.addWidget(_label("Estimated pump flow (mL/min)"))
+        self.manual_flow = QDoubleSpinBox()
+        self.manual_flow.setRange(-0.1, MEASURED_FLOW_ML_MIN)
+        self.manual_flow.setDecimals(1)
+        self.manual_flow.setSpecialValueText("Outside estimate")
+        self.manual_flow.setValue(0)
+        self.manual_flow.setKeyboardTracking(False)
+        self.manual_flow.setAccessibleName("Estimated manual pump flow millilitres per minute")
+        self.manual_flow.setToolTip("Estimated from 49 mL/min at 11%. Enter a flow, then use Start pump or Apply speed.")
+        self.manual_flow.valueChanged.connect(self._stage_manual_flow)
+        self.manual_pump.valueChanged.connect(self._show_manual_flow)
+        flow_row.addWidget(self.manual_flow)
+        flow_row.addStretch()
+        manual_layout.addLayout(flow_row)
         self.manual_pump_feedback = _label("", "muted", True)
         self.manual_pump_feedback.setAccessibleName("Pump feedback readings")
         self.manual_pump_feedback.setToolTip(
@@ -597,7 +614,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.steps_table, 1)
         row = QHBoxLayout()
         self._editor_edit_buttons = []
-        for text, callback in [("Add step", self._add_step), ("Remove step", self._remove_step), ("Move up", lambda: self._move_step(-1)), ("Move down", lambda: self._move_step(1))]:
+        for text, callback in [("Add step", self._add_step), ("Remove step", self._remove_step), ("Move up", lambda: self._move_step(-1)), ("Move down", lambda: self._move_step(1)), ("Set step flow", self._set_step_flow)]:
             button = _button(text, callback)
             self._editor_edit_buttons.append(button)
             row.addWidget(button)
@@ -717,7 +734,7 @@ class MainWindow(QMainWindow):
         self.adc_detail.setAccessibleName("External sensor board connection status")
         adc_form.addRow(self.adc_detail)
         adc_form.addRow(_label(
-            "Only use this connection with a separate USB sensor-only board. The full rig reads A3 pressure, A1 flow and A2 pump feedback through its controller connection above. This optional port does not connect automatically.",
+            "Only use this connection with a separate USB sensor-only board. The full rig reads pressure, flow and pump feedback through its controller connection above. This optional port does not connect automatically.",
             "muted", True))
         layout.addWidget(adc_box)
         refresh = QHBoxLayout()
@@ -817,7 +834,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(modes)
         equipment = QGroupBox("When you are ready to connect the rig")
         equipment_layout = QVBoxLayout(equipment)
-        equipment_layout.addWidget(_label("Pair MembraneControl-Rig in Windows, then open Connections and settings. The app finds its outgoing Bluetooth port automatically and uses COM6 for the scale. All three sensors connect to the rig's ADS1115: A3 pressure, A1 flow and A2 pump feedback, with SDA GPIO22 and SCL GPIO21. The scale baud rate must match the setting on the scale.", "", True))
+        equipment_layout.addWidget(_label("Pair MembraneControl-Rig in Windows, then open Connections and settings. The app finds its outgoing Bluetooth port automatically and uses COM6 for the scale. The Dashboard shows which ADS1115 input each sensor uses. ADS1115 uses SDA GPIO22 and SCL GPIO21. The scale baud rate must match the setting on the scale.", "", True))
         equipment_layout.addWidget(_label("The Dashboard explains why Start run is unavailable and gives you the next action. ON and OFF are commands, not proof that equipment moved. Stop run is a software stop; use the lab's physical stop procedure in an emergency.", "", True))
         buttons = QHBoxLayout()
         buttons.addWidget(_button("Open connections", lambda: self.tabs.setCurrentIndex(2)))
@@ -994,6 +1011,22 @@ class MainWindow(QMainWindow):
             })
         return rows
 
+    def _set_step_flow(self):
+        row = self.steps_table.currentRow()
+        if row < 0:
+            self.statusBar().showMessage("Select a sequence step first.", 6000)
+            return
+        pump = self.steps_table.cellWidget(row, 9)
+        estimate = pump.value() * MEASURED_FLOW_ML_MIN / MEASURED_PUMP_PERCENT
+        flow, accepted = QInputDialog.getDouble(
+            self, "Set step flow", "Estimated mL/min (49 mL/min measured at 11%)",
+            estimate if estimate <= MEASURED_FLOW_ML_MIN else 0, 0, MEASURED_FLOW_ML_MIN, 1)
+        if accepted:
+            previous = pump.value()
+            pump.setValue(flow * MEASURED_PUMP_PERCENT / MEASURED_FLOW_ML_MIN)
+            if pump.value() != previous:
+                self.recipe_approved.setChecked(False)
+
     def _collect_recipe(self) -> Recipe:
         recipe = Recipe.from_dict({
             "schema_version": 1,
@@ -1124,6 +1157,18 @@ class MainWindow(QMainWindow):
     def _update_pump_start_enabled(self):
         self.manual_apply.setEnabled(self.manual_pump.isEnabled() and self.manual_pump.value() > 0)
 
+    def _stage_manual_flow(self, flow):
+        if flow >= 0:
+            self.manual_pump.setValue(flow * MEASURED_PUMP_PERCENT / MEASURED_FLOW_ML_MIN)
+
+    def _show_manual_flow(self, percent):
+        estimate = percent * MEASURED_FLOW_ML_MIN / MEASURED_PUMP_PERCENT
+        with QSignalBlocker(self.manual_flow):
+            if estimate > self.manual_flow.maximum():
+                self.manual_flow.setValue(self.manual_flow.minimum())
+            else:
+                self.manual_flow.setValue(estimate)
+
     def _update_pump_feedback(self, snapshot, *, fresh, simulation):
         if not fresh:
             self.manual_pump_sent.setText("Command unavailable")
@@ -1229,8 +1274,6 @@ class MainWindow(QMainWindow):
         preferred = self.controller.preferred_controller_port
         if preferred and self.controller_port.currentData() == preferred:
             self._connect_controller(show_dialog=False)
-        if self.balance_port.currentData() == LAB_BALANCE_PORT:
-            self._connect_balance(show_dialog=False)
 
     def _connect_adc_monitor(self, *, show_dialog=True):
         port = self.adc_port.currentData()
@@ -1364,7 +1407,8 @@ class MainWindow(QMainWindow):
             return
         dialog = BalanceDiagnosticsDialog(self, selected_port=port,
             selected_baud=int(self.balance_baud.currentText()), selected_format=self.balance_format.currentData(),
-            excluded_ports=excluded, port_lister=self.controller.list_ports)
+            excluded_ports=excluded, port_lister=self.controller.list_ports,
+            selected_dtr=not port.upper().startswith("COM"))
         self._balance_diagnostics_dialog = dialog
         try:
             dialog.exec()
@@ -1881,6 +1925,10 @@ class MainWindow(QMainWindow):
             ) if blocked), "")
             self.manual_pump.setMaximum(pump_profile["max_percent"] if pump_profile else 100)
             self.manual_pump.setEnabled(not pump_blocker)
+            with QSignalBlocker(self.manual_flow):
+                self.manual_flow.setMaximum(min(MEASURED_FLOW_ML_MIN,
+                    self.manual_pump.maximum() * MEASURED_FLOW_ML_MIN / MEASURED_PUMP_PERCENT))
+            self.manual_flow.setEnabled(not pump_blocker)
             pump_path = (f"Pump runs with V1 and V3 open. Maximum {pump_profile['max_percent']:g}%."
                          if pump_profile else "")
             if pressure_startup == "available":
@@ -2051,12 +2099,13 @@ class MainWindow(QMainWindow):
             self.valve_test_button.setEnabled(not operating and not desktop_simulation)
             self.pump_test_button.setEnabled(not operating and not desktop_simulation)
             self.sensorless_valve_button.setEnabled(not operating and not desktop_simulation)
-            self.balance_connect.setEnabled(not operating and not desktop_simulation)
+            balance_in_use = self.controller.balance is not None
+            self.balance_connect.setEnabled(not operating and not balance_in_use and not desktop_simulation)
             controller_port_opening = self.controller.driver is not None
             self.controller_disconnect.setEnabled(
                 not operating and (connected or controller_port_opening) and not desktop_simulation)
-            self.balance_disconnect.setEnabled(not operating and balanced and not desktop_simulation)
-            self.balance_request.setEnabled(not desktop_simulation and self.controller.balance is not None)
+            self.balance_disconnect.setEnabled(not operating and balance_in_use and not desktop_simulation)
+            self.balance_request.setEnabled(not desktop_simulation and self.controller.balance_port_open)
             self.balance_diagnostics.setEnabled(not operating and not desktop_simulation)
             current_run_id = snap.get("run_id")
             if self._last_run_id is not None and current_run_id is None:

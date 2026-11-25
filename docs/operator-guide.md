@@ -87,6 +87,12 @@ from the scale. Do not change these values just to make a graph look right.
 
 ## Compare desired and measured flow
 
+To set pump speed in mL/min, enter **Estimated pump flow** under **Pump settings**,
+then click **Start pump** or **Apply speed**. The estimate uses the measured
+49 mL/min at 11% and is available up to 49 mL/min. Actual flow can vary with the
+experiment. For a preset, select a row in **Sequence editor** and click
+**Set step flow**. Review the changed step before running it on the rig.
+
 Enter **Desired flow (mL/min)** on Dashboard and click **Apply target**. This
 changes only the comparison target, not the pump setting or other sequence
 edits. You can also set it in **Sequence editor**, then use **Apply sequence**.

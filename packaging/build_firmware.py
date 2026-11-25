@@ -39,6 +39,7 @@ REQUIRED_SOURCES = (
     "firmware/native_compiler.py", "firmware/src/main.cpp", "firmware/src/relay_bench_main.cpp",
     "firmware/src/protected_spp.cpp", "firmware/include/ProtectedSpp.h",
     "firmware/src/pump_voltage_test_main.cpp", "firmware/include/PumpTach.h",
+    "firmware/include/PumpPwmPin.h", "firmware/include/LabRigAds1115Profile.h",
     "firmware/src/ads1115_usb_monitor_main.cpp", "docs/ads1115-usb-monitor.md",
     "firmware/include/BoardProfile.h", "firmware/include/BoardConfig.h",
     "firmware/include/ManualValveConfig.h",

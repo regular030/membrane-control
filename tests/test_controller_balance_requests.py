@@ -95,9 +95,10 @@ def test_default_format_still_supports_original_transport_constructor(app, monke
     assert calls == [("FAKE-OLD", 9600, True)]
 
 
-def test_lab_scale_leaves_dtr_inactive_and_accepts_weight_after_print_echo(app):
+@pytest.mark.parametrize("port", ["COM6", "COM12"])
+def test_lab_scale_leaves_dtr_inactive_and_accepts_weight_after_print_echo(app, port):
     controller, _ = app
-    controller.connect_balance("COM6")
+    controller.connect_balance(port)
     balance = controller.balance
     assert balance.options == {"dtr": False}
     balance.events.extend([

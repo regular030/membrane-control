@@ -88,7 +88,7 @@ inline bool calibrationValid(const AnalogConfig& input) {
       (input.nativeAdcAttenuation == NativeAdcAttenuation::Db2_5 &&
        input.minPinVolts >= 0.100 && input.maxPinVolts <= 1.250);
   const double zeroTolerance = input.adsZeroToleranceVolts;
-  const bool adsZeroValid = std::isfinite(zeroTolerance) && zeroTolerance >= 0 && zeroTolerance <= 0.005 &&
+  const bool adsZeroValid = std::isfinite(zeroTolerance) && zeroTolerance >= 0 && zeroTolerance <= 0.006 &&
       (zeroTolerance == 0 ||
        (input.source == AnalogSource::Ads1115 && input.minPinVolts == 0 &&
         input.unitsPerVolt > 0 && std::isfinite(input.offset) && input.offset <= 0 &&

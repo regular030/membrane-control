@@ -1,5 +1,6 @@
 #pragma once
 #include "BoardConfig.h"
+#include "PumpPwmPin.h"
 
 // Current lab rig: the replacement ESP32 owns the relays, pump and ADS1115.
 // Valve path, RUN contact, 50% command and Stop state were confirmed in the lab.
@@ -15,7 +16,7 @@ inline BoardConfig compiledBoardConfig() {
   config.valveBits = {{0, 1, 2, 3, 5, -1, 6}};
   config.pumpCommandSource = PumpCommandSource::PwmConverter;
   config.pwmConverterInterfaceVerified = true;
-  config.pumpPwmPin = 26;
+  config.pumpPwmPin = pumpPwmPin<23>();
   config.pwmSettleMs = 1500;
   config.pumpContactBit = 15;
   config.pumpLimits.maxPercent = 50;
@@ -27,7 +28,7 @@ inline BoardConfig compiledBoardConfig() {
   config.pressureLimitPsi = 80;
 
   config.pressure.source = AnalogSource::Ads1115;
-  config.pressure.adsChannel = 3;
+  config.pressure.adsChannel = 0;
   config.pressure.calibrationVerified = true;
   // Certificate: 0 psi at 0.005 V and 100 psi at 5.004 V, before 5:1 division.
   config.pressure.unitsPerVolt = 500.0 / (5.004 - 0.005);
@@ -37,7 +38,7 @@ inline BoardConfig compiledBoardConfig() {
   config.pressure.minValue = 0;
   config.pressure.maxValue = 105;
   config.pressure.rejectRails = false;
-  config.pressure.adsZeroToleranceVolts = 0.002;
+  config.pressure.adsZeroToleranceVolts = 0.006;
 
   config.flow.source = AnalogSource::Ads1115;
   config.flow.adsChannel = 1;
