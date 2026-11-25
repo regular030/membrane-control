@@ -1,10 +1,10 @@
-Membrane Control 0.1.28 adds an open-bucket pump test and reports pump feedback separately from the commanded speed.
+Membrane Control 0.1.30 adds estimated flow entry, a clean-water flux test preset and explicit balance connection controls.
 
 Developed for **Dr. Onita Basu's lab at Carleton University**.
 
-- The USB open-bucket test stages 50%, closes the RUN relay for up to 10 seconds, and retains the controller's acknowledgment after the test. The lab confirmed water flow at about 165 mL/min on the Masterflex display and confirmed that the pump stopped when the test ended.
-- The commissioning build reads the pump feedback divider on IO34. The normal Dashboard can report drive feedback in volts and, with a configured tachometer input, measured RPM.
-- Windows Setup includes shortcuts for the explicit pump tests and normal controller flashing. The firmware bundle includes the open-bucket test and normal Bluetooth images.
-- Normal CWF operation requires a compiled rig profile and a calibrated pressure signal at startup. Use the open-bucket test only with its separate discharge setup.
+- Enter an estimated pump flow on the Dashboard or for a step in the Sequence editor. The estimate uses the measured 49 mL/min at 11% and covers up to 49 mL/min.
+- Select **CWF water test** to load the lab's reviewed V1/V3 clean-water sequence.
+- The balance serial port stays closed at startup. Connect explicitly when weighing is needed and use Disconnect to release the port even if no readings have arrived.
+- The lab's ADS1115 profile reads pressure on A0 and drives pump PWM on IO23. It accepts near-zero pressure input down to −6 mV and enforces the existing 80 psi firmware cutoff.
 
-[Installation instructions](https://github.com/regular030/membrane-control/blob/v0.1.28/docs/installation.md)
+[Installation instructions](https://github.com/regular030/membrane-control/blob/v0.1.30/docs/installation.md)

@@ -37,6 +37,10 @@ def test_recipe_validation_and_json_round_trip(tmp_path):
 
 def test_demo_presets_are_unapproved_and_valid():
     presets = built_in_recipes()
+    water_test = presets.pop("CWF water test")
+    water_test.validate()
+    assert water_test.hardware_approved
+    assert [step.pump_percent for step in water_test.steps] == [0, 25, 0, 0]
     assert set(presets) == {"CIP demo", "CWF demo", "Fouling demo"}
     for recipe in presets.values():
         recipe.validate()

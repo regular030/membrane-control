@@ -152,6 +152,26 @@ def test_manual_pump_start_speed_change_and_stop(screen):
     assert controller.driver.engine.pump_percent == 0
 
 
+def test_estimated_manual_flow_stages_command_until_start(screen):
+    window, controller, _ = screen
+    window.manual_flow.setValue(49)
+    assert window.manual_pump.value() == 11
+    assert controller.driver.engine.pump_percent == 0
+    window.manual_apply.click()
+    assert controller.driver.engine.pump_percent == 11
+
+
+def test_cwf_step_flow_converts_to_percent_and_requires_review(screen, monkeypatch):
+    window, controller, _ = screen
+    window._populate_recipe(controller.presets["CWF water test"])
+    window.steps_table.selectRow(1)
+    monkeypatch.setattr(QInputDialog, "getDouble", lambda *a: (24.5, True))
+    window._set_step_flow()
+    recipe = window._collect_recipe()
+    assert recipe.steps[1].pump_percent == 5.5
+    assert not recipe.hardware_approved
+
+
 def test_manual_pump_shows_readiness_blocker(screen):
     window, controller, now = screen
     controller.set_simulation(False)

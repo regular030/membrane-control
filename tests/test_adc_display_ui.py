@@ -120,7 +120,7 @@ def test_negative_feedback_shows_actual_adc_voltage_instead_of_fabricated_zero(s
     assert "below GND" in window._metric_units["pump_feedback_v"].text()
 
 
-def test_startup_connects_rig_and_scale_and_keeps_optional_sensor_board_manual(screen, monkeypatch):
+def test_startup_connects_rig_and_keeps_scale_and_optional_sensor_board_manual(screen, monkeypatch):
     window, controller, _ = screen
     controller.preferred_controller_port = "COM9"
     controller.list_ports = lambda: [("COM5", "ADC USB"), ("COM6", "Scale"), ("COM9", "Rig Bluetooth")]
@@ -133,6 +133,8 @@ def test_startup_connects_rig_and_scale_and_keeps_optional_sensor_board_manual(s
     assert window.controller_port.currentData() == "COM9"
     assert window.balance_port.currentData() == "COM6"
     window.connect_lab_defaults()
+    assert calls == [("rig", "COM9")]
+    window._connect_balance()
     assert calls == [("rig", "COM9"), ("scale", "COM6")]
     window._connect_adc_monitor()
     assert calls[-1] == ("adc", "COM5")

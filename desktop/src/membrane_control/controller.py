@@ -426,10 +426,10 @@ class AppController:
         if self._adc_port_matches(port):
             raise ValueError("Balance and ADC sensor board need different ports")
         self.disconnect_balance()
+        # The Nimbus adapter can report busy when DTR is asserted, even if
+        # Windows reassigns the scale to another COM port.
         options = {"raw": True}
-        # The lab Nimbus responds on COM6 with DTR inactive. Asserting DTR
-        # through its adapter coincides with repeated busy indications.
-        if port.upper() == "COM6":
+        if port.upper().startswith("COM"):
             options["dtr"] = False
         if serial_format != "8N1":
             options["serial_format"] = serial_format

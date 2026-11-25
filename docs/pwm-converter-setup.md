@@ -15,7 +15,7 @@ voltage command on pins 1/3 and a dry start/stop contact on 15/17.
 | Garosa terminal | Connect to |
 | --- | --- |
 | **PWM- / DIN-** | ESP32 **GND** |
-| **PWM+ / DIN+** | ESP32 **GPIO26** for `esp32-lab-rig-ads1115` |
+| **PWM+ / DIN+** | ESP32 **GPIO23** for `esp32-lab-rig-ads1115` |
 | **Supply+** | Regulated **+24 V DC** |
 | **Supply-** | That supply's negative terminal |
 | **AO-** | Pump DB25 **pin 3** after bench checks |
@@ -30,8 +30,8 @@ before adding the pump voltage output and divider.
 On the selected spare relay, use **COM to DB25 15** and **NO to DB25 17**.
 The lab confirmed **74HC595 bit 15**, LOW for STOP and HIGH for RUN. Verify
 that the contact pair is isolated from the mains valve distribution. A separate
-contact driver is not used in this profile: **GPIO26 is the Garosa PWM
-output**, while raw bit 15 controls the onboard RUN relay.
+contact driver is unnecessary with the onboard RUN relay on raw bit 15.
+**GPIO23 is the Garosa PWM output**.
 
 ## Firmware operation
 
@@ -39,10 +39,10 @@ The current `esp32-lab-rig-ads1115` target uses the PWM-converter backend for
 Garosa and the ADS1115 for all three analog measurements. The existing GP8403
 backend is retained for older profiles. The current ADS1115 connection is
 **SDA GPIO22, SCL GPIO21 at 25 kHz, ADDR to GND (`0x48`)**. Its inputs are
-**A3 pressure, A1 flow and A2 pump feedback**; A0 is unused. VDD is connected to
+**A0 pressure, A1 flow and A2 pump feedback**; A3 is unused. VDD is connected to
 ESP32 3V3 and the ADC, ESP32 and divider returns share common GND.
 
-The full-rig PWM signal is **GPIO26, 1 kHz at 12-bit duty resolution**. With
+The full-rig PWM signal is **GPIO23, 1 kHz at 12-bit duty resolution**. With
 the module configured for 0-10 V, the intended nominal correspondence is:
 
 | Pump command | PWM duty | Intended converter output |
@@ -75,18 +75,18 @@ The lab observed about 5 V at DB25 1/3 and 165 mL/min on the drive during
 the isolated 50% open-bucket test. That observation covers the 50% point.
 For the CWF rig the lab specified V1 and V3 open during pumping, an 80 psi
 cutoff, and all installed valves off at Stop. The current full-rig wiring
-reads pressure from **ADS1115 A3**, flow from **A1**, and the drive's DB25
+reads pressure from **ADS1115 A0**, flow from **A1**, and the drive's DB25
 14/5 feedback through its divider on **A2**. The pressure certificate is
 0 psi at 0.005 V and 100 psi at 5.004 V before the 5:1 divider; the 80 psi
-threshold is about **0.80084 V at A3**. Flow is **100 mL/min per ADC volt**
+threshold is about **0.80084 V at A0**. Flow is **100 mL/min per ADC volt**
 after division. Pump feedback is **five times A2 volts**, reported in drive
 volts. The former native-ADC 100 mV minimum is not used by this ADS1115 profile.
 
 The lab profile caps the pump command at 50% and requires exactly V1 and
 V3 for every positive command. Use **Start pump** for manual control. The
 app sends the required valve path with the pump command. For an automated
-run, import `examples/lab-cwf-ads1115.json` through **Sequence editor →
-Import JSON** as **CWF water test**. That preset runs at 25% for one minute,
+run, select **CWF water test** from the dashboard preset picker.
+That preset runs at 25% for one minute,
 then stops. The full-rig profile uses a 1500 ms converter settling delay before
 closing RUN and retains the 80 psi cutoff.
 
@@ -94,7 +94,7 @@ closing RUN and retains the 80 psi cutoff.
 
 `firmware/examples/PwmConverterProfile.example.h` is a generic starting
 template, not the current lab-rig profile. It uses **GPIO25** for PWM, whereas
-the current full-rig target uses **GPIO26**. For a different rig, copy it to
+the current full-rig target uses **GPIO23**. For a different rig, copy it to
 `firmware/include/BoardProfile.local.h`; keep the example unchanged. The local
 profile is excluded from Git and public release payloads.
 
@@ -108,7 +108,7 @@ The PWM-specific fields are `pumpPwmPin`, `pumpPwmChannel`,
 `pumpPwmFrequencyHz`, `pumpPwmResolutionBits`, `pwmSettleMs` and
 `pwmConverterInterfaceVerified`. The generic example's
 pin/channel/frequency/resolution are 25 / 0 / 1000 Hz / 12 bits; the current
-full-rig pin is 26. `pwmSettleMs` starts at the invalid placeholder 0 in the example;
+full-rig pin is 23. `pwmSettleMs` starts at the invalid placeholder 0 in the example;
 the measured reviewed value must be between 10 and 5000 ms. The source selection
 and verification flags do not substitute for those physical measurements.
 
@@ -117,8 +117,8 @@ For the onboard contact, keep the template setting `pumpContactBit = 15` in a
 `pumpContactActiveHigh = true`. The selected bit must be separate from all
 valve bits and LOW in `shiftUnusedLevels`. The template leaves V6 absent with
 `valveBits[5] = -1` and `safeValves[5] = false`. Keep the seven-slot
-protocol representation and send false for V6. GPIO26 is occupied by PWM in
-the current full rig. See the [contact checks](../hardware/pump-interface.md#spare-onboard-relay-for-startstop).
+protocol representation and send false for V6. See the
+[contact checks](../hardware/pump-interface.md#spare-onboard-relay-for-startstop).
 
 In `[env:esp32-physical]` in `firmware/platformio.ini`, preserve its existing
 flags and add the reviewed profile header:
@@ -151,8 +151,8 @@ stop circuit. GUI checkboxes cannot enable an unverified compiled profile.
 Before pressure acquisition is commissioned, use the standalone
 [`pwm-converter-bench` example](../firmware/examples/pwm-converter-bench/README.md)
 with **the pump DB25 harness and all relay contact loads disconnected**. It
-produces only **GPIO25** test PWM, unlike the current full-rig **GPIO26** output,
-uses explicit serial confirmation and a maximum five-second nonzero test, then
+produces only **GPIO25** test PWM. The current full-rig image uses **GPIO23**.
+The bench example uses explicit serial confirmation and a maximum five-second nonzero test, then
 commands zero. It does not run the full controller,
 touch valve outputs, read pressure or approve a profile. Never bypass the full
 controller's pressure checks to make a converter bench measurement.
